@@ -5,6 +5,15 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- The docs now call request and response converters "data migrations", and name them "migrations by schema" and "migrations by path" everywhere.
+- The docs now say HEAD where they meant the HEAD version rather than the latest version that clients see.
+
+### Fixed
+
+- The docs no longer claim that `migrate_response_body()` runs migrations by path. It runs only the migrations by schema of the model you pass.
+
 ## [9.0.0]
 
 ### Breaking

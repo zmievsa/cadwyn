@@ -51,11 +51,11 @@ Use `["WEBSOCKET"]` to select a FastAPI WebSocket route defined with `@router.we
 In this example, clients of `2024-02-01` connect to `/ws/general` with the `token` header. Clients of `2024-01-01` connect to `/chat/general` with `legacy-token` instead. The older version also keeps `/legacy` and has no `/notifications` socket. Both clients pass their API version in the `x-api-version` header; [path versioning and constant defaults](api_version_parameter.md#websocket-connections) also work.
 
 !!! warning "Sockets run only the selected version's dependencies"
-    An HTTP endpoint of an older version runs that version's dependencies and then the latest version's dependencies again. A WebSocket doesn't: with `.had(dependencies=...)`, the older version's socket runs only the dependencies you list there, so add every dependency it still needs, such as authentication. This includes dependency overrides and cleanup.
+    An HTTP endpoint of an older version runs that version's dependencies and then the HEAD version's dependencies again. A WebSocket doesn't: with `.had(dependencies=...)`, the older version's socket runs only the dependencies you list there, so add every dependency it still needs, such as authentication. This includes dependency overrides and cleanup.
 
 `.had(dependencies=...)` replaces the route's dependency list, including dependencies inherited from included routers. Dependencies declared in the endpoint signature still run. A path change must keep the same path parameter names. Use `func_name` to distinguish sockets with the same path, as in the endpoint duplicates example below.
 
-`WEBSOCKET` must be the only method in its selector, and `.had()` accepts only `path`, `name`, and `dependencies` for sockets. Other attributes and mixed HTTP/WebSocket selectors raise an error when the instruction is defined. Request and response data converters remain HTTP-only.
+`WEBSOCKET` must be the only method in its selector, and `.had()` accepts only `path`, `name`, and `dependencies` for sockets. Other attributes and mixed HTTP/WebSocket selectors raise an error when the instruction is defined. Request and response data migrations remain HTTP-only.
 
 WebSockets stay out of OpenAPI. Cadwyn does not apply schema or message migrations to WebSocket connections; handle message formats in your endpoint code. These instructions support FastAPI `APIWebSocketRoute` routes only: plain Starlette `WebSocketRoute`s (`@router.websocket_route()`), plain Starlette `Route`s, `Mount`, and static files are outside their scope.
 
