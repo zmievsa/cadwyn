@@ -29,7 +29,7 @@ else:
 
 
 def make_tags_subscripting_stub_only_generic() -> StubOnlyGeneric[int]:
-    return []  # ty: ignore[invalid-return-type]
+    return []  # ty: ignore[invalid-explicit-return]
 
 
 def make_tags_with_missing_attribute() -> types.DoesNotExistAtRuntime:  # ty: ignore[missing-attribute]
