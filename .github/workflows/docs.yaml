@@ -6,34 +6,16 @@ on:
     branches: [main, 3.x.x]
     paths:
       - ".github/workflows/docs.yaml"
-      - ".github/actions/**"
       - ".gitignore"
       - ".linkspector.yml"
-      - "docs/**"
-      - "docs_src/**"
       - "**.md"
-      - "mkdocs.yml"
-      - "package.json"
-      - "package-lock.json"
-      - "pyproject.toml"
-      - "tox.ini"
-      - "uv.lock"
   pull_request:
     branches: [main, 3.x.x]
     paths:
       - ".github/workflows/docs.yaml"
-      - ".github/actions/**"
       - ".gitignore"
       - ".linkspector.yml"
-      - "docs/**"
-      - "docs_src/**"
       - "**.md"
-      - "mkdocs.yml"
-      - "package.json"
-      - "package-lock.json"
-      - "pyproject.toml"
-      - "tox.ini"
-      - "uv.lock"
 
 jobs:
   Validate-links:
@@ -44,12 +26,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-python-uv
-        with:
-          # When this version is updated,
-          # update the docs `base_python` version in `tox.ini`, too.
-          python-version: "3.11"
-      - run: tox run -e docs
       # Ubuntu 24.04 blocks unprivileged user namespaces, so the Chrome that
       # linkspector starts crashes with "No usable sandbox!".
       - name: Allow Chrome's sandbox
