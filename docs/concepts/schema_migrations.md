@@ -8,7 +8,7 @@ Please note that you only need a migration if it is a breaking change for your u
 
 Cadwyn leaves SQLAlchemy and SQLModel classes unchanged when generating API versions. This includes SQLModel classes with or without `table=True`. You can use these classes in dependencies, request bodies, and response models where FastAPI supports them, but their schemas remain the same across API versions.
 
-`schema(...)` and the schema-based forms of `convert_request_to_next_version_for(...)` and `convert_response_to_previous_version_for(...)` reject these classes with a `CadwynStructureError`. To version their API representation, define a separate Pydantic `BaseModel`.
+`schema(...)` and the migrations by schema of `convert_request_to_next_version_for(...)` and `convert_response_to_previous_version_for(...)` reject these classes with a `CadwynStructureError`. To version their API representation, define a separate Pydantic `BaseModel`.
 
 ## Add a field to the older version
 
@@ -60,11 +60,11 @@ Cadwyn:
 
 1. Receives a request for API version `V`
 2. Validates the request using the schemas from `V`
-3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.model_dump` with **exclude_unset=True** and without computed fields, which `latest` computes itself
+3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.model_dump` with **exclude_unset=True** and without computed fields, which HEAD computes itself
 4. Passes the request through all request migrations from `V` to `latest`
-5. Validates the request using `latest` schemas
+5. Validates the request using HEAD schemas
 
-The part that causes the aforementioned problem is Cadwyn's use of `exclude_unset=True`. Unfortunately, when Cadwyn uses it, default fields are not set, so `latest` does not receive them. And if latest does not have the same defaults (for example, if the field has no default and is required in latest), then an error will occur. If Cadwyn used `exclude_unset=False`, then `exclude_unset` would lose its purpose for Cadwyn users, so giving it up is impractical. Instead, you should set all extras in step 4 in your request migrations.
+The part that causes the aforementioned problem is Cadwyn's use of `exclude_unset=True`. Unfortunately, when Cadwyn uses it, default fields are not set, so HEAD does not receive them. And if HEAD does not have the same defaults (for example, if the field has no default and is required in HEAD), then an error will occur. If Cadwyn used `exclude_unset=False`, then `exclude_unset` would lose its purpose for Cadwyn users, so giving it up is impractical. Instead, you should set all extras in step 4 in your request migrations.
 
 ### Fields that a schema inherits
 
