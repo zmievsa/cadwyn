@@ -1,6 +1,6 @@
 # Cadwyn
 
-Cadwyn versions APIs Stripe-style: business logic sees only the latest version, and version changes migrate data between versions.
+Cadwyn versions APIs Stripe-style: business logic sees only HEAD, and version changes migrate data between versions.
 
 ## Language
 
@@ -35,5 +35,5 @@ Using Cadwyn's versioning (version changes, data migrations, versioned models) w
 _Avoid_: headless, framework-free, sans-FastAPI
 
 **Standalone install**:
-An installation of Cadwyn for standalone use, without FastAPI and its dependencies.
+An installation of Cadwyn for standalone use, without FastAPI and its dependencies. Planned in [#203](https://github.com/zmievsa/cadwyn/issues/203); not available yet.
 _Avoid_: slim install, core install

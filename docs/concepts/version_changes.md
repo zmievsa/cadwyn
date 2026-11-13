@@ -149,7 +149,7 @@ Did you notice how the schema for `InvoiceResource` is specified in the migratio
 
     A migration of a member with `migrate_http_errors=True` fails at startup with a `RouterGenerationError` if a union route exists in a version that it migrates, because an error isn't any member of the union. Migrate the errors of the endpoint by its path instead.
 
-When a request comes in, Cadwyn migrates it to the latest version using the request migration. You then handle your business logic, return the HEAD response, and Cadwyn migrates it back to the requested API version. Does your business logic or database know that you have two versions? No, not at all. It is zero-cost. Consider the benefits of supporting not just two, but two hundred versions.
+When a request comes in, Cadwyn migrates it to the HEAD version using the request migration. You then handle your business logic, return the HEAD response, and Cadwyn migrates it back to the requested API version. Does your business logic or database know that you have two versions? No, not at all. It is zero-cost. Consider the benefits of supporting not just two, but two hundred versions.
 
 ![The diagram showing how it works](../img/simplified_migration_model.png)
 
