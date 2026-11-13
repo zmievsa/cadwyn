@@ -2,19 +2,8 @@ name: CI
 on:
   push:
     branches: [main, 3.x.x]
-    paths:
-      - "**.py"
-      - "**.toml"
-      - "**.lock"
   pull_request:
     branches: [main, 3.x.x]
-    paths:
-      - ".github/workflows/ci.yaml" # self
-      - ".github/actions/**"
-      - "**.py"
-      - "**.toml"
-      - "**.lock"
-      - ".pre-commit-config.yaml"
 
 jobs:
   Tests:
