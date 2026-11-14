@@ -22,9 +22,6 @@ from typing import (
     get_origin,
 )
 
-import fastapi.params
-import fastapi.security.base
-import fastapi.utils
 from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata
 from pydantic.fields import FieldInfo
@@ -97,6 +94,10 @@ from ._generics import (
 )
 
 if TYPE_CHECKING:
+    import fastapi.params
+    import fastapi.routing
+    import fastapi.security.base
+
     from ._references import (
         _BareGenericCopier,
         _CycleCopier,
@@ -106,6 +107,10 @@ if TYPE_CHECKING:
     )
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
+# Versioning works without FastAPI, so the FastAPI integration gives us the classes of FastAPI that annotations can
+# hold. Without FastAPI, nothing can be one of them.
+_FASTAPI_DEPENDS_CLASSES: "tuple[type[fastapi.params.Depends], ...]" = ()
+_FASTAPI_SECURITY_BASE_CLASSES: "tuple[type[fastapi.security.base.SecurityBase], ...]" = ()
 
 
 @final
@@ -284,7 +289,10 @@ class _AnnotationTransformer:
         finally:
             self._locations.pop()
 
-    def migrate_router_to_version(self, router: fastapi.routing.APIRouter):
+    def migrate_router_to_version(self, router: "fastapi.routing.APIRouter"):
+        # Only route generation versions routes, so FastAPI is there
+        import fastapi.routing
+
         from cadwyn.route_generation import _DELETED_ROUTE_TAG
 
         for route in router.routes:
@@ -292,7 +300,10 @@ class _AnnotationTransformer:
                 continue
             self.migrate_route_to_version(route)
 
-    def migrate_route_to_version(self, route: fastapi.routing.APIRoute, *, ignore_response_model: bool = False):
+    def migrate_route_to_version(self, route: "fastapi.routing.APIRoute", *, ignore_response_model: bool = False):
+        import fastapi.routing
+        import fastapi.utils
+
         if route.response_model is not None and not ignore_response_model:
             route.response_model = self.change_version_of_annotation(route.response_model)
             route.response_field = fastapi.utils.create_model_field(
@@ -310,7 +321,7 @@ class _AnnotationTransformer:
             self.migrate_route_to_version(callback, ignore_response_model=ignore_response_model)
         self._remake_endpoint_dependencies(route)
 
-    def record_route(self, route: fastapi.routing.APIRoute) -> None:
+    def record_route(self, route: "fastapi.routing.APIRoute") -> None:
         """Request the models that migrate_route_to_version requests without changing the route (record-only)"""
         records_routes = self._records_routes
         self._records_routes = True
@@ -328,7 +339,9 @@ class _AnnotationTransformer:
         finally:
             self._records_routes = records_routes
 
-    def _record_route(self, route: fastapi.routing.APIRoute) -> None:
+    def _record_route(self, route: "fastapi.routing.APIRoute") -> None:
+        import fastapi.routing
+
         if route.response_model is not None:
             self.change_version_of_annotation(route.response_model)
         self.change_version_of_annotation(route.dependencies)
@@ -365,7 +378,7 @@ class _AnnotationTransformer:
                     self._record_type_alias(annotation)
                     return annotation
                 return self._copy_type_alias(annotation)
-        elif isinstance(annotation, fastapi.params.Depends):
+        elif isinstance(annotation, _FASTAPI_DEPENDS_CLASSES):
             with self.hard_position():
                 if self.record_only:
                     self.change_versions_of_a_non_container_annotation(
@@ -620,7 +633,7 @@ class _AnnotationTransformer:
         ):
             if type(annotation).__module__.startswith(
                 ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, fastapi.security.base.SecurityBase):
+            ) or isinstance(annotation, _FASTAPI_SECURITY_BASE_CLASSES):
                 return annotation
             # Special forms such as typing.Self are callable but they are not functions
             if type(annotation).__module__ in {"typing", "typing_extensions"}:
@@ -809,7 +822,7 @@ class _AnnotationTransformer:
         return (
             generator.schema_generator is generator
             and any(
-                isinstance(value, fastapi.params.Depends)
+                isinstance(value, _FASTAPI_DEPENDS_CLASSES)
                 # FastAPI infers the dependency from the type when it is not set (e.g. `Annotated[Params, Depends()]`)
                 and generator.dependency_differs_from_head(
                     annotated_args[0] if value.dependency is None else value.dependency
@@ -821,7 +834,7 @@ class _AnnotationTransformer:
     @staticmethod
     def _has_inferred_dependency(annotated_args: tuple[Any, ...]) -> bool:
         return any(
-            isinstance(value, fastapi.params.Depends) and value.dependency is None for value in annotated_args[1:]
+            isinstance(value, _FASTAPI_DEPENDS_CLASSES) and value.dependency is None for value in annotated_args[1:]
         )
 
     def _change_version_of_generic_arg(self, origin: Any, index: int, arg: Any) -> Any:
@@ -871,7 +884,9 @@ class _AnnotationTransformer:
         return bool(set(parameters).intersection(annotation.__pydantic_generic_metadata__["parameters"]))
 
     @classmethod
-    def _remake_endpoint_dependencies(cls, route: fastapi.routing.APIRoute) -> None:
+    def _remake_endpoint_dependencies(cls, route: "fastapi.routing.APIRoute") -> None:
+        import fastapi.routing
+
         # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
 
         route_copy = fastapi.routing.APIRoute(

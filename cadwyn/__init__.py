@@ -1,7 +1,5 @@
 import importlib.metadata
 
-# The FastAPI integration gives the versioning modules what they need from FastAPI, so it must come first
-from ._internal import fastapi_bindings as fastapi_bindings
 from .applications import Cadwyn
 from .dependencies import current_dependency_solver
 from .route_generation import VersionedAPIRouter, generate_versioned_routers
@@ -20,6 +18,11 @@ from .structure import (
     enum,
     schema,
 )
+
+# isort: split
+# The FastAPI integration gives the versioning modules what they need from FastAPI. They only need it once Cadwyn is
+# used, so it comes after the other imports, which keeps the order in which they import FastAPI.
+from ._internal import fastapi_bindings as fastapi_bindings
 
 __version__ = importlib.metadata.version("cadwyn")
 __all__ = [

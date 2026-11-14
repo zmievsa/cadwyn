@@ -7,12 +7,12 @@ import typing
 from collections.abc import Callable
 from enum import Enum, auto
 from typing import (
+    TYPE_CHECKING,
     Any,
     TypeGuard,
     Union,
 )
 
-from fastapi.routing import APIRoute
 from typing_extensions import (
     override,
 )
@@ -22,6 +22,9 @@ from cadwyn.structure.versions._common import (
     _CADWYN_REQUEST_PARAM_NAME,
     _CADWYN_RESPONSE_PARAM_NAME,
 )
+
+if TYPE_CHECKING:
+    from fastapi.routing import APIRoute
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
@@ -262,7 +265,7 @@ def is_coroutine_callable(call: Callable[..., object]) -> bool:  # pragma: no co
     return iscoroutinefunction(dunder_call)  # ty: ignore[deprecated, unused-ignore-comment, unused-ignore-comment]  # Match FastAPI.
 
 
-def _add_request_and_response_params(route: APIRoute):
+def _add_request_and_response_params(route: "APIRoute"):
     if not route.dependant.request_param_name:
         route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
     if not route.dependant.response_param_name:

@@ -1,40 +1,25 @@
 from cadwyn._utils import present_private_submodules_as_package
 from cadwyn.structure.common import VersionType as VersionType
 
+# Only the submodules that work without FastAPI. The FastAPI integration (`cadwyn._internal.fastapi_bindings`) imports
+# the ones that migrate requests and responses in routes.
 from . import (
     _aliases as _aliases,
-)
-from . import (
-    _background as _background,
-)
-from . import (
-    _body_inputs as _body_inputs,
 )
 from . import (
     _bundle as _bundle,
 )
 from . import (
     _changes,
-    _requests,
-    _responses,
 )
 from . import (
     _common as _common,
 )
 from . import (
-    _compat as _compat,
-)
-from . import (
     _core_schema as _core_schema,
 )
 from . import (
-    _dependencies as _dependencies,
-)
-from . import (
     _enums as _enums,
-)
-from . import (
-    _forms as _forms,
 )
 from . import (
     _json as _json,
@@ -44,15 +29,6 @@ from . import (
 )
 from . import (
     _migrations as _migrations,
-)
-from . import (
-    _request_body as _request_body,
-)
-from . import (
-    _uploads as _uploads,
-)
-from . import (
-    _versioned_endpoints as _versioned_endpoints,
 )
 from ._bundle import VersionBundle as VersionBundle
 from ._changes import APIVersionVarType as APIVersionVarType
@@ -66,10 +42,7 @@ from ._changes import get_cls_pythonpath as get_cls_pythonpath
 
 # These modules refer back to the bundle in annotations. Bind it after its definition is complete.
 _changes.VersionBundle = VersionBundle
-_requests.VersionBundle = VersionBundle
-_responses.VersionBundle = VersionBundle
 _migrations.VersionBundle = VersionBundle
-_versioned_endpoints.VersionBundle = VersionBundle
 
 # This package used to be a single module. Keep its objects' __module__ and namespace as they were then.
 present_private_submodules_as_package(__name__)

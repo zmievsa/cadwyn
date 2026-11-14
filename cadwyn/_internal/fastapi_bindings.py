@@ -6,6 +6,7 @@ in their namespaces, and FastAPI's dataclasses can be in the attributes that the
 """
 
 import fastapi.params
+import fastapi.security.base
 from fastapi import Request, Response
 from fastapi._compat import ModelField
 from fastapi.dependencies.models import Dependant
@@ -15,8 +16,21 @@ from starlette.datastructures import MutableHeaders, UploadFile
 from starlette.routing import BaseRoute
 
 from cadwyn import _utils, exceptions
+from cadwyn._utils import present_private_submodules_as_package
+from cadwyn.schema_generation import _annotation_transformer, _callables, _versioned_models
 from cadwyn.structure import data, endpoints
-from cadwyn.structure.versions import _aliases, _bundle, _enums, _json, _migration_targets, _migrations, _uploads
+from cadwyn.structure.versions import (
+    _aliases,
+    _bundle,
+    _enums,
+    _json,
+    _migration_targets,
+    _migrations,
+    _requests,
+    _responses,
+    _uploads,
+    _versioned_endpoints,
+)
 
 _utils._allow_dataclasses_in_attributes(fastapi.params.Depends, fastapi.params.Security)
 
@@ -46,3 +60,18 @@ _json.APIRoute = APIRoute
 _migration_targets.APIRoute = APIRoute
 _migrations.APIRoute = APIRoute
 _migrations._UploadsToClose = _uploads._UploadsToClose
+
+_annotation_transformer._FASTAPI_DEPENDS_CLASSES = (fastapi.params.Depends,)
+_annotation_transformer._FASTAPI_SECURITY_BASE_CLASSES = (fastapi.security.base.SecurityBase,)
+# ty sees two different types of the same module object
+_annotation_transformer.fastapi = fastapi  # ty: ignore[invalid-assignment]
+_callables.APIRoute = APIRoute
+_versioned_models.fastapi = fastapi  # ty: ignore[invalid-assignment]
+
+
+# The submodules that migrate requests and responses in routes refer back to the bundle in annotations
+_requests.VersionBundle = _bundle.VersionBundle
+_responses.VersionBundle = _bundle.VersionBundle
+_versioned_endpoints.VersionBundle = _bundle.VersionBundle
+# `cadwyn.structure.versions` used to be a single module, which had their objects too
+present_private_submodules_as_package("cadwyn.structure.versions")

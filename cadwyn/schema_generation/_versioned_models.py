@@ -4,13 +4,12 @@ from datetime import date
 from enum import Enum
 from functools import cache
 from typing import (
+    TYPE_CHECKING,
     Any,
     Union,
 )
 
-import fastapi.params
 import pydantic
-from fastapi import Response
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
@@ -62,6 +61,10 @@ from ._schema_generator import (
     _ModelBundle,
     _RuntimeSchemaGenContext,
 )
+
+if TYPE_CHECKING:
+    import fastapi.routing
+
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
@@ -141,6 +144,9 @@ def migrate_response_body(
     Apply all version changes from latest until the passed version in reverse order
     and wrap the result in the correct version of latest_response_model
     """
+    # TODO (https://github.com/zmievsa/cadwyn/issues/203): Migrate response bodies without FastAPI
+    from fastapi import Response
+
     version = _get_version_to_migrate(versions, version)
     response = ResponseInfo(Response(status_code=200), body=latest_body)
     migrated_response = versions._migrate_response(
@@ -171,6 +177,9 @@ def _get_version_to_migrate(versions: "VersionBundle", version: Union[VersionTyp
 
 def get_models_that_routes_request(routers: "collections.abc.Iterable[fastapi.routing.APIRouter]") -> set[type[Any]]:
     """Return the models that versioning the routes of the routers requests from a generator directly"""
+    # Only route generation versions routes, so FastAPI is there
+    import fastapi.routing
+
     collector = _ReferencedModelCollector()
     for router in routers:
         for route in router.routes:
