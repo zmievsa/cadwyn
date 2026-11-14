@@ -2009,6 +2009,10 @@
 <td><code>current_dependency_solver()</code> and the context variables behind it.</td>
 </tr>
 <tr>
+<td><code>cadwyn/_internal/fastapi_bindings.py</code></td>
+<td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: the FastAPI names in their annotations and FastAPI's dataclasses that <code>is_same_value()</code> compares. <code>tests/test_imports_without_fastapi.py</code> lists these modules.</td>
+</tr>
+<tr>
 <td><code>cadwyn/__main__.py</code>, <code>_render.py</code>, <code>_asts.py</code></td>
 <td>The <code>cadwyn render</code> CLI, which prints a version's copies of models as code.</td>
 </tr>
