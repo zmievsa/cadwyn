@@ -1,17 +1,53 @@
+import copy
 import pickle
+from collections.abc import Callable
+from typing import Any
+
+import pytest
 
 from cadwyn.exceptions import CadwynHeadRequestValidationError
 
 
-def test__pickle__of_cadwyn_head_request_validation_error__should_restore_the_error():
-    error = CadwynHeadRequestValidationError([{"type": "missing", "loc": ("a",)}], body={"b": 1}, version="2000-01-01")
+class _SubclassWithItsOwnInitError(CadwynHeadRequestValidationError):
+    def __init__(self, errors: list[Any], *, body: Any = None, version: str = "2000-01-01") -> None:
+        super().__init__(errors, body, version)
 
-    restored = pickle.loads(pickle.dumps(error))
 
-    assert type(restored) is CadwynHeadRequestValidationError
-    assert (restored.errors, restored.body, restored.version, str(restored)) == (
+@pytest.mark.parametrize(
+    "restore",
+    [
+        pytest.param(lambda error: pickle.loads(pickle.dumps(error)), id="pickle"),
+        pytest.param(copy.copy, id="copy"),
+        pytest.param(copy.deepcopy, id="deepcopy"),
+    ],
+)
+@pytest.mark.parametrize(
+    "make_error",
+    [
+        pytest.param(
+            lambda: CadwynHeadRequestValidationError([{"type": "missing", "loc": ("a",)}], {"b": 1}, "2000-01-01"),
+            id="error",
+        ),
+        pytest.param(
+            lambda: _SubclassWithItsOwnInitError([{"type": "missing", "loc": ("a",)}], body={"b": 1}), id="subclass"
+        ),
+    ],
+)
+def test__cadwyn_head_request_validation_error__when_pickled_or_copied__should_restore_the_error(
+    make_error: Callable[[], CadwynHeadRequestValidationError], restore: Callable[[Any], Any]
+):
+    error = make_error()
+    error.add_note("in worker 42")
+    error.task_id = "42"  # ty: ignore[unresolved-attribute]  # Attributes that the code that raises it sets
+
+    restored = restore(error)
+
+    assert type(restored) is type(error)
+    assert (restored.errors, restored.body, restored.version, str(restored), restored.args) == (
         error.errors,
         error.body,
         error.version,
         str(error),
+        error.args,
     )
+    assert (restored.__notes__, restored.task_id) == (["in worker 42"], "42")
