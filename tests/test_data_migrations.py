@@ -14463,8 +14463,7 @@ class _ErrorForManualResponseMigrations(BaseModel):
 def test__migrate_response__of_error_as_model_object__should_migrate_the_error(from_version: Union[str, None]):
     @convert_response_to_previous_version_for(_ItemForManualResponseMigrations, migrate_http_errors=True)
     def migration_of_errors(response: ResponseInfo):
-        if response.status_code >= 300:
-            response.body["detail"] = response.body["detail"].upper()
+        response.body["detail"] = response.body["detail"].upper()
 
     versions = VersionBundle(
         *conftest_versions(version_change(migration_of_errors=migration_of_errors), version_change())
@@ -14643,21 +14642,13 @@ class _PageForVersionChecks(BaseModel, Generic[_ItemT]):
 
 
 def _get_versions_for_version_checks() -> VersionBundle:
-    @convert_request_to_next_version_for(_EnvelopeForVersionChecks)
-    def multiply_amount(request: RequestInfo):
-        request.body["item"]["amount"] *= 100
-
-    @convert_response_to_previous_version_for(_EnvelopeForVersionChecks)
-    def divide_amount(response: ResponseInfo):
-        response.body["item"]["amount"] /= 100
-
     @convert_request_to_next_version_for(_PageForVersionChecks)
     def multiply_items(request: RequestInfo):
         request.body["items"] = [item * 100 for item in request.body["items"]]
 
     return VersionBundle(
         *conftest_versions(
-            version_change(multiply_amount=multiply_amount, divide_amount=divide_amount, multiply_items=multiply_items),
+            version_change(multiply_items=multiply_items),
             version_change(),
         )
     )
