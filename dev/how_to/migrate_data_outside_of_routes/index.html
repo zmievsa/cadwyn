@@ -1910,7 +1910,7 @@
 <p>Here's what changes:</p>
 <ul>
 <li>The body argument is <code>body</code> instead of <code>latest_body</code>, and you get the body from the <code>body</code> of the result.</li>
-<li>You can pass objects of your HEAD models, which <code>migrate_response_body()</code> rejects. They become data before the migrations run, as in routes. Migrations always get data, so the ones that turn the object into data themselves can stop doing it.</li>
+<li>You can pass objects of your HEAD models, which <code>migrate_response_body()</code> rejects. They become data with all their fields by their aliases before the migrations run, as in routes. Migrations always get data, so the ones that turn the object into data themselves can stop doing it. If you pass a dict that you've dumped in another way, e.g. without aliases or with <code>mode="json"</code>, migrations keep getting what they got before.</li>
 <li>The migrated body is validated as FastAPI validates responses: by the attributes of objects too, and without your overrides of <code>model_validate()</code>.</li>
 <li>The status code and the headers are part of the result, so the headers and the cookies that migrations set are no longer thrown away. Pass <code>status_code</code> and <code>headers</code> if your migrations need them.</li>
 <li>If a migration turns the response into an error, you get the error body and its status code, while <code>migrate_response_body()</code> fails to validate the error body as your model.</li>
@@ -1933,6 +1933,7 @@
 <li>They take dates and pick the closest older version, as <code>migrate_response_body()</code> does.</li>
 <li>They migrate between any two versions: pass <code>to_version</code> to <code>migrate_request()</code> or <code>from_version</code> to <code>migrate_response()</code> if your loop doesn't start or end at HEAD.</li>
 </ul>
+<p>If you send the result as JSON, e.g. in a message, dump it as routes do: <code>migrate_response(...).body.model_dump(mode="json", by_alias=True)</code>.</p>
 <p>Your loop keeps working too: the attributes that it uses are part of the <a href="../../theory/design_decisions/#supported-api">supported API</a>.</p>
 <h2 id="without-fastapi">Without FastAPI<a class="headerlink" href="#without-fastapi" title="Permanent link">&para;</a></h2>
 <p>Cadwyn still installs FastAPI. A separate package that only needs Pydantic is planned in <a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>. Until then, <code>migrate_request()</code> and <code>migrate_response()</code> already work in projects that don't use FastAPI otherwise. Headers need Starlette, which FastAPI installs.</p>
