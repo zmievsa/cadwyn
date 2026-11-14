@@ -10241,6 +10241,7 @@ Please follow <a href="https://keepachangelog.com/en/1.0.0/">the Keep a Changelo
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><code>CadwynHeadRequestValidationError</code> can be unpickled, e.g. when a worker process raises it, instead of failing with a <code>TypeError</code>.</li>
 <li>The docs no longer claim that <code>migrate_response_body()</code> runs migrations by path. It runs only the migrations by schema of the model you pass.</li>
 </ul>
 <h2 id="900">[9.0.0]<a class="headerlink" href="#900" title="Permanent link">&para;</a></h2>
