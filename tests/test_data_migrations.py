@@ -23,7 +23,7 @@ from decimal import Decimal
 from enum import Enum, Flag, FlagBoundary, IntEnum, StrEnum
 from io import BufferedRandom, BytesIO, FileIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Optional, Self, TypeVar, Union, cast
 from uuid import UUID
 
 import anyio
@@ -14602,8 +14602,170 @@ def test__migrate_request__with_model_objects_that_a_client_cant_send__should_ra
         )
     )
 
-    with pytest.raises(CadwynError, match=r"`migrate_request\(\)` got a .* object in the body"):
+    with pytest.raises(
+        CadwynError, match=r"`migrate_request\(\)` got an object of .* that isn't of version='2000-01-01'"
+    ):
         migrate_request(versions, model, body=get_body(), version="2000-01-01")
+
+
+class _AmountForVersionChecks(BaseModel):
+    amount: float
+
+
+class _EnvelopeForVersionChecks(BaseModel):
+    item: Any
+
+
+class _FrozenAmountForVersionChecks(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    amount: float
+
+
+class _EnvelopeWithExtrasForVersionChecks(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class _NodeThatNoVersionChanges(BaseModel):
+    name: str
+    child: "Union[_NodeThatNoVersionChanges, None]" = None
+
+
+class _ContainerOfNodeThatNoVersionChanges(BaseModel):
+    node: _NodeThatNoVersionChanges
+
+
+_ItemT = TypeVar("_ItemT")
+
+
+class _PageForVersionChecks(BaseModel, Generic[_ItemT]):
+    items: list[_ItemT]
+
+
+def _get_versions_for_version_checks() -> VersionBundle:
+    @convert_request_to_next_version_for(_EnvelopeForVersionChecks)
+    def multiply_amount(request: RequestInfo):
+        request.body["item"]["amount"] *= 100
+
+    @convert_response_to_previous_version_for(_EnvelopeForVersionChecks)
+    def divide_amount(response: ResponseInfo):
+        response.body["item"]["amount"] /= 100
+
+    @convert_request_to_next_version_for(_PageForVersionChecks)
+    def multiply_items(request: RequestInfo):
+        request.body["items"] = [item * 100 for item in request.body["items"]]
+
+    return VersionBundle(
+        *conftest_versions(
+            version_change(multiply_amount=multiply_amount, divide_amount=divide_amount, multiply_items=multiply_items),
+            version_change(),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "get_body",
+    [
+        pytest.param(
+            lambda models: _EnvelopeForVersionChecks(item=models["2000-01-01"][_AmountForVersionChecks](amount=1)),
+            id="object_of_older_version_in_head_object",
+        ),
+        pytest.param(
+            lambda models: _EnvelopeForVersionChecks.model_construct(
+                item=models["2000-01-01"][_AmountForVersionChecks](amount=1)
+            ),
+            id="object_of_older_version_in_constructed_head_object",
+        ),
+        pytest.param(
+            lambda models: collections.OrderedDict(item=models["2000-01-01"][_AmountForVersionChecks](amount=1)),
+            id="object_of_older_version_in_subclass_of_dict",
+        ),
+        pytest.param(
+            lambda models: _EnvelopeWithExtrasForVersionChecks(
+                item={"amount": 1}, other=models["2000-01-01"][_AmountForVersionChecks](amount=1)
+            ),
+            id="object_of_older_version_in_extras_of_head_object",
+        ),
+        pytest.param(
+            lambda models: {
+                "item": {"amount": 1},
+                "others": {frozenset((models["2000-01-01"][_FrozenAmountForVersionChecks](amount=1),))},
+            },
+            id="object_of_older_version_in_frozenset_in_set",
+        ),
+    ],
+)
+def test__migrate_response__with_objects_of_older_versions_inside_the_body__should_raise_cadwyn_error(
+    get_body: Callable[[dict[str, SchemaGenerator]], Any],
+):
+    versions = _get_versions_for_version_checks()
+
+    with pytest.raises(CadwynError, match="that isn't of HEAD"):
+        migrate_response(
+            versions,
+            _EnvelopeForVersionChecks,
+            body=get_body(generate_versioned_models(versions)),
+            version="2000-01-01",
+        )
+
+
+@pytest.mark.parametrize(
+    "get_body",
+    [
+        pytest.param(
+            lambda models: models["2000-01-01"][_EnvelopeForVersionChecks].model_construct(
+                item=_AmountForVersionChecks(amount=100)
+            ),
+            id="head_object_in_constructed_object_of_version",
+        ),
+        pytest.param(
+            lambda _models: collections.OrderedDict(item=_AmountForVersionChecks(amount=100)),
+            id="head_object_in_subclass_of_dict",
+        ),
+    ],
+)
+def test__migrate_request__with_head_objects_inside_the_body__should_raise_cadwyn_error(
+    get_body: Callable[[dict[str, SchemaGenerator]], Any],
+):
+    versions = _get_versions_for_version_checks()
+
+    with pytest.raises(CadwynError, match="that isn't of version='2000-01-01'"):
+        migrate_request(
+            versions,
+            _EnvelopeForVersionChecks,
+            body=get_body(generate_versioned_models(versions)),
+            version="2000-01-01",
+        )
+
+
+def test__migrate_request__with_parametrization_of_generic_of_its_version__should_migrate_it():
+    versions = _get_versions_for_version_checks()
+    page_of_version = generate_versioned_models(versions)["2000-01-01"][_PageForVersionChecks]
+
+    migrated = migrate_request(
+        versions,
+        _PageForVersionChecks,
+        body=cast("type[BaseModel]", page_of_version[int]).model_validate({"items": [1]}),
+        version="2000-01-01",
+    )
+
+    assert migrated.body.items == [100]
+
+
+def test__migrate_response__with_object_of_model_that_versions_share__should_migrate_it():
+    versions = _get_versions_for_version_checks()
+    # No version changes the nodes, so every version has the head nodes
+    assert generate_versioned_models(versions)["2001-01-01"][_NodeThatNoVersionChanges] is _NodeThatNoVersionChanges
+
+    migrated = migrate_response(
+        versions,
+        _ContainerOfNodeThatNoVersionChanges,
+        body={"node": _NodeThatNoVersionChanges(name="x")},
+        version="2000-01-01",
+        from_version="2001-01-01",
+    )
+
+    assert migrated.body.model_dump() == {"node": {"name": "x", "child": None}}
 
 
 def test__migrate_request__with_data_that_contains_itself__should_migrate_it():
@@ -14647,19 +14809,19 @@ def test__migrate_request__with_object_of_the_model_of_its_version__should_migra
         pytest.param(
             lambda versioned_models: versioned_models["2000-01-01"][_ItemForManualResponseMigrations](name="John"),
             None,
-            "got an object of a model of an older version",
+            "that isn't of HEAD",
             id="object_of_older_version_as_head",
         ),
         pytest.param(
             lambda _versioned_models: _ItemForManualResponseMigrations(full_name="John"),
             "2001-01-01",
-            "isn't an object of that version's model",
+            "that isn't of from_version='2001-01-01'",
             id="head_object_with_from_version",
         ),
         pytest.param(
             lambda versioned_models: versioned_models["2000-01-01"][_ItemForManualResponseMigrations](name="John"),
             "2001-01-01",
-            "isn't an object of that version's model",
+            "that isn't of from_version='2001-01-01'",
             id="object_of_other_version",
         ),
         pytest.param(
@@ -14668,7 +14830,7 @@ def test__migrate_request__with_object_of_the_model_of_its_version__should_migra
                 "nested": versioned_models["2000-01-01"][_ItemForManualResponseMigrations](name="John"),
             },
             None,
-            "object in the body, which isn't of HEAD",
+            "that isn't of HEAD",
             id="object_of_older_version_in_data",
         ),
     ],

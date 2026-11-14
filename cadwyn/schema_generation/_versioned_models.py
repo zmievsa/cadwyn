@@ -152,7 +152,7 @@ def migrate_request(
         # Like routes, we migrate the data that the client has sent, so the body has the keys of
         # `model_dump(by_alias=True)` and only the fields that the client has set. A route validates the JSON that the
         # client has sent, so objects only pass if they are of the model of the version, not by their attributes.
-        _check_that_request_body_is_data(body, versioned_request_model)
+        _check_that_request_body_is_of_version(body, versioned_models[version], version)
         validated_body = versioned_request_model.__pydantic_validator__.validate_python(body)
         json_values_plan = _get_json_values_plan(target_model, versioned_request_model)
         client_json_strings = _ClientJsonStrings()
@@ -242,7 +242,7 @@ def migrate_response(
                 f"than from_version={from_version!r}. Use `migrate_request()` to migrate up to newer versions."
             )
         source_model = generate_versioned_models(versions)[from_version][latest_response_model]
-    _check_that_response_body_is_of_version(body, source_model, from_version, status_code)
+    _check_that_response_body_is_of_version(versions, body, from_version, status_code)
     with _api_version_set_to(versions, version):
         content = _prepare_response_content(body, exclude_unset=False)
         if from_version is not None and versions._has_versioned_plain_enums:
@@ -343,7 +343,7 @@ def _check_that_it_is_a_model(model: object, function_name: str) -> None:
 
 
 def _check_that_response_body_is_of_version(
-    body: Any, source_model: type[BaseModel], from_version: Union[VersionType, None], status_code: int
+    versions: "VersionBundle", body: Any, from_version: Union[VersionType, None], status_code: int
 ) -> None:
     """Fail instead of migrating model objects of another version, which would run too many or too few migrations.
 
@@ -351,55 +351,48 @@ def _check_that_response_body_is_of_version(
     """
     if status_code >= 300:
         return
-    if isinstance(body, BaseModel):
-        if from_version is None and not _is_of_version(body, from_version):
+    generator = None if from_version is None else generate_versioned_models(versions)[from_version]
+    for model_object in _iter_model_objects(body):
+        if not _is_of_version(type(model_object), generator):
+            version = "HEAD" if from_version is None else f"from_version={from_version!r}"
             raise CadwynError(
-                f"`migrate_response()` got an object of a model of an older version, {type(body).__name__}, as the "
-                "body of HEAD. Pass the version of the object as from_version, or an object of the HEAD model."
-            )
-        if from_version is not None and not isinstance(body, source_model):
-            raise CadwynError(
-                f"`migrate_response()` got a {type(body).__name__} object as the body of "
-                f"from_version={from_version!r}, which isn't an object of that version's model. Pass an object of "
-                "that version's model, data, or an object of the HEAD model without from_version."
-            )
-        return
-    for nested in _iter_model_objects_in_data(body):
-        if not _is_of_version(nested, from_version):
-            raise CadwynError(
-                f"`migrate_response()` got a {type(nested).__name__} object in the body, which isn't of "
-                f"{'HEAD' if from_version is None else f'from_version={from_version!r}'}. Pass objects of the "
-                "version of the body, or data."
+                f"`migrate_response()` got an object of {type(model_object).__name__} that isn't of {version}. Pass "
+                f"data, or objects of the models of {version}."
             )
 
 
-def _check_that_request_body_is_data(body: Any, versioned_request_model: type[BaseModel]) -> None:
-    """Fail for model objects, which routes never get, unless the body is an object of the model of its version.
+def _check_that_request_body_is_of_version(body: Any, generator: SchemaGenerator, version: VersionType) -> None:
+    """Fail for model objects of other versions, which the migrations would migrate as the data of this version.
 
-    Pydantic would take some objects of other versions by their attributes or as the parametrizations of generics,
-    and the migrations would then migrate the data of another version.
+    Pydantic takes some of them, e.g. by their attributes or as the parametrizations of generics.
     """
-    if isinstance(body, BaseModel) and type(body) is versioned_request_model:
-        return
-    model_object = body if isinstance(body, BaseModel) else next(_iter_model_objects_in_data(body), None)
-    if model_object is not None:
-        raise CadwynError(
-            f"`migrate_request()` got a {type(model_object).__name__} object in the body. Pass the data that the "
-            "client has sent, as routes get it, or an object of the model of the request's version."
-        )
+    for model_object in _iter_model_objects(body):
+        if not _is_of_version(type(model_object), generator):
+            raise CadwynError(
+                f"`migrate_request()` got an object of {type(model_object).__name__} that isn't of "
+                f"version={version!r}. Pass the data that the client has sent, as routes get it, or objects of the "
+                "models of that version."
+            )
 
 
-def _is_of_version(model_object: BaseModel, version: Union[VersionType, None]) -> bool:
-    """Whether the object is of a HEAD model (for None) or of a model that Cadwyn has generated for the version.
+def _is_of_version(cls: type[BaseModel], generator: Union[SchemaGenerator, None]) -> bool:
+    """Whether the class is a model of the version (of HEAD for None).
 
-    We can't tell the version of a copy, so we only tell whether it's a copy.
+    A model of a version is its copy of a model, or the model itself if the version shares it with HEAD, or
+    a subclass or a parametrization of one of them.
     """
-    is_copy = hasattr(type(model_object), "__cadwyn_original_model__")
-    return is_copy if version is not None else not is_copy
+    origin = cls.__pydantic_generic_metadata__["origin"] or cls
+    head_model = getattr(origin, "__cadwyn_original_model__", None)
+    if generator is None:
+        return head_model is None
+    return issubclass(origin, generator[origin if head_model is None else head_model])
 
 
-def _iter_model_objects_in_data(data: Any) -> "collections.abc.Iterator[BaseModel]":
-    """Yield the model objects in the dicts, lists, tuples, and sets of the data, without walking into them"""
+def _iter_model_objects(data: Any) -> "collections.abc.Iterator[BaseModel]":
+    """Yield the model objects in the data: in its dicts, lists, tuples, and sets, and in the fields of models.
+
+    We use the methods of the builtin classes, so that walking runs no code of users, e.g. of a subclass of `dict`.
+    """
     stack = [data]
     seen: set[int] = set()
     while stack:
@@ -409,10 +402,19 @@ def _iter_model_objects_in_data(data: Any) -> "collections.abc.Iterator[BaseMode
         seen.add(id(value))
         if isinstance(value, BaseModel):
             yield value
-        elif type(value) is dict:
-            stack.extend(value.values())
-        elif type(value) in (list, tuple, set, frozenset):
-            stack.extend(value)
+            stack.extend(dict.values(value.__dict__))
+            if value.__pydantic_extra__:
+                stack.extend(dict.values(value.__pydantic_extra__))
+        elif isinstance(value, dict):
+            stack.extend(dict.values(value))
+        elif isinstance(value, list):
+            stack.extend(list.__iter__(value))
+        elif isinstance(value, tuple):
+            stack.extend(tuple.__iter__(value))
+        elif isinstance(value, set):
+            stack.extend(set.__iter__(value))
+        elif isinstance(value, frozenset):
+            stack.extend(frozenset.__iter__(value))
 
 
 @contextlib.contextmanager
