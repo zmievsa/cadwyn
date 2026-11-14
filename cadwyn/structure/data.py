@@ -9,26 +9,37 @@ from fastapi import Request, Response
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
 
 from cadwyn._utils import UnionType, _callable_name, same_method_definition_as_in
+from cadwyn.exceptions import CadwynError
 from cadwyn.structure.common import _validate_schema_is_versionable
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
 
 
 class RequestInfo:
-    __slots__ = ("_body", "_body_is_assigned", "_cookies", "_form", "_query_params", "_request", "headers")
+    __slots__ = ("_body", "_body_is_assigned", "_cookies", "_form", "_headers", "_query_params", "_request")
 
     def __init__(self, request: Request, body: Any) -> None:
         super().__init__()
         self._body = body
         # Whether a request migration has assigned the body, so that `None` means an omitted body
         self._body_is_assigned = False
-        self.headers = request.headers.mutablecopy()
+        self._headers = request.headers.mutablecopy()
         self._cookies = request.cookies
         self._query_params = request.query_params._dict
-        self._request = request
+        self._request: Union[Request, None] = request
         if isinstance(body, FormData):
             self._form: Union[list[tuple[str, Union[UploadFile, str]]], None] = list(body.multi_items())
         else:
             self._form = None
+
+    @property
+    def headers(self) -> MutableHeaders:
+        self._check_that_request_exists("headers")
+        return self._headers
+
+    @headers.setter
+    def headers(self, value: MutableHeaders) -> None:
+        self._check_that_request_exists("headers")
+        self._headers = value
 
     @property
     def body(self) -> Any:
@@ -41,15 +52,36 @@ class RequestInfo:
 
     @property
     def cookies(self) -> dict[str, str]:
+        self._check_that_request_exists("cookies")
         return self._cookies
 
     @property
     def query_params(self) -> dict[str, str]:
+        self._check_that_request_exists("query_params")
         return self._query_params
 
     @property
     def form(self) -> Union[list[tuple[str, Union[UploadFile, str]]], None]:
         return self._form
+
+    def _check_that_request_exists(self, attribute: str) -> None:
+        """Fail instead of silently losing what a migration reads or changes in a request that doesn't exist"""
+        if self._request is None:
+            raise CadwynError(
+                f"A request migration has used `request.{attribute}`, but `migrate_request_body()` migrates only "
+                "the body, without an HTTP request. Make the migrations by schema of this model use only "
+                "`request.body`, or migrate this request in a route."
+            )
+
+
+def _get_body_only_request_info(body: Any) -> RequestInfo:
+    """Return the `RequestInfo` of a body that `migrate_request_body()` migrates without an HTTP request"""
+    request_info = RequestInfo.__new__(RequestInfo)
+    request_info._body = body
+    request_info._body_is_assigned = False
+    request_info._request = None
+    request_info._form = None
+    return request_info
 
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background

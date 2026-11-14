@@ -1,21 +1,28 @@
 from cadwyn import (
+    RequestInfo,
     ResponseInfo,
     Version,
     VersionBundle,
     VersionChange,
+    convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
     schema,
 )
 
-from .users import UserResource
+from .users import UserCreateRequest, UserResource
 
 
 class RenameUserFullNameToName(VersionChange):
-    """'UserResource.full_name' is now called 'name'."""
+    """The 'full_name' of users is now called 'name'."""
 
     instructions_to_migrate_to_previous_version = (
         schema(UserResource).field("name").had(name="full_name"),
+        schema(UserCreateRequest).field("name").had(name="full_name"),
     )
+
+    @convert_request_to_next_version_for(UserCreateRequest)
+    def rename_full_name_to_name(request: RequestInfo):
+        request.body["name"] = request.body.pop("full_name")
 
     @convert_response_to_previous_version_for(UserResource)
     def rename_name_to_full_name(response: ResponseInfo):

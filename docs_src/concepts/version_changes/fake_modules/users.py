@@ -11,3 +11,7 @@ class User(BaseModel):
 
 class UserResource(BaseModel):
     name: str
+
+
+class UserCreateRequest(BaseModel):
+    name: str

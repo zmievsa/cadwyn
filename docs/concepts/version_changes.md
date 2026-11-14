@@ -240,6 +240,14 @@ Often you will need to migrate your data outside of routing, manually. For examp
 
 The returned `body_from_2000_01_01` is your data passed through the migrations by schema of `UserResource` (migrations by path don't run, since there is no route) and wrapped in the `2000-01-01` version of `UserResource`. Because the data is wrapped, you can include Pydantic’s defaults.
 
+To migrate data that a client of an older version has sent you outside of routing, e.g. a message from a queue, use `cadwyn.schema_generation.migrate_request_body()`:
+
+```python
+{! ./docs_src/concepts/version_changes/block018.py !}
+```
+
+It does what a route does with a request body before it calls your endpoint: it validates the body with the `2000-01-01` version of `UserCreateRequest`, passes the data that the client has set through the migrations by schema of `UserCreateRequest` up to HEAD, and returns the HEAD `UserCreateRequest` that your business logic expects. Migrations by path don't run, since there is no route. If the body doesn't fit its version, you get Pydantic's `ValidationError`. If the migrated body doesn't fit HEAD, or a migration sets it to `None`, which omits the body, you get `CadwynHeadRequestValidationError`, which means that your migrations are wrong. There is no HTTP request either, so a migration that uses `request.headers`, `request.cookies`, or `request.query_params` raises a `CadwynError` instead of losing what it reads or changes, and `request.form` is `None`.
+
 Like route responses, `migrate_response_body()` restores validation aliases only when missing keys would certainly fail validation, such as required fields or forbidden extras. In other cases, make migrations set validation keys explicitly, e.g. `v` for `Field(alias="x", validation_alias="v")`. Restored bodies are validated once and report their own errors; aliased fields whose defaults come only from custom core schemas keep supplied values or reject invalid ones instead of silently using defaults. To request the default, delete the value in a response migration, or from `latest_body` before calling `migrate_response_body()`.
 
 #### StreamingResponse and FileResponse migrations

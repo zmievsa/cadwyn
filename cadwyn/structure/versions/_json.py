@@ -128,6 +128,22 @@ async def _encode_json_values(
     # the default might not have the types that the request's version validates them into
     if plan is None or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields):
         return body
+    return _encode_planned_json_values(
+        plan, body, client_json_strings, functools.partial(_has_other_body_readers, head_dependant, head_route)
+    )
+
+
+def _encode_planned_json_values(
+    plan: "_JsonValuesPlan",
+    body: Any,
+    client_json_strings: _ClientJsonStrings,
+    has_other_body_readers: Callable[[], bool],
+) -> Any:
+    """Return a copy of the migrated body with the values of the plan encoded as JSON, or the body as it is.
+
+    `_encode_json_values` describes when we encode them. `has_other_body_readers` tells whether anything besides
+    the body param reads the body, which would get the encoded values too.
+    """
     client_strings = client_json_strings.by_path
     # Whatever goes wrong, we leave the body as it is, because encoding must never break a request
     try:
@@ -152,7 +168,7 @@ async def _encode_json_values(
             client_strings_check = _ClientJsonStringsCheck(client_strings)
             has_values_to_encode = _has_json_values_to_encode(plan, body, client_strings_check, ())
             client_strings_check.check_that_all_are_in_place()
-        if not has_values_to_encode or _has_other_body_readers(head_dependant, head_route):
+        if not has_values_to_encode or has_other_body_readers():
             return body
         if client_strings_check is not None:
             # Checking the dependencies might have changed the body, so we check it again as we encode it
@@ -202,10 +218,12 @@ _JSON_CHILD_SCHEMA_KEYS = {
     "list": ("items_schema", "items"),
     "dict": ("values_schema", "values"),
 }
+# What the head validates the body with: the body field of a route, or the model of `migrate_request_body()`
+_JsonPlanSource: TypeAlias = Union[ModelField, type[BaseModel]]
 # The descriptions of the body fields, and the plans for the pairs of a head body field and a body field of a version
-_BODY_FIELD_JSON_PLANS: dict[int, tuple[ModelField, Union[_JsonValuesPlan, None]]] = {}
-_NORMALIZED_CORE_SCHEMAS: dict[int, tuple[ModelField, Any]] = {}
-_JSON_VALUES_PLANS: dict[tuple[int, int], tuple[ModelField, ModelField, Union[_JsonValuesPlan, None]]] = {}
+_BODY_FIELD_JSON_PLANS: dict[int, tuple[_JsonPlanSource, Union[_JsonValuesPlan, None]]] = {}
+_NORMALIZED_CORE_SCHEMAS: dict[int, tuple[_JsonPlanSource, Any]] = {}
+_JSON_VALUES_PLANS: dict[tuple[int, int], tuple[_JsonPlanSource, _JsonPlanSource, Union[_JsonValuesPlan, None]]] = {}
 # The descriptions of the models of one body field by `(is_in_json, model, depth)`, so that describing stays linear
 _JsonPlanMemo: TypeAlias = dict[tuple[bool, type[BaseModel], int], Any]
 _UNSAFE_JSON_VALUE = object()
@@ -248,7 +266,9 @@ _STRING_CONFIG_KEYS = (
 _DETERMINISTIC_DEFAULT_FACTORIES = (list, dict, set, frozenset, tuple)
 
 
-def _get_json_values_plan(head_body_field: ModelField, body_field: ModelField) -> Union[_JsonValuesPlan, None]:
+def _get_json_values_plan(
+    head_body_field: _JsonPlanSource, body_field: _JsonPlanSource
+) -> Union[_JsonValuesPlan, None]:
     """Return what to encode in the dump of the body field of the request's version, which the head validates.
 
     The request's version dumps the body, so its models must dump the values to the same keys that the head reads
@@ -278,12 +298,18 @@ def _get_json_values_plan(head_body_field: ModelField, body_field: ModelField) -
     return plan
 
 
-def _get_body_field_json_plan(body_field: ModelField) -> Union[_JsonValuesPlan, None]:
+def _get_core_schema(source: _JsonPlanSource) -> Any:
+    if isinstance(source, type) and issubclass(source, BaseModel):
+        return source.__pydantic_core_schema__
+    return source._type_adapter.core_schema
+
+
+def _get_body_field_json_plan(body_field: _JsonPlanSource) -> Union[_JsonValuesPlan, None]:
     cached = _BODY_FIELD_JSON_PLANS.get(id(body_field))
     if cached is not None and cached[0] is body_field:
         return cached[1]
     try:
-        schema = cast("dict[str, Any]", body_field._type_adapter.core_schema)
+        schema = cast("dict[str, Any]", _get_core_schema(body_field))
         # Most bodies have no `Json[...]` fields, so they aren't walked at all
         description = (
             _walk_json_values(_register_core_schema_definitions(schema), frozenset(), {}, is_in_json=False)
@@ -297,10 +323,10 @@ def _get_body_field_json_plan(body_field: ModelField) -> Union[_JsonValuesPlan, 
     return plan
 
 
-def _get_normalized_core_schema(body_field: ModelField) -> Any:
+def _get_normalized_core_schema(body_field: _JsonPlanSource) -> Any:
     cached = _NORMALIZED_CORE_SCHEMAS.get(id(body_field))
     if cached is None or cached[0] is not body_field:
-        cached = (body_field, _normalize_core_schema(body_field._type_adapter.core_schema, {}))
+        cached = (body_field, _normalize_core_schema(_get_core_schema(body_field), {}))
         _NORMALIZED_CORE_SCHEMAS[id(body_field)] = cached
     return cached[1]
 

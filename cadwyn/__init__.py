@@ -5,7 +5,7 @@ from ._internal import fastapi_bindings as fastapi_bindings
 from .applications import Cadwyn
 from .dependencies import current_dependency_solver
 from .route_generation import VersionedAPIRouter, generate_versioned_routers
-from .schema_generation import generate_versioned_models, migrate_response_body
+from .schema_generation import generate_versioned_models, migrate_request_body, migrate_response_body
 from .structure import (
     HeadVersion,
     RequestInfo,
@@ -39,6 +39,7 @@ __all__ = [
     "enum",
     "generate_versioned_models",
     "generate_versioned_routers",
+    "migrate_request_body",
     "migrate_response_body",
     "schema",
 ]

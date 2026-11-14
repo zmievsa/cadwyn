@@ -59,10 +59,40 @@ from ._uploads import (
     _get_uploads_to_close,
     _rewind_uploads_read_by_fastapi,
     _UploadPositions,
+    _UploadsToClose,  # Needed by runtime annotation introspection.
 )
 
 if TYPE_CHECKING:
     from ._bundle import VersionBundle
+
+
+def _run_request_migrations(
+    versions: "VersionBundle",
+    request_info: RequestInfo,
+    current_version: VersionType,
+    body_target: "_SchemaMigrationTarget",
+    get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
+    head_route: Union[APIRoute, None],
+    uploads: "Union[_UploadsToClose, None]",
+) -> bool:
+    """Run the request migrations from the request's version up to head, and return whether any of them has run.
+
+    Routes and `migrate_request_body()` both migrate requests with it. Without a route, only migrations by schema run.
+    """
+    start = versions.reversed_version_values.index(current_version)
+    has_run_migrations = False
+    for v in versions.reversed_versions[start + 1 :]:
+        for version_change in v.changes:
+            for instruction in _get_schema_migrations(
+                version_change.alter_request_by_schema_instructions, body_target, get_body_union_member
+            ):
+                _run_request_migration(instruction, request_info, uploads)
+                has_run_migrations = True
+            if head_route is not None and id(head_route) in version_change._route_to_request_migration_mapping:
+                for instruction in version_change._route_to_request_migration_mapping[id(head_route)]:
+                    _run_request_migration(instruction, request_info, uploads)
+                    has_run_migrations = True
+    return has_run_migrations
 
 
 async def _migrate_request(
@@ -86,22 +116,11 @@ async def _migrate_request(
     get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
     client_json_strings: "_ClientJsonStrings",
 ) -> dict[str, Any]:
-    start = versions.reversed_version_values.index(current_version)
-    head_route_id = id(head_route)
-    has_run_migrations = False
     # Migrations can put new uploads into the form, which FastAPI doesn't know about
     uploads = _get_uploads_to_close(request) if request_info._form is not None else None
-    for v in versions.reversed_versions[start + 1 :]:
-        for version_change in v.changes:
-            for instruction in _get_schema_migrations(
-                version_change.alter_request_by_schema_instructions, body_target, get_body_union_member
-            ):
-                _run_request_migration(instruction, request_info, uploads)
-                has_run_migrations = True
-            if head_route_id in version_change._route_to_request_migration_mapping:
-                for instruction in version_change._route_to_request_migration_mapping[head_route_id]:
-                    _run_request_migration(instruction, request_info, uploads)
-                    has_run_migrations = True
+    has_run_migrations = _run_request_migrations(
+        versions, request_info, current_version, body_target, get_body_union_member, head_route, uploads
+    )
     if has_run_migrations:
         client_json_strings.forget_shared_strings()
 
