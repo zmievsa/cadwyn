@@ -208,21 +208,16 @@ _VERSIONS_OF_USERS = """
         full_name: str
 
 
-    headers_of_migrations = []
-
-
     class RenameNameToFullName(VersionChange):
         description = "'name' is now called 'full_name'"
         instructions_to_migrate_to_previous_version = (schema(User).field("full_name").had(name="name"),)
 
         @convert_request_to_next_version_for(User)
         def rename_name_to_full_name(request: RequestInfo):
-            headers_of_migrations.append(request.headers)
             request.body["full_name"] = request.body.pop("name")
 
         @convert_response_to_previous_version_for(User)
         def rename_full_name_to_name(response: ResponseInfo):
-            headers_of_migrations.append(response.headers)
             response.body["name"] = response.body.pop("full_name")
 
 
@@ -270,7 +265,6 @@ def test__migrate_request__without_fastapi_and_its_dependencies__should_migrate_
     assert migrated == MigratedRequest(
         body=User(full_name="John"), headers=None, cookies={"a": "b"}, query_params={"c": "d"}
     )
-    assert headers_of_migrations == [None]
     """
     )
 
@@ -284,7 +278,6 @@ def test__migrate_response__without_fastapi_and_its_dependencies__should_migrate
     migrated = migrate_response(versions, User, body=User(full_name="John"), version="2000-01-01", status_code=201)
     assert migrated.body.model_dump() == {"name": "John"}
     assert (migrated.status_code, migrated.headers) == (201, None)
-    assert headers_of_migrations == [None]
     """
     )
 
@@ -308,6 +301,49 @@ def test__migrate_request_and_response__with_headers_without_starlette__should_r
         assert str(error) == "Migrating headers needs Starlette. Install it, e.g. with `pip install starlette`."
     else:
         raise AssertionError("Passing headers without Starlette must fail")
+    """
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "use_headers",
+    [
+        "request.headers.get('a')",
+        "request.headers['a'] = 'b'",
+        "response.headers.get('a')",
+        "response.set_cookie('a', 'b')",
+        "response.delete_cookie('a')",
+    ],
+)
+def test__migrations__that_use_headers_without_starlette__should_raise_cadwyn_error(use_headers: str):
+    result = _run_without_fastapi(
+        _VERSIONS_OF_USERS
+        + f"""
+    class UseHeaders(VersionChange):
+        description = "Uses headers"
+        instructions_to_migrate_to_previous_version = ()
+
+        @convert_request_to_next_version_for(User)
+        def use_request_headers(request: RequestInfo):
+            {use_headers if use_headers.startswith("request") else "pass"}
+
+        @convert_response_to_previous_version_for(User)
+        def use_response_headers(response: ResponseInfo):
+            {use_headers if use_headers.startswith("response") else "pass"}
+
+
+    header_versions = VersionBundle(Version("2001-01-01", UseHeaders), Version("2000-01-01"))
+    try:
+        if {use_headers.startswith("request")!r}:
+            migrate_request(header_versions, User, body={{"full_name": "John"}}, version="2000-01-01")
+        else:
+            migrate_response(header_versions, User, body={{"full_name": "John"}}, version="2000-01-01")
+    except CadwynError as error:
+        assert "which need Starlette" in str(error)
+    else:
+        raise AssertionError("Using headers without Starlette must fail")
     """
     )
 

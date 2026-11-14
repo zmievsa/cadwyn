@@ -3,7 +3,7 @@ import inspect
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, Union, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, NoReturn, TypeAlias, Union, cast, overload
 
 from pydantic import BaseModel
 from typing_extensions import TypeVar
@@ -83,8 +83,11 @@ def _get_standalone_request_info(
     request_info = RequestInfo.__new__(RequestInfo)
     request_info._body = body
     request_info._body_is_assigned = False
-    # Without Starlette, there are no headers. Migrations get None, and the caller can't pass any.
-    request_info._headers = cast("MutableHeaders", _get_starlette_headers(headers))
+    # Without Starlette, there are no headers, and the caller can't pass any
+    starlette_headers = _get_starlette_headers(headers)
+    request_info._headers = cast(
+        "MutableHeaders", _HeadersWithoutStarlette() if starlette_headers is None else starlette_headers
+    )
     request_info._cookies = cookies
     request_info._query_params = query_params
     request_info._request = None
@@ -92,7 +95,7 @@ def _get_standalone_request_info(
     return request_info
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MigratedRequest(Generic[_ModelT]):
     """A request that `migrate_request()` has migrated up to head"""
 
@@ -103,7 +106,7 @@ class MigratedRequest(Generic[_ModelT]):
     query_params: dict[str, str]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MigratedResponse:
     """A response that `migrate_response()` has migrated down to a version"""
 
@@ -170,13 +173,40 @@ def _get_standalone_response_info(body: Any, status_code: int, headers: _Headers
     return ResponseInfo(response, body)
 
 
+class _HeadersWithoutStarlette:
+    """What migrations get for headers without Starlette: whatever they do with them fails, naming Starlette"""
+
+    __slots__ = ()
+
+    def _fail(self, *args: Any, **kwargs: Any) -> NoReturn:
+        raise CadwynError(
+            "A migration has used headers, which need Starlette, and so do the cookies of responses. Install it, "
+            "e.g. with `pip install starlette`."
+        )
+
+    __getattr__ = __getitem__ = __setitem__ = __delitem__ = __contains__ = __iter__ = __len__ = __bool__ = _fail
+
+
 class _ResponseWithoutStarlette:
     __slots__ = ("headers", "status_code")
 
     def __init__(self, status_code: int) -> None:
         super().__init__()
         self.status_code = status_code
-        self.headers = None
+        self.headers = _HeadersWithoutStarlette()
+
+    def set_cookie(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self.headers._fail()
+
+    def delete_cookie(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self.headers._fail()
+
+
+def _get_items_of_headers(headers: "MutableHeaders") -> Union[list[tuple[str, str]], None]:
+    """Return the headers of a migrated request or response, or None if there are none because there's no Starlette"""
+    if isinstance(headers, _HeadersWithoutStarlette):
+        return None
+    return headers.items()
 
 
 def _get_starlette_headers(headers: _HeadersInput) -> "Union[MutableHeaders, None]":

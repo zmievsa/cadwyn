@@ -110,11 +110,12 @@ from cadwyn.exceptions import (
     RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
     RouterGenerationError,
 )
-from cadwyn.schema_generation import migrate_request, migrate_response, migrate_response_body
+from cadwyn.schema_generation import SchemaGenerator, migrate_request, migrate_response, migrate_response_body
 from cadwyn.structure import (
     MigratedRequest,
     MigratedResponse,
     VersionChange,
+    VersionChangeWithSideEffects,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
     enum,
@@ -14491,6 +14492,103 @@ def test__migrate_response__to_unknown_version__should_raise_cadwyn_error(versio
         migrate_response(versions, _ItemForManualResponseMigrations, body={"full_name": "John"}, version=version)
 
 
+@pytest.mark.parametrize("version_being_served", [None, "2001-01-01"])
+def test__migrate_request_and_response__should_run_migrations_in_the_version_that_they_migrate(
+    version_being_served: Union[str, None],
+):
+    class PricesAreNoLongerRounded(VersionChangeWithSideEffects):
+        description = "Prices are no longer rounded"
+        instructions_to_migrate_to_previous_version = ()
+
+    side_effects_seen: list[bool] = []
+
+    @convert_request_to_next_version_for(_ItemForManualRequestMigrations)
+    def request_migration(request: RequestInfo):
+        side_effects_seen.append(PricesAreNoLongerRounded.is_applied)
+
+    @convert_response_to_previous_version_for(_ItemForManualResponseMigrations)
+    def response_migration(response: ResponseInfo):
+        side_effects_seen.append(PricesAreNoLongerRounded.is_applied)
+
+    api_version_var: ContextVar[Union[str, None]] = ContextVar("api_version_var")
+    if version_being_served is not None:
+        api_version_var.set(version_being_served)
+    versions = VersionBundle(
+        Version("2001-01-01", PricesAreNoLongerRounded),
+        Version(
+            "2000-01-01", version_change(request_migration=request_migration, response_migration=response_migration)
+        ),
+        Version("1999-01-01"),
+        api_version_var=api_version_var,
+    )
+
+    migrate_request(versions, _ItemForManualRequestMigrations, body={"full_name": "John"}, version="1999-01-01")
+    migrate_response(versions, _ItemForManualResponseMigrations, body={"full_name": "John"}, version="1999-01-01")
+
+    assert side_effects_seen == [False, False]
+    assert api_version_var.get(None) == version_being_served
+
+
+def test__migrate_request__with_object_instead_of_data__should_validate_it_like_the_data_that_a_client_sends():
+    versions = _get_versions_of_item_for_manual_request_migrations()
+
+    with pytest.raises(ValidationError) as exc_info:
+        migrate_request(
+            versions,
+            _ItemForManualRequestMigrations,
+            # Routes validate the JSON that clients send, not objects by their attributes
+            body=_ItemForManualRequestMigrations(full_name="John"),
+            version="2000-01-01",
+        )
+    assert [error["type"] for error in exc_info.value.errors()] == ["model_type"]
+
+
+@pytest.mark.parametrize(
+    ("get_body", "from_version", "message"),
+    [
+        pytest.param(
+            lambda versioned_models: versioned_models["2000-01-01"][_ItemForManualResponseMigrations](name="John"),
+            None,
+            "got an object of a model of an older version",
+            id="object_of_older_version_as_head",
+        ),
+        pytest.param(
+            lambda _versioned_models: _ItemForManualResponseMigrations(full_name="John"),
+            "2001-01-01",
+            "isn't an object of that version's model",
+            id="head_object_with_from_version",
+        ),
+        pytest.param(
+            lambda versioned_models: versioned_models["2000-01-01"][_ItemForManualResponseMigrations](name="John"),
+            "2001-01-01",
+            "isn't an object of that version's model",
+            id="object_of_other_version",
+        ),
+    ],
+)
+def test__migrate_response__with_object_of_another_version__should_raise_cadwyn_error(
+    get_body: Callable[[dict[str, SchemaGenerator]], BaseModel], from_version: Union[str, None], message: str
+):
+    versions = VersionBundle(
+        *conftest_versions(
+            version_change(
+                schema(_ItemForManualResponseMigrations).field("full_name").had(name="name"),
+                migrate=_migrate_item_for_manual_response_migrations,
+            ),
+            version_change(),
+        )
+    )
+
+    with pytest.raises(CadwynError, match=message):
+        migrate_response(
+            versions,
+            _ItemForManualResponseMigrations,
+            body=get_body(generate_versioned_models(versions)),
+            version="2000-01-01",
+            from_version=from_version,
+        )
+
+
 @pytest.mark.parametrize(
     "migrate",
     [
@@ -14519,9 +14617,7 @@ def test__migrate_request_and_response__of_union__should_raise_cadwyn_error(
 ):
     versions = VersionBundle(*conftest_versions(version_change()))
 
-    with pytest.raises(
-        CadwynError, match=r"\(\)` takes a Pydantic model, not .*\. To migrate the body of a member of a union"
-    ):
+    with pytest.raises(CadwynError, match=r"\(\)` takes a Pydantic model, not .*EmptySchema\]?\.$"):
         migrate(versions)
 
 
@@ -14680,9 +14776,10 @@ def test__migrate_request__to_version_in_between_with_member_that_head_lacks__sh
         to_version="2001-01-01",
     )
 
-    assert migrated.body.color is generate_versioned_models(versions)["2001-01-01"][_ColorThatHeadRemoved]["blue"]
+    body = migrated.body.model_dump()
+    assert body["color"] is generate_versioned_models(versions)["2001-01-01"][_ColorThatHeadRemoved]["blue"]
     # No version changes the shapes, so every version has the head ones
-    assert migrated.body.shape is _UnchangedShape.square
+    assert body["shape"] is _UnchangedShape.square
 
 
 def test__migrate_response__from_version_in_between_with_member_that_head_lacks__should_give_member_of_version():
