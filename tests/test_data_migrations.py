@@ -14525,6 +14525,221 @@ def test__migrate_request_and_response__of_union__should_raise_cadwyn_error(
         migrate(versions)
 
 
+class _ColorOfVersionsInBetween(Enum):
+    red = "r"
+
+
+class _ItemOfVersionsInBetween(BaseModel):
+    full_name: str
+    color: _ColorOfVersionsInBetween = _ColorOfVersionsInBetween.red
+
+
+def _get_versions_in_between() -> VersionBundle:
+    """2000-01-01 has `name` and the blue color, 2001-01-01 has `first_name`, and 2002-01-01 has `full_name`"""
+
+    @convert_request_to_next_version_for(_ItemOfVersionsInBetween)
+    def name_to_first_name(request: RequestInfo):
+        request.body["first_name"] = request.body.pop("name")
+        if request.body.get("color") is not None and request.body["color"].value == "b":
+            request.body["color"] = _ColorOfVersionsInBetween.red
+        request.headers["x-migrated-to"] = "2001-01-01"
+
+    @convert_response_to_previous_version_for(_ItemOfVersionsInBetween)
+    def first_name_to_name(response: ResponseInfo):
+        response.body["name"] = response.body.pop("first_name")
+        response.headers["x-migrated-to"] = "2000-01-01"
+
+    @convert_request_to_next_version_for(_ItemOfVersionsInBetween)
+    def first_name_to_full_name(request: RequestInfo):
+        request.body["full_name"] = request.body.pop("first_name")
+        request.headers["x-migrated-to"] = "2002-01-01"
+
+    @convert_response_to_previous_version_for(_ItemOfVersionsInBetween)
+    def full_name_to_first_name(response: ResponseInfo):
+        response.body["first_name"] = response.body.pop("full_name")
+        response.headers["x-migrated-to"] = "2001-01-01"
+
+    return VersionBundle(
+        *conftest_versions(
+            version_change(
+                schema(_ItemOfVersionsInBetween).field("first_name").had(name="name"),
+                enum(_ColorOfVersionsInBetween).had(blue="b"),
+                name_to_first_name=name_to_first_name,
+                first_name_to_name=first_name_to_name,
+            ),
+            version_change(
+                schema(_ItemOfVersionsInBetween).field("full_name").had(name="first_name"),
+                first_name_to_full_name=first_name_to_full_name,
+                full_name_to_first_name=full_name_to_first_name,
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "color",
+    [
+        pytest.param("b", id="member_that_a_migration_replaces_with_head_member"),
+        pytest.param("r", id="member_of_copy_of_the_older_version"),
+    ],
+)
+def test__migrate_request__to_version_in_between__should_give_what_migrating_from_there_to_head_takes(color: str):
+    versions = _get_versions_in_between()
+
+    in_between = migrate_request(
+        versions,
+        _ItemOfVersionsInBetween,
+        body={"name": "John", "color": color},
+        version="2000-01-01",
+        to_version="2001-01-01",
+    )
+    from_in_between = migrate_request(
+        versions,
+        _ItemOfVersionsInBetween,
+        body=in_between.body,
+        version="2001-01-01",
+        headers=in_between.headers,
+    )
+    directly = migrate_request(
+        versions, _ItemOfVersionsInBetween, body={"name": "John", "color": color}, version="2000-01-01"
+    )
+
+    versions_2001 = generate_versioned_models(versions)["2001-01-01"]
+    assert type(in_between.body) is versions_2001[_ItemOfVersionsInBetween]
+    assert in_between.body.model_dump() == {"first_name": "John", "color": versions_2001[_ColorOfVersionsInBetween].red}
+    assert in_between.headers == [("x-migrated-to", "2001-01-01")]
+    assert from_in_between == directly
+    assert directly.body == _ItemOfVersionsInBetween(full_name="John")
+    assert directly.headers == [("x-migrated-to", "2002-01-01")]
+
+
+def test__migrate_request__to_its_own_version__should_run_no_migrations():
+    versions = _get_versions_in_between()
+
+    migrated = migrate_request(
+        versions, _ItemOfVersionsInBetween, body={"first_name": "John"}, version="2001-01-01", to_version="2001-01-01"
+    )
+
+    assert type(migrated.body) is generate_versioned_models(versions)["2001-01-01"][_ItemOfVersionsInBetween]
+    assert migrated.body.model_dump(include={"first_name"}) == {"first_name": "John"}
+    assert migrated.body.model_fields_set == {"first_name"}
+    assert migrated.headers == []
+
+
+def test__migrate_response__from_version_in_between__should_give_what_migrating_from_head_gives():
+    versions = _get_versions_in_between()
+
+    in_between = migrate_response(
+        versions, _ItemOfVersionsInBetween, body=_ItemOfVersionsInBetween(full_name="John"), version="2001-01-01"
+    )
+    from_in_between = migrate_response(
+        versions,
+        _ItemOfVersionsInBetween,
+        body=in_between.body,
+        version="2000-01-01",
+        from_version="2001-01-01",
+        headers=in_between.headers,
+    )
+    directly = migrate_response(
+        versions, _ItemOfVersionsInBetween, body=_ItemOfVersionsInBetween(full_name="John"), version="2000-01-01"
+    )
+
+    assert from_in_between == directly
+    assert directly.body.model_dump(mode="json") == {"name": "John", "color": "r"}
+    assert directly.headers == [("x-migrated-to", "2000-01-01")]
+
+
+class _ColorThatHeadRemoved(Enum):
+    red = "r"
+
+
+class _UnchangedShape(Enum):
+    square = "s"
+
+
+class _ItemWithColorThatHeadRemoved(BaseModel):
+    color: _ColorThatHeadRemoved
+    shape: _UnchangedShape = _UnchangedShape.square
+
+
+def _get_versions_with_color_that_head_removed() -> VersionBundle:
+    # 2000-01-01 and 2001-01-01 have the blue color, but 2002-01-01 and the head don't
+    return VersionBundle(
+        *conftest_versions(version_change(), version_change(enum(_ColorThatHeadRemoved).had(blue="b")))
+    )
+
+
+def test__migrate_request__to_version_in_between_with_member_that_head_lacks__should_give_member_of_version():
+    versions = _get_versions_with_color_that_head_removed()
+
+    migrated = migrate_request(
+        versions,
+        _ItemWithColorThatHeadRemoved,
+        body={"color": "b", "shape": "s"},
+        version="2000-01-01",
+        to_version="2001-01-01",
+    )
+
+    assert migrated.body.color is generate_versioned_models(versions)["2001-01-01"][_ColorThatHeadRemoved]["blue"]
+    # No version changes the shapes, so every version has the head ones
+    assert migrated.body.shape is _UnchangedShape.square
+
+
+def test__migrate_response__from_version_in_between_with_member_that_head_lacks__should_give_member_of_version():
+    versions = _get_versions_with_color_that_head_removed()
+    versioned_models = generate_versioned_models(versions)
+    body = versioned_models["2001-01-01"][_ItemWithColorThatHeadRemoved](color="b")
+
+    migrated = migrate_response(
+        versions, _ItemWithColorThatHeadRemoved, body=body, version="2000-01-01", from_version="2001-01-01"
+    )
+
+    assert migrated.body.color is versioned_models["2000-01-01"][_ColorThatHeadRemoved]["blue"]
+
+
+class _ItemWithLazyColorsThatHeadRemoved(BaseModel):
+    colors: Iterable[_ColorThatHeadRemoved]
+
+
+def test__migrate_response__from_version_in_between_with_lazy_members_that_head_lacks__should_give_members_of_version():
+    versions = _get_versions_with_color_that_head_removed()
+    versioned_models = generate_versioned_models(versions)
+    body = versioned_models["2001-01-01"][_ItemWithLazyColorsThatHeadRemoved](colors=["b", "r"])
+
+    migrated = migrate_response(
+        versions, _ItemWithLazyColorsThatHeadRemoved, body=body, version="2000-01-01", from_version="2001-01-01"
+    )
+
+    old_colors = versioned_models["2000-01-01"][_ColorThatHeadRemoved]
+    assert list(migrated.body.colors) == [old_colors["blue"], old_colors["red"]]
+
+
+@pytest.mark.parametrize(
+    ("migrate", "message"),
+    [
+        pytest.param(
+            lambda versions: migrate_request(
+                versions, _ItemOfVersionsInBetween, body={}, version="2001-01-01", to_version="2000-01-01"
+            ),
+            r"to_version='2000-01-01' is older than version='2001-01-01'",
+            id="request_to_older_version",
+        ),
+        pytest.param(
+            lambda versions: migrate_response(
+                versions, _ItemOfVersionsInBetween, body={}, version="2001-01-01", from_version="2000-01-01"
+            ),
+            r"version='2001-01-01' is newer than from_version='2000-01-01'",
+            id="response_from_older_version",
+        ),
+    ],
+)
+def test__migrate_request_and_response__in_the_wrong_direction__should_raise_cadwyn_error(
+    migrate: Callable[[VersionBundle], object], message: str
+):
+    with pytest.raises(CadwynError, match=message):
+        migrate(_get_versions_in_between())
+
+
 def test__request_and_response_migrations__with_multiple_schemas_in_converters(
     create_versioned_clients: CreateVersionedClients,
     router: VersionedAPIRouter,
