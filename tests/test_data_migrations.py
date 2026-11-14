@@ -14140,6 +14140,22 @@ def _get_version_change_of_item_for_manual_request_migrations() -> type[VersionC
     )
 
 
+class _OtherItemWithFullName(BaseModel):
+    full_name: str
+
+
+@convert_request_to_next_version_for(_ItemForManualRequestMigrations)
+def _replace_item_with_object_of_other_model(request: RequestInfo):
+    request.body = _OtherItemWithFullName(full_name=request.body.pop("name"))
+
+
+def _get_version_change_that_replaces_item_with_object_of_other_model() -> type[VersionChange]:
+    return version_change(
+        schema(_ItemForManualRequestMigrations).field("full_name").had(name="name"),
+        migrate=_replace_item_with_object_of_other_model,
+    )
+
+
 def _get_version_change_of_item_with_json() -> type[VersionChange]:
     # Routes only encode the parsed values of `Json[...]` fields for the head if the version doesn't change the body
     return version_change(migrate=_migrate_age_of_item_with_json)
@@ -14177,6 +14193,12 @@ def _get_version_change_of_item_with_json() -> type[VersionChange]:
             _get_version_change_of_item_for_manual_request_migrations,
             {"name": "John", "v": 7},
             id="field_with_validation_alias",
+        ),
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            _get_version_change_that_replaces_item_with_object_of_other_model,
+            {"name": "John"},
+            id="object_of_other_model_set_by_migration",
         ),
         pytest.param(
             _ItemWithJsonForManualRequestMigrations,
@@ -14268,6 +14290,23 @@ def test__migrate_request_body__with_migration_that_breaks_the_body__should_rais
         )
     assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("int_parsing", ("age",))]
     assert exc_info.value.version == "2000-01-01"
+
+
+class _NullableRootForManualRequestMigrations(RootModel[Union[str, None]]):
+    pass
+
+
+def test__migrate_request_body__with_migration_that_omits_the_body__should_raise_head_request_validation_error():
+    @convert_request_to_next_version_for(_NullableRootForManualRequestMigrations)
+    def migration(request: RequestInfo):
+        request.body = None
+
+    versions = VersionBundle(*conftest_versions(version_change(migration=migration)))
+
+    # The head would take None, but setting the body to None omits it, as in routes
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        migrate_request_body(versions, _NullableRootForManualRequestMigrations, body="hello", version="2000-01-01")
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("missing", ())]
 
 
 def test__migrate_request_body__with_migration_by_path__should_run_only_migrations_by_schema(test_path: str):

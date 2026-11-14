@@ -83,7 +83,7 @@ def migrate_request_body(
     versioned_request_model = generate_versioned_models(versions)[version][latest_request_model]
     # Like routes, we migrate the data that the client has sent, so the body has the keys of
     # `model_dump(by_alias=True)` and only the fields that the client has set
-    validated_body = versioned_request_model.model_validate(body)
+    validated_body = _validate_request_body(versioned_request_model, body)
     json_values_plan = _get_json_values_plan(latest_request_model, versioned_request_model)
     client_json_strings = _ClientJsonStrings()
     request_info = _get_body_only_request_info(
@@ -100,6 +100,11 @@ def migrate_request_body(
     )
     if has_run_migrations:
         client_json_strings.forget_shared_strings()
+    # A migration that sets the body to None omits it, which a route rejects because the head requires the body
+    if request_info.body is None and request_info._body_is_assigned:
+        raise CadwynHeadRequestValidationError(
+            [{"type": "missing", "loc": (), "msg": "Field required", "input": None}], body=None, version=version
+        )
     replace_enum_members = versions._has_versioned_plain_enums
     migrated_body = _to_head_values(
         request_info.body,
@@ -115,9 +120,14 @@ def migrate_request_body(
             json_values_plan, migrated_body, client_json_strings, has_other_body_readers=lambda: False
         )
     try:
-        return latest_request_model.model_validate(migrated_body)
+        return _validate_request_body(latest_request_model, migrated_body)
     except pydantic.ValidationError as exc:
         raise CadwynHeadRequestValidationError(exc.errors(), body=request_info.body, version=version) from exc
+
+
+def _validate_request_body(model: type[_ModelT], body: Any) -> _ModelT:
+    """Validate a request body as FastAPI does: by the attributes of objects too, and without `model_validate()`"""
+    return model.__pydantic_validator__.validate_python(body, from_attributes=True)
 
 
 def migrate_response_body(
