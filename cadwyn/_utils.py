@@ -13,12 +13,12 @@ from inspect import signature
 from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
 import annotated_types
-import fastapi.params
 import pydantic
 from pydantic._internal._decorators import DecoratedType, unwrap_wrapped_function
 from typing_extensions import ParamSpec, override
 
 if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
     from typing_extensions import TypeIs
 
 Sentinel: Any = object()
@@ -180,7 +180,8 @@ def _get_type_alias_value(alias: Any) -> Any:
 # can run the code of the user's metaclass
 _SCALAR_TYPE_IDS = frozenset(map(id, (type(None), bool, int, float, complex, str, bytes, Decimal)))
 # The dataclasses of pydantic, FastAPI, and annotated_types that can be in field attributes and endpoint attributes,
-# with the fields that hold all of their state
+# with the fields that hold all of their state. Versioning works without FastAPI, so the FastAPI integration adds
+# FastAPI's dataclasses with `_allow_dataclasses_in_attributes()`.
 _ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
     id(cls): tuple(field.name for field in dataclasses.fields(cls))
     for cls in (
@@ -191,8 +192,6 @@ _ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
         pydantic.Strict,
         pydantic.AllowInfNan,
         pydantic.FailFast,
-        fastapi.params.Depends,
-        fastapi.params.Security,
         annotated_types.Gt,
         annotated_types.Ge,
         annotated_types.Lt,
@@ -206,6 +205,13 @@ _ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
         annotated_types.Predicate,
     )
 }
+
+
+def _allow_dataclasses_in_attributes(*classes: "type[DataclassInstance]") -> None:
+    """Let `is_same_value()` compare the instances of these dataclasses by the fields that hold all of their state"""
+    _ALLOWED_TYPE_FIELDS.update({id(cls): tuple(field.name for field in dataclasses.fields(cls)) for cls in classes})
+
+
 _TYPE_VAR_TUPLE = typing.TypeVarTuple("_TYPE_VAR_TUPLE")
 _PARAM_SPEC = typing.ParamSpec("_PARAM_SPEC")
 # Type hints implemented in C, such as list[int], *tuple[int, ...], and int | str, with the attributes that hold all of

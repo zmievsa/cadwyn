@@ -1,5 +1,7 @@
 import importlib.metadata
 
+# The FastAPI integration gives the versioning modules what they need from FastAPI, so it must come first
+from ._internal import fastapi_bindings as fastapi_bindings
 from .applications import Cadwyn
 from .dependencies import current_dependency_solver
 from .route_generation import VersionedAPIRouter, generate_versioned_routers

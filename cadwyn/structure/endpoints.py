@@ -1,12 +1,13 @@
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union
 
-from fastapi import Response
-from fastapi.params import Depends
-from fastapi.routing import APIRoute
-from starlette.routing import BaseRoute
+if TYPE_CHECKING:
+    from fastapi import Response
+    from fastapi.params import Depends
+    from fastapi.routing import APIRoute
+    from starlette.routing import BaseRoute
 
 from cadwyn.exceptions import LintingError
 
@@ -38,7 +39,7 @@ class EndpointAttributesPayload:
     # overwrite all dependencies of a route at once. Hence you always know exactly
     # which dependencies have been specified, no matter how many migrations you have.
 
-    dependencies: Sequence[Depends]
+    dependencies: "Sequence[Depends]"
     summary: str
     description: str
     response_description: str
@@ -47,11 +48,11 @@ class EndpointAttributesPayload:
     methods: set[str]
     operation_id: str
     include_in_schema: bool
-    response_class: type[Response]
+    response_class: "type[Response]"
     name: str
-    callbacks: list[BaseRoute]
+    callbacks: "list[BaseRoute]"
     openapi_extra: dict[str, Any]
-    generate_unique_id_function: Callable[[APIRoute], str]
+    generate_unique_id_function: "Callable[[APIRoute], str]"
 
 
 @dataclass(**DATACLASS_SLOTS)
@@ -105,7 +106,7 @@ class EndpointInstructionFactory:
         response_model: Any = Sentinel,
         status_code: int = Sentinel,
         tags: list[Union[str, Enum]] = Sentinel,
-        dependencies: Sequence[Depends] = Sentinel,
+        dependencies: "Sequence[Depends]" = Sentinel,
         summary: str = Sentinel,
         description: str = Sentinel,
         response_description: str = Sentinel,
@@ -114,11 +115,11 @@ class EndpointInstructionFactory:
         methods: list[str] = Sentinel,
         operation_id: str = Sentinel,
         include_in_schema: bool = Sentinel,
-        response_class: type[Response] = Sentinel,
+        response_class: "type[Response]" = Sentinel,
         name: str = Sentinel,
-        callbacks: list[BaseRoute] = Sentinel,
+        callbacks: "list[BaseRoute]" = Sentinel,
         openapi_extra: dict[str, Any] = Sentinel,
-        generate_unique_id_function: Callable[[APIRoute], str] = Sentinel,
+        generate_unique_id_function: "Callable[[APIRoute], str]" = Sentinel,
     ) -> EndpointHadInstruction:
         instruction = EndpointHadInstruction(
             endpoint_path=self.endpoint_path,

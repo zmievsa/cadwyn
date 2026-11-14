@@ -1,0 +1,25 @@
+"""What Cadwyn's versioning modules get from FastAPI once the FastAPI integration is imported.
+
+Versions, version changes, and schema instructions work without FastAPI, so their modules don't import it. They only
+name FastAPI's classes in annotations, which runtime annotation introspection (e.g. `typing.get_type_hints()`) resolves
+in their namespaces, and FastAPI's dataclasses can be in the attributes that they compare.
+"""
+
+import fastapi.params
+from fastapi import Response
+from fastapi.params import Depends
+from fastapi.routing import APIRoute, APIWebSocketRoute
+from starlette.routing import BaseRoute
+
+from cadwyn import _utils, exceptions
+from cadwyn.structure import endpoints
+
+_utils._allow_dataclasses_in_attributes(fastapi.params.Depends, fastapi.params.Security)
+
+exceptions.APIRoute = APIRoute
+exceptions.APIWebSocketRoute = APIWebSocketRoute
+
+endpoints.Response = Response
+endpoints.Depends = Depends
+endpoints.APIRoute = APIRoute
+endpoints.BaseRoute = BaseRoute
