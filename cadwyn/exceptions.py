@@ -1,7 +1,19 @@
-from typing import TYPE_CHECKING, Any, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Self, TypeVar, Union
+
+from typing_extensions import override
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute, APIWebSocketRoute
+
+
+_ExceptionT = TypeVar("_ExceptionT", bound=BaseException)
+
+
+def _restore_exception(cls: type[_ExceptionT], args: tuple[Any, ...]) -> _ExceptionT:
+    exception = cls.__new__(cls, *args)
+    exception.args = args
+    return exception
 
 
 class CadwynRenderError(Exception):
@@ -23,6 +35,12 @@ class CadwynHeadRequestValidationError(CadwynError):
             "to migrate the request of that version to latest.\n"
             f"body={self.body}\n\nerrors={self.errors}"
         )
+
+    @override
+    def __reduce__(self) -> tuple[Callable[..., Self], tuple[type[Self], tuple[Any, ...]], dict[str, Any]]:
+        # Pickling and copying would call the class with the message, which `__init__` doesn't take, e.g. when a worker
+        # process raises the error. We restore its message, attributes, and notes without calling `__init__`.
+        return _restore_exception, (type(self), self.args), self.__dict__
 
 
 class LintingError(CadwynError):
