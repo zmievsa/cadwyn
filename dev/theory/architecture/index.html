@@ -2010,7 +2010,7 @@
 </tr>
 <tr>
 <td><code>cadwyn/_internal/fastapi_bindings.py</code></td>
-<td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: the FastAPI names in their annotations and FastAPI's dataclasses that <code>is_same_value()</code> compares. <code>tests/test_imports_without_fastapi.py</code> lists these modules.</td>
+<td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: <code>cadwyn.structure</code>, <code>cadwyn.schema_generation</code>, <code>cadwyn.exceptions</code>, and <code>cadwyn._utils</code>. It binds the FastAPI names in their annotations, registers FastAPI's classes that they recognize in annotations and attributes, and imports the submodules of <code>cadwyn.structure.versions</code> that migrate requests and responses in routes. <code>tests/test_imports_without_fastapi.py</code> checks that the others work without FastAPI.</td>
 </tr>
 <tr>
 <td><code>cadwyn/__main__.py</code>, <code>_render.py</code>, <code>_asts.py</code></td>
