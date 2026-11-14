@@ -112,14 +112,15 @@ _Call = TypeVar("_Call", bound=Callable[..., Any])
 
 # Versioning works without FastAPI, so we only look for FastAPI's classes in annotations once FastAPI has imported
 # them. Their objects can't exist before that.
+# A module that is still being imported might not have defined the class yet.
 def _get_fastapi_depends_classes() -> "tuple[type[fastapi.params.Depends], ...]":
-    params = sys.modules.get("fastapi.params")
-    return () if params is None else (params.Depends,)
+    depends = getattr(sys.modules.get("fastapi.params"), "Depends", None)
+    return () if depends is None else (depends,)
 
 
 def _get_fastapi_security_base_classes() -> "tuple[type[fastapi.security.base.SecurityBase], ...]":
-    security_base = sys.modules.get("fastapi.security.base")
-    return () if security_base is None else (security_base.SecurityBase,)
+    security_base = getattr(sys.modules.get("fastapi.security.base"), "SecurityBase", None)
+    return () if security_base is None else (security_base,)
 
 
 @final

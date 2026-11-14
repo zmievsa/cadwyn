@@ -220,11 +220,13 @@ def _get_allowed_type_fields(type_id: int) -> Union[tuple[str, ...], None]:
     if fields is not None:
         return fields
     for module_name, class_name in _FASTAPI_DATACLASSES:
-        module = sys.modules.get(module_name)
-        if module is not None:
-            cls: type[DataclassInstance] = getattr(module, class_name)
-            _ALLOWED_TYPE_FIELDS.setdefault(id(cls), tuple(field.name for field in dataclasses.fields(cls)))
-    return _ALLOWED_TYPE_FIELDS.get(type_id)
+        # A module that is still being imported might not have defined the class yet
+        cls: Union[type[DataclassInstance], None] = getattr(sys.modules.get(module_name), class_name, None)
+        if cls is not None and id(cls) == type_id:
+            fields = tuple(field.name for field in dataclasses.fields(cls))
+            _ALLOWED_TYPE_FIELDS[type_id] = fields
+            return fields
+    return None
 
 
 _TYPE_VAR_TUPLE = typing.TypeVarTuple("_TYPE_VAR_TUPLE")
