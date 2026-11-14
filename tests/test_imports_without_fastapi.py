@@ -6,7 +6,9 @@ built from. They run in a process that can't import any installed package beside
 requires.
 """
 
+import ast
 import importlib.metadata
+import importlib.util
 import subprocess
 import sys
 import textwrap
@@ -43,13 +45,16 @@ _BLOCK_OTHER_INSTALLED_PACKAGES = textwrap.dedent(
     import sysconfig
     import types
 
-    cadwyn_dir, allowed_packages = sys.argv[1:]
+    cadwyn_dir, allowed_packages, modules_of_fastapi_integration = sys.argv[1:]
     allowed = {"cadwyn", *allowed_packages.split(",")}
+    fastapi_integration = set(modules_of_fastapi_integration.split(","))
     installed_package_dirs = tuple({sysconfig.get_path("purelib"), sysconfig.get_path("platlib")})
 
 
     class OnlyAllowedInstalledPackages(importlib.abc.MetaPathFinder):
         def find_spec(self, fullname, path, target=None):
+            if fullname in fastapi_integration:
+                raise ModuleNotFoundError(f"{fullname} is a module of the FastAPI integration", name=fullname)
             if fullname.partition(".")[0] in allowed:
                 return None
             spec = importlib.machinery.PathFinder.find_spec(fullname, path)
@@ -89,6 +94,72 @@ _BLOCK_OTHER_INSTALLED_PACKAGES = textwrap.dedent(
 )
 
 
+# The modules of Cadwyn that need FastAPI, which the modules that standalone use is built from must not import
+_MODULES_OF_FASTAPI_INTEGRATION = frozenset(
+    (
+        "cadwyn.__main__",
+        "cadwyn._importer",
+        "cadwyn._internal.fastapi_bindings",
+        "cadwyn._render",
+        "cadwyn.applications",
+        "cadwyn.dependencies",
+        "cadwyn.middleware",
+        "cadwyn.route_generation",
+        "cadwyn.routing",
+        *(
+            f"cadwyn.structure.versions.{name}"
+            for name in (
+                "_background",
+                "_body_inputs",
+                "_compat",
+                "_dependencies",
+                "_forms",
+                "_request_body",
+                "_requests",
+                "_responses",
+                "_uploads",
+                "_versioned_endpoints",
+            )
+        ),
+    )
+)
+_CADWYN_DIR = Path(cadwyn.__file__).parent
+_MODULES_OF_STANDALONE_USE = sorted(
+    name
+    for path in (
+        _CADWYN_DIR / "_utils.py",
+        _CADWYN_DIR / "_asts.py",
+        _CADWYN_DIR / "exceptions.py",
+        *(_CADWYN_DIR / "structure").rglob("*.py"),
+        *(_CADWYN_DIR / "schema_generation").rglob("*.py"),
+    )
+    if (name := ".".join(path.relative_to(_CADWYN_DIR.parent).with_suffix("").parts).removesuffix(".__init__"))
+    not in _MODULES_OF_FASTAPI_INTEGRATION
+)
+
+
+@pytest.mark.parametrize("module_name", _MODULES_OF_STANDALONE_USE)
+def test__module_of_standalone_use__should_not_import_the_fastapi_integration_even_for_type_checking(module_name: str):
+    path = _CADWYN_DIR.parent.joinpath(*module_name.split("."))
+    path = path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
+    package = module_name if path.name == "__init__.py" else module_name.rpartition(".")[0]
+
+    imported = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = (
+                importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+                if node.level
+                else node.module
+            )
+            imported.add(base)
+            imported.update(f"{base}.{alias.name}" for alias in node.names)
+
+    assert not imported & _MODULES_OF_FASTAPI_INTEGRATION
+
+
 def _run_without_fastapi(code: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -97,6 +168,7 @@ def _run_without_fastapi(code: str) -> subprocess.CompletedProcess[str]:
             _BLOCK_OTHER_INSTALLED_PACKAGES + textwrap.dedent(code),
             str(Path(cadwyn.__file__).parent),
             ",".join(sorted(_get_import_names_of_pydantic_and_its_requirements())),
+            ",".join(sorted(_MODULES_OF_FASTAPI_INTEGRATION)),
         ],
         capture_output=True,
         text=True,
@@ -114,7 +186,7 @@ def test__import__without_fastapi_and_its_dependencies__should_succeed(module_na
 
 
 _VERSIONS_OF_USERS = """
-    from pydantic import BaseModel
+    from pydantic import BaseModel, Field
 
     from cadwyn.exceptions import CadwynError
     from cadwyn.schema_generation import generate_versioned_models, migrate_request, migrate_response
@@ -163,6 +235,25 @@ def test__generate_versioned_models__without_fastapi_and_its_dependencies__shoul
         _VERSIONS_OF_USERS
         + """
     assert list(generate_versioned_models(versions)["2000-01-01"][User].model_fields) == ["name"]
+
+
+    class Marker:
+        pass
+
+
+    class Item(BaseModel):
+        value: int = Field(json_schema_extra={"marker": Marker()})
+
+
+    class ChangeTheMarker(VersionChange):
+        description = "Compares attributes of types that Cadwyn doesn't know"
+        instructions_to_migrate_to_previous_version = (
+            schema(Item).field("value").had(json_schema_extra={"marker": Marker()}),
+        )
+
+
+    other_versions = VersionBundle(Version("2001-01-01", ChangeTheMarker), Version("2000-01-01"))
+    assert generate_versioned_models(other_versions)["2000-01-01"][Item].model_fields["value"].json_schema_extra
     """
     )
 

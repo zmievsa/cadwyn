@@ -6,10 +6,12 @@ through these, so the migrations give the same body either way. Only routes run 
 
 from collections.abc import (
     Callable,  # Needed by runtime annotation introspection.
+    Iterable,  # Needed by runtime annotation introspection.
 )
 from typing import (
     TYPE_CHECKING,
     Any,
+    Protocol,
     Union,
 )
 
@@ -33,7 +35,12 @@ if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 
     from ._bundle import VersionBundle
-    from ._uploads import _UploadsToClose
+
+
+class _Uploads(Protocol):
+    """The uploads that routes close after the response, which the migrations of forms can add"""
+
+    def add(self, form: "Iterable[tuple[str, Any]]") -> None: ...
 
 
 def _dump_request_body(body: BaseModel) -> dict[str, Any]:
@@ -50,7 +57,7 @@ def _dump_request_body(body: BaseModel) -> dict[str, Any]:
 
 
 def _run_request_migration(
-    migration: Callable[[RequestInfo], None], request_info: RequestInfo, uploads: "Union[_UploadsToClose, None]"
+    migration: Callable[[RequestInfo], None], request_info: RequestInfo, uploads: "Union[_Uploads, None]"
 ) -> None:
     try:
         migration(request_info)
@@ -67,7 +74,7 @@ def _run_request_migrations(
     body_target: "_SchemaMigrationTarget",
     get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
     head_route: "Union[APIRoute, None]",
-    uploads: "Union[_UploadsToClose, None]",
+    uploads: "Union[_Uploads, None]",
     to_version: Union[VersionType, None] = None,
 ) -> bool:
     """Run the request migrations from the request's version up to to_version or head, and return whether any has run.

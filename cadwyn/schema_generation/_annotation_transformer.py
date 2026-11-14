@@ -40,6 +40,7 @@ from cadwyn._utils import (
     lenient_issubclass,
 )
 from cadwyn.exceptions import SchemaGenerationError
+from cadwyn.structure.versions._common import _DELETED_ROUTE_TAG
 
 from ._annotation_evaluation import (
     _UNRESOLVED,
@@ -107,10 +108,19 @@ if TYPE_CHECKING:
     )
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
-# Versioning works without FastAPI, so the FastAPI integration gives us the classes of FastAPI that annotations can
-# hold. Without FastAPI, nothing can be one of them.
-_FASTAPI_DEPENDS_CLASSES: "tuple[type[fastapi.params.Depends], ...]" = ()
-_FASTAPI_SECURITY_BASE_CLASSES: "tuple[type[fastapi.security.base.SecurityBase], ...]" = ()
+
+
+# Versioning works without FastAPI, so we only look for FastAPI's classes in annotations once FastAPI has imported
+# them. Their objects can't exist before that.
+# A module that is still being imported might not have defined the class yet.
+def _get_fastapi_depends_classes() -> "tuple[type[fastapi.params.Depends], ...]":
+    depends = getattr(sys.modules.get("fastapi.params"), "Depends", None)
+    return () if depends is None else (depends,)
+
+
+def _get_fastapi_security_base_classes() -> "tuple[type[fastapi.security.base.SecurityBase], ...]":
+    security_base = getattr(sys.modules.get("fastapi.security.base"), "SecurityBase", None)
+    return () if security_base is None else (security_base,)
 
 
 @final
@@ -293,8 +303,6 @@ class _AnnotationTransformer:
         # Only route generation versions routes, so FastAPI is there
         import fastapi.routing
 
-        from cadwyn.route_generation import _DELETED_ROUTE_TAG
-
         for route in router.routes:
             if not isinstance(route, fastapi.routing.APIRoute) or _DELETED_ROUTE_TAG in route.tags:
                 continue
@@ -378,7 +386,7 @@ class _AnnotationTransformer:
                     self._record_type_alias(annotation)
                     return annotation
                 return self._copy_type_alias(annotation)
-        elif isinstance(annotation, _FASTAPI_DEPENDS_CLASSES):
+        elif isinstance(annotation, _get_fastapi_depends_classes()):
             with self.hard_position():
                 if self.record_only:
                     self.change_versions_of_a_non_container_annotation(
@@ -633,7 +641,7 @@ class _AnnotationTransformer:
         ):
             if type(annotation).__module__.startswith(
                 ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, _FASTAPI_SECURITY_BASE_CLASSES):
+            ) or isinstance(annotation, _get_fastapi_security_base_classes()):
                 return annotation
             # Special forms such as typing.Self are callable but they are not functions
             if type(annotation).__module__ in {"typing", "typing_extensions"}:
@@ -822,7 +830,7 @@ class _AnnotationTransformer:
         return (
             generator.schema_generator is generator
             and any(
-                isinstance(value, _FASTAPI_DEPENDS_CLASSES)
+                isinstance(value, _get_fastapi_depends_classes())
                 # FastAPI infers the dependency from the type when it is not set (e.g. `Annotated[Params, Depends()]`)
                 and generator.dependency_differs_from_head(
                     annotated_args[0] if value.dependency is None else value.dependency
@@ -834,7 +842,8 @@ class _AnnotationTransformer:
     @staticmethod
     def _has_inferred_dependency(annotated_args: tuple[Any, ...]) -> bool:
         return any(
-            isinstance(value, _FASTAPI_DEPENDS_CLASSES) and value.dependency is None for value in annotated_args[1:]
+            isinstance(value, _get_fastapi_depends_classes()) and value.dependency is None
+            for value in annotated_args[1:]
         )
 
     def _change_version_of_generic_arg(self, origin: Any, index: int, arg: Any) -> Any:

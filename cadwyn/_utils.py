@@ -179,9 +179,8 @@ def _get_type_alias_value(alias: Any) -> Any:
 # We look types up by their ids in tables built here, because hashing or comparing a type, or reading its attributes,
 # can run the code of the user's metaclass
 _SCALAR_TYPE_IDS = frozenset(map(id, (type(None), bool, int, float, complex, str, bytes, Decimal)))
-# The dataclasses of pydantic, FastAPI, and annotated_types that can be in field attributes and endpoint attributes,
-# with the fields that hold all of their state. Versioning works without FastAPI, so the FastAPI integration adds
-# FastAPI's dataclasses with `_allow_dataclasses_in_attributes()`.
+# The dataclasses of pydantic and annotated_types that can be in field attributes and endpoint attributes, with the
+# fields that hold all of their state. `_get_allowed_type_fields()` adds the ones of FastAPI.
 _ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
     id(cls): tuple(field.name for field in dataclasses.fields(cls))
     for cls in (
@@ -207,9 +206,27 @@ _ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
 }
 
 
-def _allow_dataclasses_in_attributes(*classes: "type[DataclassInstance]") -> None:
-    """Let `is_same_value()` compare the instances of these dataclasses by the fields that hold all of their state"""
-    _ALLOWED_TYPE_FIELDS.update({id(cls): tuple(field.name for field in dataclasses.fields(cls)) for cls in classes})
+# FastAPI's dataclasses that can be in field attributes and endpoint attributes, by their modules
+_FASTAPI_DATACLASSES = (("fastapi.params", "Depends"), ("fastapi.params", "Security"))
+
+
+def _get_allowed_type_fields(type_id: int) -> Union[tuple[str, ...], None]:
+    """Return the fields that hold all of the state of an allowed dataclass, or None if the type isn't one.
+
+    Versioning works without FastAPI, so we only add FastAPI's dataclasses once FastAPI has imported them. Their
+    objects can't exist before that, so whether we have added them never changes the result.
+    """
+    fields = _ALLOWED_TYPE_FIELDS.get(type_id)
+    if fields is not None:
+        return fields
+    for module_name, class_name in _FASTAPI_DATACLASSES:
+        # A module that is still being imported might not have defined the class yet
+        cls: Union[type[DataclassInstance], None] = getattr(sys.modules.get(module_name), class_name, None)
+        if cls is not None and id(cls) == type_id:
+            fields = tuple(field.name for field in dataclasses.fields(cls))
+            _ALLOWED_TYPE_FIELDS[type_id] = fields
+            return fields
+    return None
 
 
 _TYPE_VAR_TUPLE = typing.TypeVarTuple("_TYPE_VAR_TUPLE")
@@ -314,10 +331,11 @@ def _have_same_contents(left: Any, right: Any, pairs_being_compared: set[tuple[i
         right_items = {item: item for item in right}
         return all(_is_same_value(item, right_items[item], pairs_being_compared) for item in left)
     type_id = id(value_type)
-    if type_id in _ALLOWED_TYPE_FIELDS:
+    allowed_type_fields = _get_allowed_type_fields(type_id)
+    if allowed_type_fields is not None:
         return _are_same_sequences(
-            [_read_attribute_statically(left, name) for name in _ALLOWED_TYPE_FIELDS[type_id]],
-            [_read_attribute_statically(right, name) for name in _ALLOWED_TYPE_FIELDS[type_id]],
+            [_read_attribute_statically(left, name) for name in allowed_type_fields],
+            [_read_attribute_statically(right, name) for name in allowed_type_fields],
             pairs_being_compared,
         )
     if type_id in _C_TYPE_HINT_ATTRIBUTES:
