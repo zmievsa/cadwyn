@@ -1,7 +1,7 @@
 """The loops that run data migrations, which routes and standalone use share.
 
-Routes and `migrate_request_body()` / `migrate_response_body()` run the same migrations by schema through these, so
-the migrations give the same body either way. Only routes run migrations by path.
+Routes, `migrate_request()`, `migrate_response()`, and `migrate_response_body()` run the same migrations by schema
+through these, so the migrations give the same body either way. Only routes run migrations by path.
 """
 
 from collections.abc import (
@@ -22,6 +22,7 @@ from cadwyn.structure.data import (
     _BaseAlterResponseInstruction,
 )
 
+from ._aliases import _get_restorer_spec, _is_dumped_from_models
 from ._migration_targets import (
     _get_schema_migrations,
     _no_union_member,
@@ -70,7 +71,7 @@ def _run_request_migrations(
 ) -> bool:
     """Run the request migrations from the request's version up to head, and return whether any of them has run.
 
-    Routes and `migrate_request_body()` both migrate requests with it. Without a route, only migrations by schema run.
+    Routes and `migrate_request()` both migrate requests with it. Without a route, only migrations by schema run.
     """
     start = versions.reversed_version_values.index(current_version)
     has_run_migrations = False
@@ -115,6 +116,64 @@ def _migrate_response(
                 migrations_to_apply.extend(version_change._route_to_response_migration_mapping[head_route_id])
 
             for migration in migrations_to_apply:
+                # Once a migration turns the response into an error, the older migrations that are written for its
+                # successful body must not run on the error body, unless they migrate HTTP errors
                 if response_info.status_code < 300 or migration.migrate_http_errors:
                     migration(response_info)
     return response_info
+
+
+def _prepare_response_content(
+    res: Any,
+    *,
+    exclude_unset: bool,
+    exclude_defaults: bool = False,
+    exclude_none: bool = False,
+) -> Any:
+    """Serialize Pydantic models to dicts for response processing.
+
+    It is much easier to alter dicts and lists than Pydantic models in request/response migrations
+    """
+    if isinstance(res, BaseModel):
+        return res.model_dump(
+            by_alias=True,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+        )
+    elif isinstance(res, list):
+        return [
+            _prepare_response_content(
+                item,
+                exclude_unset=exclude_unset,
+                exclude_defaults=exclude_defaults,
+                exclude_none=exclude_none,
+            )
+            for item in res
+        ]
+    elif isinstance(res, dict):
+        return {
+            k: _prepare_response_content(
+                v,
+                exclude_unset=exclude_unset,
+                exclude_defaults=exclude_defaults,
+                exclude_none=exclude_none,
+            )
+            for k, v in res.items()
+        }
+    return res
+
+
+def _keep_restored_dumps_of_head_models(restored: Any, data: Any, head_response_model: object, content: Any) -> Any:
+    """Return the migrated response data with its validation aliases restored, if it's the dump of head models.
+
+    We only restore the dumps of the models of the head response model that the endpoint returned. FastAPI validates
+    the dicts that the endpoint returns as they are, and the dump of another model can have the dumped keys of
+    a response model with values that it doesn't accept.
+    """
+    if restored is data:
+        return data
+    head_spec = _get_restorer_spec(head_response_model)
+    if head_spec is None or not _is_dumped_from_models(content, head_spec):
+        return data
+    return restored

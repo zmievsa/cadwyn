@@ -9,11 +9,12 @@ with pytest.MonkeyPatch.context() as monkeypatch:
     monkeypatch.setitem(sys.modules, "users", users)
     monkeypatch.setitem(sys.modules, "versions", versions)
     from docs_src.concepts.version_changes.block011 import (
-        body_from_2000_01_01,
+        response_from_2000_01_01,
     )
 
 
-def test__migrate_response_body__to_2000_01_01__should_run_converters_and_wrap_in_the_versioned_model():
-    assert type(body_from_2000_01_01).__name__ == "UserResource"
-    assert type(body_from_2000_01_01) is not UserResource
-    assert body_from_2000_01_01.model_dump() == {"full_name": "John"}
+def test__migrate_response__to_2000_01_01__should_run_migrations_and_return_the_versioned_model():
+    assert type(response_from_2000_01_01.body).__name__ == "UserResource"
+    assert type(response_from_2000_01_01.body) is not UserResource
+    assert response_from_2000_01_01.body.model_dump() == {"full_name": "John"}
+    assert response_from_2000_01_01.status_code == 200

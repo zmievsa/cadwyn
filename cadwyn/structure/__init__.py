@@ -1,4 +1,6 @@
 from .data import (
+    MigratedRequest,
+    MigratedResponse,
     RequestInfo,
     ResponseInfo,
     convert_request_to_next_version_for,
@@ -17,6 +19,8 @@ from .versions import (
 
 __all__ = [
     "HeadVersion",
+    "MigratedRequest",
+    "MigratedResponse",
     "RequestInfo",
     "ResponseInfo",
     "Version",
