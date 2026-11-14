@@ -7,6 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
+- `cadwyn` now installs `cadwyn-core` in the same version, a new package for Cadwyn's versioning without FastAPI, which is empty for now. `cadwyn` and `cadwyn_core` fail at import, naming both versions, if their versions differ or `cadwyn-core` is missing ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 - `migrate_request()` and `migrate_response()` migrate requests and responses outside of routes, e.g. for webhooks, messages in queues, or APIs that aren't built with FastAPI. They run the same migrations by schema as routes and do what routes do around them, take and return the body, the headers, the cookies, and the query params or the status code, and return them in the new `MigratedRequest` and `MigratedResponse`. They also migrate between two older versions with `to_version` and `from_version`. They run the migrations in the client's version, as routes do, and raise a `CadwynError` for model objects of other versions instead of migrating their data again. The new "Migrate data outside of routes" how-to guide shows how to move from `migrate_response_body()`, which works as before ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 
 ### Changed

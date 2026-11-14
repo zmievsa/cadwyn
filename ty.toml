@@ -1,4 +1,5 @@
 [environment]
+root = [".", "./cadwyn-core"]
 python-platform = "all"
 
 [analysis]
