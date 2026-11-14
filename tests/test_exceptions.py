@@ -38,7 +38,8 @@ def test__cadwyn_head_request_validation_error__when_pickled_or_copied__should_r
 ):
     error = make_error()
     error.add_note("in worker 42")
-    error.task_id = "42"  # ty: ignore[unresolved-attribute]  # Attributes that the code that raises it sets
+    # E.g. an attribute that the code that raises the error sets
+    error.__dict__["task_id"] = "42"
 
     restored = restore(error)
 
@@ -50,4 +51,4 @@ def test__cadwyn_head_request_validation_error__when_pickled_or_copied__should_r
         str(error),
         error.args,
     )
-    assert (restored.__notes__, restored.task_id) == (["in worker 42"], "42")
+    assert (restored.__notes__, restored.__dict__["task_id"]) == (["in worker 42"], "42")
