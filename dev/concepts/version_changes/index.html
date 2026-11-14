@@ -638,6 +638,8 @@
       
         
       
+        
+      
     
     
     
@@ -1001,6 +1003,34 @@
     
   
     Change endpoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/migrate_data_outside_of_routes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate data outside of routes
   
 
     
@@ -1460,10 +1490,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#manual-body-migrations" class="md-nav__link">
+  <a href="#migrations-outside-of-routes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Manual body migrations
+        Migrations outside of routes
       
     </span>
   </a>
@@ -2155,10 +2185,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#manual-body-migrations" class="md-nav__link">
+  <a href="#migrations-outside-of-routes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Manual body migrations
+        Migrations outside of routes
       
     </span>
   </a>
@@ -2619,31 +2649,35 @@ Changes:
     <span class="p">)</span>
 </code></pre></div>
 <p>Yes, you no longer need any of the migrations because responses are handled automatically. See the how-to section for an example of how to achieve the same result with requests.</p>
-<h4 id="manual-body-migrations">Manual body migrations<a class="headerlink" href="#manual-body-migrations" title="Permanent link">&para;</a></h4>
-<p>Often you will need to migrate your data outside of routing, manually. For example, you might need to send a versioned response to your client via a webhook or inside a worker/cronjob. In these cases, use <code>cadwyn.schema_generation.migrate_response_body()</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn.schema_generation</span><span class="w"> </span><span class="kn">import</span> <span class="n">migrate_response_body</span>
+<h4 id="migrations-outside-of-routes">Migrations outside of routes<a class="headerlink" href="#migrations-outside-of-routes" title="Permanent link">&para;</a></h4>
+<p>Sometimes you need to migrate data outside of routes, e.g. to send a webhook or a message from a worker in a client's version, to read a message that a client of an older version has put into a queue, or to version an API that isn't built with FastAPI. Use <code>migrate_response()</code> and <code>migrate_request()</code> for that. They run the same migrations by schema as routes, so the same version changes give the same data either way. Migrations by path don't run, since there is no route.</p>
+<p><code>migrate_response()</code> does what a route does with what your endpoint returns:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">migrate_response</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">users</span><span class="w"> </span><span class="kn">import</span> <span class="n">UserResource</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">versions</span>
 
-<span class="n">body_from_2000_01_01</span> <span class="o">=</span> <span class="n">migrate_response_body</span><span class="p">(</span>
-    <span class="n">versions</span><span class="p">,</span> <span class="n">UserResource</span><span class="p">,</span> <span class="n">latest_body</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;John&quot;</span><span class="p">},</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;2000-01-01&quot;</span>
+<span class="n">response_from_2000_01_01</span> <span class="o">=</span> <span class="n">migrate_response</span><span class="p">(</span>
+    <span class="n">versions</span><span class="p">,</span> <span class="n">UserResource</span><span class="p">,</span> <span class="n">body</span><span class="o">=</span><span class="n">UserResource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;John&quot;</span><span class="p">),</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;2000-01-01&quot;</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>The returned <code>body_from_2000_01_01</code> is your data passed through the migrations by schema of <code>UserResource</code> (migrations by path don't run, since there is no route) and wrapped in the <code>2000-01-01</code> version of <code>UserResource</code>. Because the data is wrapped, you can include Pydantic’s defaults.</p>
-<p>To migrate data that a client of an older version has sent you outside of routing, e.g. a message from a queue, use <code>cadwyn.schema_generation.migrate_request_body()</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn.schema_generation</span><span class="w"> </span><span class="kn">import</span> <span class="n">migrate_request_body</span>
+<p>It turns the models in <code>body</code> into data, as routes do, passes it through the migrations by schema of <code>UserResource</code> from HEAD down to <code>2000-01-01</code>, and validates the result with the <code>2000-01-01</code> version of <code>UserResource</code>. It returns a <code>MigratedResponse</code> with that <code>body</code>, the <code>status_code</code>, which is 200 unless you pass another one, and the <code>headers</code>, which include the cookies that the migrations set. If a migration turns the response into an error (a status code of 300 or more), <code>body</code> is the error body as the migrations have left it, because it's not a <code>UserResource</code> anymore, and the older migrations that don't set <code>migrate_http_errors=True</code> don't run, as in routes.</p>
+<p>Like route responses, <code>migrate_response()</code> restores validation aliases only when missing keys would certainly fail validation, such as required fields or forbidden extras. In other cases, make migrations set validation keys explicitly, e.g. <code>v</code> for <code>Field(alias="x", validation_alias="v")</code>. Restored bodies are validated once and report their own errors; aliased fields whose defaults come only from custom core schemas keep supplied values or reject invalid ones instead of silently using defaults. To request the default, delete the value in a response migration, or from <code>body</code> before calling <code>migrate_response()</code>.</p>
+<p><code>migrate_request()</code> does what a route does with a request before it calls your endpoint:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">migrate_request</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">users</span><span class="w"> </span><span class="kn">import</span> <span class="n">UserCreateRequest</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">versions</span>
 
-<span class="n">request_body_from_2000_01_01</span> <span class="o">=</span> <span class="n">migrate_request_body</span><span class="p">(</span>
+<span class="n">request_from_2000_01_01</span> <span class="o">=</span> <span class="n">migrate_request</span><span class="p">(</span>
     <span class="n">versions</span><span class="p">,</span>
     <span class="n">UserCreateRequest</span><span class="p">,</span>
     <span class="n">body</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;full_name&quot;</span><span class="p">:</span> <span class="s2">&quot;John&quot;</span><span class="p">},</span>
     <span class="n">version</span><span class="o">=</span><span class="s2">&quot;2000-01-01&quot;</span><span class="p">,</span>
+    <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;x-request-id&quot;</span><span class="p">:</span> <span class="s2">&quot;42&quot;</span><span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>It does what a route does with a request body before it calls your endpoint: it validates the body with the <code>2000-01-01</code> version of <code>UserCreateRequest</code>, passes the data that the client has set through the migrations by schema of <code>UserCreateRequest</code> up to HEAD, and returns the HEAD <code>UserCreateRequest</code> that your business logic expects. Migrations by path don't run, since there is no route. If the body doesn't fit its version, you get Pydantic's <code>ValidationError</code>. If the migrated body doesn't fit HEAD, or a migration sets it to <code>None</code>, which omits the body, you get <code>CadwynHeadRequestValidationError</code>, which means that your migrations are wrong. There is no HTTP request either, so a migration that uses <code>request.headers</code>, <code>request.cookies</code>, or <code>request.query_params</code> raises a <code>CadwynError</code> instead of losing what it reads or changes, and <code>request.form</code> is <code>None</code>.</p>
-<p>Like route responses, <code>migrate_response_body()</code> restores validation aliases only when missing keys would certainly fail validation, such as required fields or forbidden extras. In other cases, make migrations set validation keys explicitly, e.g. <code>v</code> for <code>Field(alias="x", validation_alias="v")</code>. Restored bodies are validated once and report their own errors; aliased fields whose defaults come only from custom core schemas keep supplied values or reject invalid ones instead of silently using defaults. To request the default, delete the value in a response migration, or from <code>latest_body</code> before calling <code>migrate_response_body()</code>.</p>
+<p>It validates the body with the <code>2000-01-01</code> version of <code>UserCreateRequest</code>, passes the data that the client has set through the migrations by schema of <code>UserCreateRequest</code> up to HEAD, and returns a <code>MigratedRequest</code> with the HEAD <code>UserCreateRequest</code> that your business logic expects as its <code>body</code>, and the migrated <code>headers</code>, <code>cookies</code>, and <code>query_params</code>. If the body doesn't fit its version, you get Pydantic's <code>ValidationError</code>. If the migrated body doesn't fit HEAD, or a migration sets it to <code>None</code>, which omits the body, you get <code>CadwynHeadRequestValidationError</code>, which means that your migrations are wrong. <code>request.form</code> is always <code>None</code>.</p>
+<p>Both functions take a model, not a union: to migrate the body of a member of a union, pass the model of that member, which runs the migrations of that member. Both give the migrations empty HTTP details for the ones that you don't pass. Headers need Starlette, which FastAPI installs: without it, you can't pass headers, migrations get <code>None</code> for them, and the <code>headers</code> of the results are <code>None</code>.</p>
+<p><code>migrate_response_body()</code> is the older way to migrate responses outside of routes, and it works as before. Its migrations get <code>latest_body</code> as you pass it, without turning models into data, and a response with the status code 200 whose headers and cookies it throws away, and it returns only the body. See <a href="../../how_to/migrate_data_outside_of_routes/">how to migrate data outside of routes</a> to move to <code>migrate_response()</code>.</p>
 <h4 id="streamingresponse-and-fileresponse-migrations">StreamingResponse and FileResponse migrations<a class="headerlink" href="#streamingresponse-and-fileresponse-migrations" title="Permanent link">&para;</a></h4>
 <p>Migrations for the bodies of <code>fastapi.responses.StreamingResponse</code> and <code>fastapi.responses.FileResponse</code> are not directly supported yet (<a href="https://github.com/zmievsa/cadwyn/issues/125">1</a>, <a href="https://github.com/zmievsa/cadwyn/issues/126">2</a>). However, you can use <code>ResponseInfo._response</code> attribute to get access to the original <code>StreamingResponse</code> or <code>FileResponse</code> and modify it as needed within your migrations.</p>
 <h2 id="pydantic-rootmodel-migration-warning">Pydantic RootModel migration warning<a class="headerlink" href="#pydantic-rootmodel-migration-warning" title="Permanent link">&para;</a></h2>

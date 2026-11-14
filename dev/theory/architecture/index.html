@@ -636,6 +636,8 @@
       
         
       
+        
+      
     
     
     
@@ -999,6 +1001,34 @@
     
   
     Change endpoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/migrate_data_outside_of_routes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrate data outside of routes
   
 
     
@@ -1974,7 +2004,7 @@
 <tbody>
 <tr>
 <td><code>cadwyn/structure/versions/</code></td>
-<td><code>VersionChange</code>, <code>Version</code>, and <code>HeadVersion</code> (<code>_changes.py</code>), and <code>VersionBundle</code> (<code>_bundle.py</code>). <code>_migrations.py</code> has the loops that run request and response migrations, which routes and <code>migrate_request_body()</code> and <code>migrate_response_body()</code> share, and <code>_migration_targets.py</code> picks the migrations by schema. The other submodules run the migrations during a request (<code>_versioned()</code> in <code>_versioned_endpoints.py</code> and the functions it calls): <code>_requests.py</code> and <code>_responses.py</code> run them, and most of the rest prepare request bodies, forms, and files for the HEAD version.</td>
+<td><code>VersionChange</code>, <code>Version</code>, and <code>HeadVersion</code> (<code>_changes.py</code>), and <code>VersionBundle</code> (<code>_bundle.py</code>). <code>_migrations.py</code> has the loops that run request and response migrations, which routes, <code>migrate_request()</code>, <code>migrate_response()</code>, and <code>migrate_response_body()</code> share, and <code>_migration_targets.py</code> picks the migrations by schema. The other submodules run the migrations during a request (<code>_versioned()</code> in <code>_versioned_endpoints.py</code> and the functions it calls): <code>_requests.py</code> and <code>_responses.py</code> run them, and most of the rest prepare request bodies, forms, and files for the HEAD version.</td>
 </tr>
 <tr>
 <td><code>cadwyn/structure/schemas.py</code>, <code>enums.py</code>, <code>endpoints.py</code></td>
@@ -1986,7 +2016,7 @@
 </tr>
 <tr>
 <td><code>cadwyn/schema_generation/</code></td>
-<td>Copies of models and enums for every version. <code>_versioned_models.py</code> has <code>generate_versioned_models()</code>, <code>migrate_request_body()</code>, and <code>migrate_response_body()</code>, and <code>_schema_generator.py</code> has <code>SchemaGenerator</code>. <code>_models.py</code>, <code>_fields.py</code>, and <code>_enums.py</code> describe models, fields, and enums, and <code>_instructions.py</code> applies schema instructions to them. <code>_annotation_transformer.py</code> replaces models in annotations with their copies, <code>_annotation_evaluation.py</code> evaluates annotations, <code>_callables.py</code> copies endpoints and dependencies, and <code>_generics.py</code> and <code>_references.py</code> handle generics and models that refer to each other.</td>
+<td>Copies of models and enums for every version. <code>_versioned_models.py</code> has <code>generate_versioned_models()</code>, <code>migrate_request()</code>, <code>migrate_response()</code>, and <code>migrate_response_body()</code>, and <code>_schema_generator.py</code> has <code>SchemaGenerator</code>. <code>_models.py</code>, <code>_fields.py</code>, and <code>_enums.py</code> describe models, fields, and enums, and <code>_instructions.py</code> applies schema instructions to them. <code>_annotation_transformer.py</code> replaces models in annotations with their copies, <code>_annotation_evaluation.py</code> evaluates annotations, <code>_callables.py</code> copies endpoints and dependencies, and <code>_generics.py</code> and <code>_references.py</code> handle generics and models that refer to each other.</td>
 </tr>
 <tr>
 <td><code>cadwyn/route_generation.py</code></td>
