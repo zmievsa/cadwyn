@@ -3,21 +3,27 @@ import inspect
 import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, TypeAlias, Union, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, Union, cast, overload
 
-from fastapi import Request, Response
-from starlette.datastructures import FormData, MutableHeaders, UploadFile
-
-from cadwyn._utils import UnionType, _callable_name, same_method_definition_as_in
+from cadwyn._utils import UnionType, _callable_name
 from cadwyn.exceptions import CadwynError
 from cadwyn.structure.common import _validate_schema_is_versionable
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
+
+if TYPE_CHECKING:
+    from fastapi import Request, Response
+    from starlette.datastructures import MutableHeaders, UploadFile
+
+    from cadwyn._utils import same_method_definition_as_in
 
 
 class RequestInfo:
     __slots__ = ("_body", "_body_is_assigned", "_cookies", "_form", "_headers", "_query_params", "_request")
 
-    def __init__(self, request: Request, body: Any) -> None:
+    def __init__(self, request: "Request", body: Any) -> None:
+        # Routes make it, so FastAPI is there. Standalone use makes it with `_get_body_only_request_info()`.
+        from starlette.datastructures import FormData
+
         super().__init__()
         self._body = body
         # Whether a request migration has assigned the body, so that `None` means an omitted body
@@ -32,12 +38,12 @@ class RequestInfo:
             self._form = None
 
     @property
-    def headers(self) -> MutableHeaders:
+    def headers(self) -> "MutableHeaders":
         self._check_that_request_exists("headers")
         return self._headers
 
     @headers.setter
-    def headers(self, value: MutableHeaders) -> None:
+    def headers(self, value: "MutableHeaders") -> None:
         self._check_that_request_exists("headers")
         self._headers = value
 
@@ -61,7 +67,7 @@ class RequestInfo:
         return self._query_params
 
     @property
-    def form(self) -> Union[list[tuple[str, Union[UploadFile, str]]], None]:
+    def form(self) -> "Union[list[tuple[str, Union[UploadFile, str]]], None]":
         return self._form
 
     def _check_that_request_exists(self, attribute: str) -> None:
@@ -88,7 +94,7 @@ def _get_body_only_request_info(body: Any) -> RequestInfo:
 class ResponseInfo:
     __slots__ = ("_response", "body")
 
-    def __init__(self, response: Response, body: Any) -> None:
+    def __init__(self, response: "Response", body: Any) -> None:
         super().__init__()
         self.body = body
         self._response = response
@@ -102,16 +108,25 @@ class ResponseInfo:
         self._response.status_code = value
 
     @property
-    def headers(self) -> MutableHeaders:
+    def headers(self) -> "MutableHeaders":
         return self._response.headers
 
-    @same_method_definition_as_in(Response.set_cookie)
-    def set_cookie(self, *args: Any, **kwargs: Any) -> None:
-        return self._response.set_cookie(*args, **kwargs)
+    # The FastAPI integration gives them the signatures of the methods of `Response` at runtime
+    if TYPE_CHECKING:
 
-    @same_method_definition_as_in(Response.delete_cookie)
-    def delete_cookie(self, *args: Any, **kwargs: Any) -> None:
-        return self._response.delete_cookie(*args, **kwargs)
+        @same_method_definition_as_in(Response.set_cookie)
+        def set_cookie(self, *args: Any, **kwargs: Any) -> None: ...
+
+        @same_method_definition_as_in(Response.delete_cookie)
+        def delete_cookie(self, *args: Any, **kwargs: Any) -> None: ...
+
+    else:
+
+        def set_cookie(self, *args: Any, **kwargs: Any) -> None:
+            return self._response.set_cookie(*args, **kwargs)
+
+        def delete_cookie(self, *args: Any, **kwargs: Any) -> None:
+            return self._response.delete_cookie(*args, **kwargs)
 
 
 @dataclass
