@@ -6,7 +6,6 @@ in their namespaces, and FastAPI's dataclasses can be in the attributes that the
 """
 
 import fastapi.params
-import fastapi.security.base
 from fastapi import Request, Response
 from fastapi._compat import ModelField
 from fastapi.dependencies.models import Dependant
@@ -28,11 +27,8 @@ from cadwyn.structure.versions import (
     _migrations,
     _requests,
     _responses,
-    _uploads,
     _versioned_endpoints,
 )
-
-_utils._allow_dataclasses_in_attributes(fastapi.params.Depends, fastapi.params.Security)
 
 exceptions.APIRoute = APIRoute
 exceptions.APIWebSocketRoute = APIWebSocketRoute
@@ -59,10 +55,7 @@ _json.Dependant = Dependant
 _json.APIRoute = APIRoute
 _migration_targets.APIRoute = APIRoute
 _migrations.APIRoute = APIRoute
-_migrations._UploadsToClose = _uploads._UploadsToClose
 
-_annotation_transformer._FASTAPI_DEPENDS_CLASSES = (fastapi.params.Depends,)
-_annotation_transformer._FASTAPI_SECURITY_BASE_CLASSES = (fastapi.security.base.SecurityBase,)
 # ty sees two different types of the same module object
 _annotation_transformer.fastapi = fastapi  # ty: ignore[invalid-assignment]
 _callables.APIRoute = APIRoute

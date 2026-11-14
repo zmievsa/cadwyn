@@ -47,6 +47,7 @@ from cadwyn.structure.versions._background import (
     _DroppedBackgroundTasksWarning,
     _get_hidden_background_tasks_param_name,
 )
+from cadwyn.structure.versions._common import _DELETED_ROUTE_TAG
 from cadwyn.structure.versions._migration_targets import _get_request_body_target, _get_schema_migration_target
 from cadwyn.structure.versions._versioned_endpoints import _versioned
 
@@ -59,7 +60,6 @@ _R = TypeVar("_R", bound=APIRouter)
 _WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
 _RouteT = TypeVar("_RouteT", bound=BaseRoute)
 # This is a hack we do because we can't guarantee how the user will use the router.
-_DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
 _FLAT_DEPENDANT_ATTR: Final = "_flat_dependant"
 _RoutePath = str
 _RouteMethod = str
