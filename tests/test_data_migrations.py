@@ -14491,6 +14491,40 @@ def test__migrate_response__to_unknown_version__should_raise_cadwyn_error(versio
         migrate_response(versions, _ItemForManualResponseMigrations, body={"full_name": "John"}, version=version)
 
 
+@pytest.mark.parametrize(
+    "migrate",
+    [
+        pytest.param(
+            lambda versions: migrate_request(
+                versions,
+                Union[_ItemForManualRequestMigrations, EmptySchema],  # ty: ignore[invalid-argument-type]  # Type checkers reject unions too
+                body={},
+                version="2000-01-01",
+            ),
+            id="request",
+        ),
+        pytest.param(
+            lambda versions: migrate_response(
+                versions,
+                Union[_ItemForManualResponseMigrations, EmptySchema],  # ty: ignore[invalid-argument-type]  # Type checkers reject unions too
+                body={},
+                version="2000-01-01",
+            ),
+            id="response",
+        ),
+    ],
+)
+def test__migrate_request_and_response__of_union__should_raise_cadwyn_error(
+    migrate: Callable[[VersionBundle], object],
+):
+    versions = VersionBundle(*conftest_versions(version_change()))
+
+    with pytest.raises(
+        CadwynError, match=r"takes a Pydantic model, not .*EmptySchema\. To migrate the body of a member"
+    ):
+        migrate(versions)
+
+
 def test__request_and_response_migrations__with_multiple_schemas_in_converters(
     create_versioned_clients: CreateVersionedClients,
     router: VersionedAPIRouter,

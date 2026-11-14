@@ -14,6 +14,7 @@ import pydantic
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
+from cadwyn._utils import lenient_issubclass
 from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import (
@@ -97,6 +98,7 @@ def migrate_request(
     up to head to the body and the passed HTTP details, and validate the body with latest_request_model, as a route
     does before it calls its endpoint. Migrations get empty HTTP details for the ones that you don't pass.
     """
+    _check_that_it_is_a_model(latest_request_model, "migrate_request")
     version = _get_version_to_migrate(versions, version)
     versioned_request_model = generate_versioned_models(versions)[version][latest_request_model]
     # Like routes, we migrate the data that the client has sent, so the body has the keys of
@@ -173,6 +175,7 @@ def migrate_response(
     the passed version of latest_response_model, as FastAPI does. If the response is an error after the migrations,
     the body stays as the migrations have left it, because it's an error body rather than the model.
     """
+    _check_that_it_is_a_model(latest_response_model, "migrate_response")
     version = _get_version_to_migrate(versions, version)
     response_info = _get_standalone_response_info(
         _prepare_response_content(body, exclude_unset=False), status_code, headers
@@ -239,6 +242,15 @@ def _run_response_migrations(
         response_target=_get_schema_migration_target(latest_response_model),
     )
     return generate_versioned_models(versions)[version][latest_response_model], migrated_response.body
+
+
+def _check_that_it_is_a_model(model: object, function_name: str) -> None:
+    # TODO (https://github.com/zmievsa/cadwyn/issues/203): Migrate the bodies of unions, as routes do
+    if not lenient_issubclass(model, BaseModel):
+        raise CadwynError(
+            f"`{function_name}()` takes a Pydantic model, not {model!r}. To migrate the body of a member of a union, "
+            "pass the model of that member."
+        )
 
 
 def _get_version_to_migrate(versions: "VersionBundle", version: Union[VersionType, date]) -> VersionType:
