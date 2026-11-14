@@ -1,4 +1,6 @@
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Self, Union
+
+from typing_extensions import override
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute, APIWebSocketRoute
@@ -23,6 +25,11 @@ class CadwynHeadRequestValidationError(CadwynError):
             "to migrate the request of that version to latest.\n"
             f"body={self.body}\n\nerrors={self.errors}"
         )
+
+    @override
+    def __reduce__(self) -> tuple[type[Self], tuple[list[Any], Any, str]]:
+        # Pickle calls the class with the arguments of `__init__`, e.g. when a worker process raises it
+        return type(self), (self.errors, self.body, self.version)
 
 
 class LintingError(CadwynError):

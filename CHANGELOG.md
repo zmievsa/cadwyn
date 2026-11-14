@@ -17,6 +17,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
+- `CadwynHeadRequestValidationError` can be unpickled, e.g. when a worker process raises it, instead of failing with a `TypeError`.
 - The docs no longer claim that `migrate_response_body()` runs migrations by path. It runs only the migrations by schema of the model you pass.
 
 ## [9.0.0]
