@@ -14520,7 +14520,7 @@ def test__migrate_request_and_response__of_union__should_raise_cadwyn_error(
     versions = VersionBundle(*conftest_versions(version_change()))
 
     with pytest.raises(
-        CadwynError, match=r"takes a Pydantic model, not .*EmptySchema\. To migrate the body of a member"
+        CadwynError, match=r"\(\)` takes a Pydantic model, not .*\. To migrate the body of a member of a union"
     ):
         migrate(versions)
 
