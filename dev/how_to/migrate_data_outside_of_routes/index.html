@@ -1931,6 +1931,7 @@
 <li>They restore the validation aliases that the migrated body needs, and, in requests, the <code>Json[...]</code> values.</li>
 <li>Once a migration turns a response into an error, they only run the migrations that set <code>migrate_http_errors=True</code>.</li>
 <li>They take dates and pick the closest older version, as <code>migrate_response_body()</code> does.</li>
+<li>They migrate between any two versions: pass <code>to_version</code> to <code>migrate_request()</code> or <code>from_version</code> to <code>migrate_response()</code> if your loop doesn't start or end at HEAD.</li>
 </ul>
 <p>Your loop keeps working too: the attributes that it uses are part of the <a href="../../theory/design_decisions/#supported-api">supported API</a>.</p>
 <h2 id="without-fastapi">Without FastAPI<a class="headerlink" href="#without-fastapi" title="Permanent link">&para;</a></h2>
