@@ -18,7 +18,7 @@ import cadwyn
 _PACKAGES_OF_STANDALONE_USE = ("cadwyn", "pydantic", "pydantic_core", "typing_extensions", "typing_inspection")
 _PACKAGES_THAT_PYDANTIC_REQUIRES = ("annotated_types",)
 # The packages whose `__init__` modules still import the FastAPI integration
-_PACKAGES_THAT_IMPORT_FASTAPI = ("cadwyn", "cadwyn.structure")
+_PACKAGES_THAT_IMPORT_FASTAPI = ("cadwyn", "cadwyn.structure", "cadwyn.structure.versions")
 
 _IMPORT_WITH_ONLY_PYDANTIC = textwrap.dedent(
     """
@@ -84,9 +84,11 @@ _IMPORT_WITH_ONLY_PYDANTIC = textwrap.dedent(
         "cadwyn._utils",
         "cadwyn.exceptions",
         "cadwyn.structure.common",
+        "cadwyn.structure.data",
         "cadwyn.structure.endpoints",
         "cadwyn.structure.enums",
         "cadwyn.structure.schemas",
+        "cadwyn.structure.versions._changes",
     ],
 )
 def test__import__without_fastapi_and_its_dependencies__should_succeed(module_name: str):

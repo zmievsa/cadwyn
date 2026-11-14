@@ -6,13 +6,14 @@ in their namespaces, and FastAPI's dataclasses can be in the attributes that the
 """
 
 import fastapi.params
-from fastapi import Response
+from fastapi import Request, Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute, APIWebSocketRoute
+from starlette.datastructures import MutableHeaders, UploadFile
 from starlette.routing import BaseRoute
 
 from cadwyn import _utils, exceptions
-from cadwyn.structure import endpoints
+from cadwyn.structure import data, endpoints
 
 _utils._allow_dataclasses_in_attributes(fastapi.params.Depends, fastapi.params.Security)
 
@@ -23,3 +24,10 @@ endpoints.Response = Response
 endpoints.Depends = Depends
 endpoints.APIRoute = APIRoute
 endpoints.BaseRoute = BaseRoute
+
+data.Request = Request
+data.Response = Response
+data.MutableHeaders = MutableHeaders
+data.UploadFile = UploadFile
+_utils.same_method_definition_as_in(Response.set_cookie)(data.ResponseInfo.set_cookie)
+_utils.same_method_definition_as_in(Response.delete_cookie)(data.ResponseInfo.delete_cookie)
