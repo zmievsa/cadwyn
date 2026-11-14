@@ -14455,6 +14455,33 @@ def test__migrate_response__with_migration_that_makes_it_an_error__should_return
     assert migrated == MigratedResponse(body={"detail": "Not found"}, status_code=404, headers=[])
 
 
+class _ErrorForManualResponseMigrations(BaseModel):
+    detail: str
+
+
+@pytest.mark.parametrize("from_version", [None, "2001-01-01"])
+def test__migrate_response__of_error_as_model_object__should_migrate_the_error(from_version: Union[str, None]):
+    @convert_response_to_previous_version_for(_ItemForManualResponseMigrations, migrate_http_errors=True)
+    def migration_of_errors(response: ResponseInfo):
+        if response.status_code >= 300:
+            response.body["detail"] = response.body["detail"].upper()
+
+    versions = VersionBundle(
+        *conftest_versions(version_change(migration_of_errors=migration_of_errors), version_change())
+    )
+
+    migrated = migrate_response(
+        versions,
+        _ItemForManualResponseMigrations,
+        body=_ErrorForManualResponseMigrations(detail="no"),
+        version="2000-01-01",
+        from_version=from_version,
+        status_code=400,
+    )
+
+    assert (migrated.body, migrated.status_code) == ({"detail": "NO"}, 400)
+
+
 def test__migrate_response__of_error__should_run_only_migrations_of_http_errors():
     @convert_response_to_previous_version_for(_ItemForManualResponseMigrations)
     def migration_of_successful_body(response: ResponseInfo):
@@ -14529,18 +14556,89 @@ def test__migrate_request_and_response__should_run_migrations_in_the_version_tha
     assert api_version_var.get(None) == version_being_served
 
 
-def test__migrate_request__with_object_instead_of_data__should_validate_it_like_the_data_that_a_client_sends():
-    versions = _get_versions_of_item_for_manual_request_migrations()
+class _ItemValidatedFromAttributes(_ItemForManualRequestMigrations):
+    model_config = ConfigDict(from_attributes=True)
 
-    with pytest.raises(ValidationError) as exc_info:
-        migrate_request(
-            versions,
+
+@pytest.mark.parametrize(
+    ("model", "get_body"),
+    [
+        pytest.param(
             _ItemForManualRequestMigrations,
-            # Routes validate the JSON that clients send, not objects by their attributes
-            body=_ItemForManualRequestMigrations(full_name="John"),
-            version="2000-01-01",
+            lambda: _ItemForManualRequestMigrations(full_name="John"),
+            id="head_object",
+        ),
+        pytest.param(
+            _ItemValidatedFromAttributes,
+            lambda: _ItemValidatedFromAttributes(full_name="John"),
+            id="head_object_of_model_validated_from_attributes",
+        ),
+        pytest.param(
+            RootModel[list[_ItemForManualRequestMigrations]],
+            lambda: RootModel[list[_ItemForManualRequestMigrations]]([_ItemForManualRequestMigrations(full_name="J")]),
+            id="head_object_of_root_model",
+        ),
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            lambda: {"name": "John", "nested": _ItemForManualRequestMigrations(full_name="John")},
+            id="object_in_data",
+        ),
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            lambda: {"name": "John", "nested": [(_ItemForManualRequestMigrations(full_name="John"),)]},
+            id="object_in_list_in_data",
+        ),
+    ],
+)
+def test__migrate_request__with_model_objects_that_a_client_cant_send__should_raise_cadwyn_error(
+    model: type[BaseModel], get_body: Callable[[], Any]
+):
+    versions = VersionBundle(
+        *conftest_versions(
+            version_change(
+                schema(_ItemForManualRequestMigrations).field("full_name").had(name="name"),
+                migrate=_migrate_name_and_color_of_item,
+            )
         )
-    assert [error["type"] for error in exc_info.value.errors()] == ["model_type"]
+    )
+
+    with pytest.raises(CadwynError, match=r"`migrate_request\(\)` got a .* object in the body"):
+        migrate_request(versions, model, body=get_body(), version="2000-01-01")
+
+
+def test__migrate_request__with_data_that_contains_itself__should_migrate_it():
+    versions = _get_versions_of_item_for_manual_request_migrations()
+    body: dict[str, Any] = {"name": "John"}
+    body["itself"] = [body]
+
+    # Cadwyn walks the data for model objects without looping forever
+    migrated = migrate_request(versions, RootModel[dict[str, Any]], body=body, version="2000-01-01")
+
+    assert migrated.body.root["name"] == "John"
+
+
+def test__migrate_response__with_head_objects_in_data__should_migrate_the_data():
+    versions = VersionBundle(*conftest_versions(version_change()))
+
+    migrated = migrate_response(
+        versions,
+        _ItemForManualResponseMigrations,
+        body={"full_name": "John", "related": [_ItemForManualResponseMigrations(full_name="Jane")]},
+        version="2000-01-01",
+    )
+
+    assert migrated.body.model_dump(include={"full_name"}) == {"full_name": "John"}
+
+
+def test__migrate_request__with_object_of_the_model_of_its_version__should_migrate_it():
+    versions = _get_versions_of_item_for_manual_request_migrations()
+    body = generate_versioned_models(versions)["2000-01-01"][_ItemForManualRequestMigrations].model_validate(
+        {"name": "John"}
+    )
+
+    migrated = migrate_request(versions, _ItemForManualRequestMigrations, body=body, version="2000-01-01")
+
+    assert migrated.body == _ItemForManualRequestMigrations(full_name="John")
 
 
 @pytest.mark.parametrize(
@@ -14563,6 +14661,15 @@ def test__migrate_request__with_object_instead_of_data__should_validate_it_like_
             "2001-01-01",
             "isn't an object of that version's model",
             id="object_of_other_version",
+        ),
+        pytest.param(
+            lambda versioned_models: {
+                "full_name": "John",
+                "nested": versioned_models["2000-01-01"][_ItemForManualResponseMigrations](name="John"),
+            },
+            None,
+            "object in the body, which isn't of HEAD",
+            id="object_of_older_version_in_data",
         ),
     ],
 )

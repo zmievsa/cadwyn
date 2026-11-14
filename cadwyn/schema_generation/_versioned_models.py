@@ -152,6 +152,7 @@ def migrate_request(
         # Like routes, we migrate the data that the client has sent, so the body has the keys of
         # `model_dump(by_alias=True)` and only the fields that the client has set. A route validates the JSON that the
         # client has sent, so objects only pass if they are of the model of the version, not by their attributes.
+        _check_that_request_body_is_data(body, versioned_request_model)
         validated_body = versioned_request_model.__pydantic_validator__.validate_python(body)
         json_values_plan = _get_json_values_plan(target_model, versioned_request_model)
         client_json_strings = _ClientJsonStrings()
@@ -241,7 +242,7 @@ def migrate_response(
                 f"than from_version={from_version!r}. Use `migrate_request()` to migrate up to newer versions."
             )
         source_model = generate_versioned_models(versions)[from_version][latest_response_model]
-    _check_that_body_is_of_version(body, source_model, from_version)
+    _check_that_response_body_is_of_version(body, source_model, from_version, status_code)
     with _api_version_set_to(versions, version):
         content = _prepare_response_content(body, exclude_unset=False)
         if from_version is not None and versions._has_versioned_plain_enums:
@@ -341,22 +342,77 @@ def _check_that_it_is_a_model(model: object, function_name: str) -> None:
         raise CadwynError(f"`{function_name}()` takes a Pydantic model, not {model!r}.")
 
 
-def _check_that_body_is_of_version(body: Any, source_model: type[BaseModel], from_version: Union[VersionType, None]):
-    """Fail instead of migrating a model object of another version, which would run too many or too few migrations"""
-    if not isinstance(body, BaseModel):
+def _check_that_response_body_is_of_version(
+    body: Any, source_model: type[BaseModel], from_version: Union[VersionType, None], status_code: int
+) -> None:
+    """Fail instead of migrating model objects of another version, which would run too many or too few migrations.
+
+    The body of an error isn't the response model, and its models usually have no versions, so we don't check it.
+    """
+    if status_code >= 300:
         return
-    body_is_of_older_version = hasattr(type(body), "__cadwyn_original_model__")
-    if from_version is None and body_is_of_older_version:
+    if isinstance(body, BaseModel):
+        if from_version is None and not _is_of_version(body, from_version):
+            raise CadwynError(
+                f"`migrate_response()` got an object of a model of an older version, {type(body).__name__}, as the "
+                "body of HEAD. Pass the version of the object as from_version, or an object of the HEAD model."
+            )
+        if from_version is not None and not isinstance(body, source_model):
+            raise CadwynError(
+                f"`migrate_response()` got a {type(body).__name__} object as the body of "
+                f"from_version={from_version!r}, which isn't an object of that version's model. Pass an object of "
+                "that version's model, data, or an object of the HEAD model without from_version."
+            )
+        return
+    for nested in _iter_model_objects_in_data(body):
+        if not _is_of_version(nested, from_version):
+            raise CadwynError(
+                f"`migrate_response()` got a {type(nested).__name__} object in the body, which isn't of "
+                f"{'HEAD' if from_version is None else f'from_version={from_version!r}'}. Pass objects of the "
+                "version of the body, or data."
+            )
+
+
+def _check_that_request_body_is_data(body: Any, versioned_request_model: type[BaseModel]) -> None:
+    """Fail for model objects, which routes never get, unless the body is an object of the model of its version.
+
+    Pydantic would take some objects of other versions by their attributes or as the parametrizations of generics,
+    and the migrations would then migrate the data of another version.
+    """
+    if isinstance(body, BaseModel) and type(body) is versioned_request_model:
+        return
+    model_object = body if isinstance(body, BaseModel) else next(_iter_model_objects_in_data(body), None)
+    if model_object is not None:
         raise CadwynError(
-            f"`migrate_response()` got an object of a model of an older version, {type(body).__name__}, as the body of "
-            "HEAD. Pass the version of the object as from_version, or an object of the HEAD model."
+            f"`migrate_request()` got a {type(model_object).__name__} object in the body. Pass the data that the "
+            "client has sent, as routes get it, or an object of the model of the request's version."
         )
-    if from_version is not None and not isinstance(body, source_model):
-        raise CadwynError(
-            f"`migrate_response()` got a {type(body).__name__} object as the body of from_version={from_version!r}, "
-            f"which isn't an object of that version's model. Pass an object of that version's model, data, or an "
-            "object of the HEAD model without from_version."
-        )
+
+
+def _is_of_version(model_object: BaseModel, version: Union[VersionType, None]) -> bool:
+    """Whether the object is of a HEAD model (for None) or of a model that Cadwyn has generated for the version.
+
+    We can't tell the version of a copy, so we only tell whether it's a copy.
+    """
+    is_copy = hasattr(type(model_object), "__cadwyn_original_model__")
+    return is_copy if version is not None else not is_copy
+
+
+def _iter_model_objects_in_data(data: Any) -> "collections.abc.Iterator[BaseModel]":
+    """Yield the model objects in the dicts, lists, tuples, and sets of the data, without walking into them"""
+    stack = [data]
+    seen: set[int] = set()
+    while stack:
+        value = stack.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, BaseModel):
+            yield value
+        elif type(value) is dict:
+            stack.extend(value.values())
+        elif type(value) in (list, tuple, set, frozenset):
+            stack.extend(value)
 
 
 @contextlib.contextmanager
