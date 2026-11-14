@@ -39,6 +39,7 @@ They also do what routes do around the migrations, which a loop of your own usua
 * They restore the validation aliases that the migrated body needs, and, in requests, the `Json[...]` values.
 * Once a migration turns a response into an error, they only run the migrations that set `migrate_http_errors=True`.
 * They take dates and pick the closest older version, as `migrate_response_body()` does.
+* They migrate between any two versions: pass `to_version` to `migrate_request()` or `from_version` to `migrate_response()` if your loop doesn't start or end at HEAD.
 
 Your loop keeps working too: the attributes that it uses are part of the [supported API](../theory/design_decisions.md#supported-api).
 

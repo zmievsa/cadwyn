@@ -68,14 +68,16 @@ def _run_request_migrations(
     get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
     head_route: "Union[APIRoute, None]",
     uploads: "Union[_UploadsToClose, None]",
+    to_version: Union[VersionType, None] = None,
 ) -> bool:
-    """Run the request migrations from the request's version up to head, and return whether any of them has run.
+    """Run the request migrations from the request's version up to to_version or head, and return whether any has run.
 
     Routes and `migrate_request()` both migrate requests with it. Without a route, only migrations by schema run.
     """
     start = versions.reversed_version_values.index(current_version)
+    end = None if to_version is None else versions.reversed_version_values.index(to_version) + 1
     has_run_migrations = False
-    for v in versions.reversed_versions[start + 1 :]:
+    for v in versions.reversed_versions[start + 1 : end]:
         for version_change in v.changes:
             for instruction in _get_schema_migrations(
                 version_change.alter_request_by_schema_instructions, body_target, get_body_union_member
@@ -96,12 +98,15 @@ def _migrate_response(
     head_route: "Union[APIRoute, None]",
     response_target: "_SchemaMigrationTarget",
     get_response_union_member: "Union[Callable[[], Union[type[BaseModel], None]], None]" = None,
+    from_version: Union[VersionType, None] = None,
 ) -> ResponseInfo:
+    """Run the response migrations from from_version or head down to the response's version"""
     if get_response_union_member is None:
         get_response_union_member = _no_union_member
     head_route_id = id(head_route)
+    start = 0 if from_version is None else versions.version_values.index(from_version)
     end = versions.version_values.index(current_version)
-    for v in versions.versions[:end]:
+    for v in versions.versions[start:end]:
         for version_change in v.changes:
             migrations_to_apply: list[_BaseAlterResponseInstruction] = list(
                 _get_schema_migrations(

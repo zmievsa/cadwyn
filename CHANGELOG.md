@@ -7,7 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-- `migrate_request()` and `migrate_response()` migrate requests and responses outside of routes, e.g. for webhooks, messages in queues, or APIs that aren't built with FastAPI. They run the same migrations by schema as routes and do what routes do around them, take and return the body, the headers, the cookies, and the query params or the status code, and return them in the new `MigratedRequest` and `MigratedResponse`. The new "Migrate data outside of routes" how-to guide shows how to move from `migrate_response_body()`, which works as before ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
+- `migrate_request()` and `migrate_response()` migrate requests and responses outside of routes, e.g. for webhooks, messages in queues, or APIs that aren't built with FastAPI. They run the same migrations by schema as routes and do what routes do around them, take and return the body, the headers, the cookies, and the query params or the status code, and return them in the new `MigratedRequest` and `MigratedResponse`. They also migrate between two older versions with `to_version` and `from_version`. The new "Migrate data outside of routes" how-to guide shows how to move from `migrate_response_body()`, which works as before ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 
 ### Changed
 

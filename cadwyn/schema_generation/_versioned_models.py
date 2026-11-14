@@ -44,6 +44,7 @@ from cadwyn.structure.versions._migration_targets import _get_schema_migration_t
 from cadwyn.structure.versions._migrations import (
     _dump_request_body,
     _keep_restored_dumps_of_head_models,
+    _migrate_response,
     _prepare_response_content,
     _run_request_migrations,
 )
@@ -88,23 +89,35 @@ def migrate_request(
     *,
     body: Any,
     version: Union[VersionType, date],
+    to_version: Union[VersionType, date, None] = None,
     headers: Union[Mapping[str, str], list[tuple[str, str]], None] = None,
     cookies: Union[Mapping[str, str], None] = None,
     query_params: Union[Mapping[str, str], None] = None,
 ) -> "MigratedRequest[_ModelT]":
-    """Migrate a request from a version up to head, without FastAPI
+    """Migrate a request from a version up to to_version or head, without FastAPI
 
     Validate the body with the passed version of latest_request_model, apply all version changes from that version
-    up to head to the body and the passed HTTP details, and validate the body with latest_request_model, as a route
-    does before it calls its endpoint. Migrations get empty HTTP details for the ones that you don't pass.
+    up to to_version (head by default) to the body and the passed HTTP details, and validate the body with that
+    version of latest_request_model, as a route does before it calls its endpoint. Migrations get empty HTTP details
+    for the ones that you don't pass.
     """
     _check_that_it_is_a_model(latest_request_model, "migrate_request")
     version = _get_version_to_migrate(versions, version)
-    versioned_request_model = generate_versioned_models(versions)[version][latest_request_model]
+    versioned_models = generate_versioned_models(versions)
+    versioned_request_model = versioned_models[version][latest_request_model]
+    target_model: type[_ModelT] = latest_request_model
+    if to_version is not None:
+        to_version = _get_version_to_migrate(versions, to_version)
+        if _is_newer(versions, version, than=to_version):
+            raise CadwynError(
+                f"`migrate_request()` migrates requests up to newer versions, but to_version={to_version!r} is older "
+                f"than version={version!r}. Use `migrate_response()` to migrate down to older versions."
+            )
+        target_model = versioned_models[to_version][latest_request_model]
     # Like routes, we migrate the data that the client has sent, so the body has the keys of
     # `model_dump(by_alias=True)` and only the fields that the client has set
     validated_body = _validate_like_fastapi(versioned_request_model, body)
-    json_values_plan = _get_json_values_plan(latest_request_model, versioned_request_model)
+    json_values_plan = _get_json_values_plan(target_model, versioned_request_model)
     client_json_strings = _ClientJsonStrings()
     request_info = _get_standalone_request_info(
         _copy_decoded_json_strings(json_values_plan, _dump_request_body(validated_body), client_json_strings),
@@ -120,6 +133,7 @@ def migrate_request(
         _no_union_member,
         head_route=None,
         uploads=None,
+        to_version=to_version,
     )
     if has_run_migrations:
         client_json_strings.forget_shared_strings()
@@ -133,17 +147,18 @@ def migrate_request(
         request_info.body,
         replace_enum_members=replace_enum_members,
         replay_lazy_iterators=False,
+        # The copies of enums in older versions take the members of head enums too
         walk_lazy_item=_get_lazy_item_walker(replace_enum_members=True, replay_lazy_iterators=False)
         if replace_enum_members
         else None,
     )
-    migrated_body = _rescue_model_data(latest_request_model, migrated_body)
+    migrated_body = _rescue_model_data(target_model, migrated_body)
     if json_values_plan is not None:
         migrated_body = _encode_planned_json_values(
             json_values_plan, migrated_body, client_json_strings, has_other_body_readers=lambda: False
         )
     try:
-        head_body = _validate_like_fastapi(latest_request_model, migrated_body)
+        head_body = _validate_like_fastapi(target_model, migrated_body)
     except pydantic.ValidationError as exc:
         raise CadwynHeadRequestValidationError(exc.errors(), body=request_info.body, version=version) from exc
     return MigratedRequest(
@@ -165,29 +180,47 @@ def migrate_response(
     *,
     body: Any,
     version: Union[VersionType, date],
+    from_version: Union[VersionType, date, None] = None,
     status_code: int = 200,
     headers: Union[Mapping[str, str], list[tuple[str, str]], None] = None,
 ) -> MigratedResponse:
-    """Migrate a response from head down to a version, without FastAPI
+    """Migrate a response from from_version or head down to a version, without FastAPI
 
     Do what a route does with what its endpoint returns: turn the models in body into data, apply all version
-    changes from head down to the passed version to it and to the passed HTTP details, and validate the body with
-    the passed version of latest_response_model, as FastAPI does. If the response is an error after the migrations,
-    the body stays as the migrations have left it, because it's an error body rather than the model.
+    changes from from_version (head by default) down to the passed version to it and to the passed HTTP details, and
+    validate the body with the passed version of latest_response_model, as FastAPI does. If the response is an error
+    after the migrations, the body stays as the migrations have left it, because it's an error body rather than
+    the model.
     """
     _check_that_it_is_a_model(latest_response_model, "migrate_response")
     version = _get_version_to_migrate(versions, version)
-    response_info = _get_standalone_response_info(
-        _prepare_response_content(body, exclude_unset=False), status_code, headers
-    )
+    source_model: type[_ModelT] = latest_response_model
+    if from_version is not None:
+        from_version = _get_version_to_migrate(versions, from_version)
+        if _is_newer(versions, version, than=from_version):
+            raise CadwynError(
+                f"`migrate_response()` migrates responses down to older versions, but version={version!r} is newer "
+                f"than from_version={from_version!r}. Use `migrate_request()` to migrate up to newer versions."
+            )
+        source_model = generate_versioned_models(versions)[from_version][latest_response_model]
+    content = _prepare_response_content(body, exclude_unset=False)
+    if from_version is not None and versions._has_versioned_plain_enums:
+        # Response migrations get the members of head enums, as in routes, instead of those of the copies of a version
+        content = _to_head_values(
+            content,
+            replace_enum_members=True,
+            replay_lazy_iterators=False,
+            walk_lazy_item=_get_lazy_item_walker(replace_enum_members=True, replay_lazy_iterators=False),
+        )
+    response_info = _get_standalone_response_info(content, status_code, headers)
     versioned_response_model, migrated_body = _run_response_migrations(
-        versions, latest_response_model, response_info, version
+        versions, latest_response_model, response_info, version, from_version=from_version
     )
     migrated_headers = None if response_info.headers is None else response_info.headers.items()
     if response_info.status_code >= 300:
         return MigratedResponse(body=migrated_body, status_code=response_info.status_code, headers=migrated_headers)
     restored_body = _keep_restored_dumps_of_head_models(
-        _rescue_model_data(versioned_response_model, migrated_body), migrated_body, latest_response_model, body
+        _rescue_model_data(versioned_response_model, migrated_body), migrated_body, source_model, body
     )
     return MigratedResponse(
         body=_validate_like_fastapi(versioned_response_model, restored_body),
@@ -233,15 +266,23 @@ def _run_response_migrations(
     latest_response_model: type[_ModelT],
     response_info: ResponseInfo,
     version: VersionType,
+    *,
+    from_version: Union[VersionType, None] = None,
 ) -> tuple[type[_ModelT], Any]:
-    """Run the response migrations by schema from head down to the version, and return the model of the version"""
-    migrated_response = versions._migrate_response(
+    """Run the response migrations by schema from from_version or head down to the version, and return its model"""
+    migrated_response = _migrate_response(
+        versions,
         response_info,
         current_version=version,
         head_route=None,
         response_target=_get_schema_migration_target(latest_response_model),
+        from_version=from_version,
     )
     return generate_versioned_models(versions)[version][latest_response_model], migrated_response.body
+
+
+def _is_newer(versions: "VersionBundle", version: VersionType, than: VersionType) -> bool:
+    return versions.version_values.index(version) < versions.version_values.index(than)
 
 
 def _check_that_it_is_a_model(model: object, function_name: str) -> None:
