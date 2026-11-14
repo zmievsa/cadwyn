@@ -106,6 +106,7 @@ def migrate_request(
     versioned_models = generate_versioned_models(versions)
     versioned_request_model = versioned_models[version][latest_request_model]
     target_model: type[_ModelT] = latest_request_model
+    get_target_enum = None
     if to_version is not None:
         to_version = _get_version_to_migrate(versions, to_version)
         if _is_newer(versions, version, than=to_version):
@@ -114,6 +115,7 @@ def migrate_request(
                 f"than version={version!r}. Use `migrate_response()` to migrate down to older versions."
             )
         target_model = versioned_models[to_version][latest_request_model]
+        get_target_enum = versioned_models[to_version].__getitem__
     # Like routes, we migrate the data that the client has sent, so the body has the keys of
     # `model_dump(by_alias=True)` and only the fields that the client has set
     validated_body = _validate_like_fastapi(versioned_request_model, body)
@@ -147,10 +149,12 @@ def migrate_request(
         request_info.body,
         replace_enum_members=replace_enum_members,
         replay_lazy_iterators=False,
-        # The copies of enums in older versions take the members of head enums too
-        walk_lazy_item=_get_lazy_item_walker(replace_enum_members=True, replay_lazy_iterators=False)
+        walk_lazy_item=_get_lazy_item_walker(
+            replace_enum_members=True, replay_lazy_iterators=False, get_target_enum=get_target_enum
+        )
         if replace_enum_members
         else None,
+        get_target_enum=get_target_enum,
     )
     migrated_body = _rescue_model_data(target_model, migrated_body)
     if json_values_plan is not None:
@@ -219,6 +223,18 @@ def migrate_response(
     migrated_headers = None if response_info.headers is None else response_info.headers.items()
     if response_info.status_code >= 300:
         return MigratedResponse(body=migrated_body, status_code=response_info.status_code, headers=migrated_headers)
+    if from_version is not None and versions._has_versioned_plain_enums:
+        # The head might not have the members of the older versions, so we give the version its own ones
+        get_target_enum = generate_versioned_models(versions)[version].__getitem__
+        migrated_body = _to_head_values(
+            migrated_body,
+            replace_enum_members=True,
+            replay_lazy_iterators=False,
+            walk_lazy_item=_get_lazy_item_walker(
+                replace_enum_members=True, replay_lazy_iterators=False, get_target_enum=get_target_enum
+            ),
+            get_target_enum=get_target_enum,
+        )
     restored_body = _keep_restored_dumps_of_head_models(
         _rescue_model_data(versioned_response_model, migrated_body), migrated_body, source_model, body
     )

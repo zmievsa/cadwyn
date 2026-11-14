@@ -14649,6 +14649,54 @@ def test__migrate_response__from_version_in_between__should_give_what_migrating_
     assert directly.headers == [("x-migrated-to", "2000-01-01")]
 
 
+class _ColorThatHeadRemoved(Enum):
+    red = "r"
+
+
+class _UnchangedShape(Enum):
+    square = "s"
+
+
+class _ItemWithColorThatHeadRemoved(BaseModel):
+    color: _ColorThatHeadRemoved
+    shape: _UnchangedShape = _UnchangedShape.square
+
+
+def _get_versions_with_color_that_head_removed() -> VersionBundle:
+    # 2000-01-01 and 2001-01-01 have the blue color, but 2002-01-01 and the head don't
+    return VersionBundle(
+        *conftest_versions(version_change(), version_change(enum(_ColorThatHeadRemoved).had(blue="b")))
+    )
+
+
+def test__migrate_request__to_version_in_between_with_member_that_head_lacks__should_give_member_of_version():
+    versions = _get_versions_with_color_that_head_removed()
+
+    migrated = migrate_request(
+        versions,
+        _ItemWithColorThatHeadRemoved,
+        body={"color": "b", "shape": "s"},
+        version="2000-01-01",
+        to_version="2001-01-01",
+    )
+
+    assert migrated.body.color is generate_versioned_models(versions)["2001-01-01"][_ColorThatHeadRemoved]["blue"]
+    # No version changes the shapes, so every version has the head ones
+    assert migrated.body.shape is _UnchangedShape.square
+
+
+def test__migrate_response__from_version_in_between_with_member_that_head_lacks__should_give_member_of_version():
+    versions = _get_versions_with_color_that_head_removed()
+    versioned_models = generate_versioned_models(versions)
+    body = versioned_models["2001-01-01"][_ItemWithColorThatHeadRemoved](color="b")
+
+    migrated = migrate_response(
+        versions, _ItemWithColorThatHeadRemoved, body=body, version="2000-01-01", from_version="2001-01-01"
+    )
+
+    assert migrated.body.color is versioned_models["2000-01-01"][_ColorThatHeadRemoved]["blue"]
+
+
 @pytest.mark.parametrize(
     ("migrate", "message"),
     [

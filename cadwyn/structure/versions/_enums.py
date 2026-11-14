@@ -181,6 +181,7 @@ def _to_head_values(
     replace_enum_members: bool,
     replay_lazy_iterators: bool,
     walk_lazy_item: Union[Callable[[Any], Any], None],
+    get_target_enum: "Union[Callable[[type[Enum]], type[Enum]], None]" = None,
 ) -> Any:
     """Return the data with the values that the head needs instead of the ones of the request's version.
 
@@ -210,6 +211,7 @@ def _to_head_values(
         replace_enum_members=replace_enum_members,
         replay_lazy_iterators=replay_lazy_iterators,
         walk_lazy_item=walk_lazy_item,
+        get_target_enum=get_target_enum,
     )
     children = _get_children_to_walk(data)
     if children is None:
@@ -252,7 +254,12 @@ _PYDANTIC_ITERATOR_TYPES = (
 )
 
 
-def _get_lazy_item_walker(*, replace_enum_members: bool, replay_lazy_iterators: bool) -> Callable[[Any], Any]:
+def _get_lazy_item_walker(
+    *,
+    replace_enum_members: bool,
+    replay_lazy_iterators: bool,
+    get_target_enum: "Union[Callable[[type[Enum]], type[Enum]], None]" = None,
+) -> Callable[[Any], Any]:
     """Return what gives the items of lazy iterators, and the items of lazy iterators in them, the head's values"""
 
     def walk_lazy_item(item: Any) -> Any:
@@ -261,6 +268,7 @@ def _get_lazy_item_walker(*, replace_enum_members: bool, replay_lazy_iterators: 
             replace_enum_members=replace_enum_members,
             replay_lazy_iterators=replay_lazy_iterators,
             walk_lazy_item=walk_lazy_item,
+            get_target_enum=get_target_enum,
         )
 
     return walk_lazy_item
@@ -272,7 +280,14 @@ def _to_head_value(
     replace_enum_members: bool,
     replay_lazy_iterators: bool,
     walk_lazy_item: Union[Callable[[Any], Any], None],
+    get_target_enum: "Union[Callable[[type[Enum]], type[Enum]], None]",
 ) -> Any:
+    """Return the value that the head needs, or, with `get_target_enum`, the one that an older version needs.
+
+    `get_target_enum` gives the older version's copy of a head enum, or the head enum if the version has no copy.
+    The members of head enums need the copies too then, and the members of other versions' copies need them even if
+    the head has no member with their value.
+    """
     if type(value) in _PYDANTIC_ITERATOR_TYPES:
         if walk_lazy_item is not None:
             value = map(walk_lazy_item, value)
@@ -280,10 +295,15 @@ def _to_head_value(
     if not replace_enum_members or not isinstance(value, Enum):
         return value
     head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
+    if get_target_enum is not None and head_enum is None:
+        head_enum = type(value)
     if head_enum is None or is_enum_looked_up_by_value(head_enum):
         return value
-    head_member = get_member_with_same_value(head_enum, value)
-    return value if head_member is None else head_member
+    target_enum = head_enum if get_target_enum is None else get_target_enum(head_enum)
+    if target_enum is type(value):
+        return value
+    target_member = get_member_with_same_value(target_enum, value)
+    return value if target_member is None else target_member
 
 
 def _get_children_to_walk(value: Any) -> Union[list[Any], None]:
