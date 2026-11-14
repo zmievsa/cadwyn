@@ -14697,6 +14697,23 @@ def test__migrate_response__from_version_in_between_with_member_that_head_lacks_
     assert migrated.body.color is versioned_models["2000-01-01"][_ColorThatHeadRemoved]["blue"]
 
 
+class _ItemWithLazyColorsThatHeadRemoved(BaseModel):
+    colors: Iterable[_ColorThatHeadRemoved]
+
+
+def test__migrate_response__from_version_in_between_with_lazy_members_that_head_lacks__should_give_members_of_version():
+    versions = _get_versions_with_color_that_head_removed()
+    versioned_models = generate_versioned_models(versions)
+    body = versioned_models["2001-01-01"][_ItemWithLazyColorsThatHeadRemoved](colors=["b", "r"])
+
+    migrated = migrate_response(
+        versions, _ItemWithLazyColorsThatHeadRemoved, body=body, version="2000-01-01", from_version="2001-01-01"
+    )
+
+    old_colors = versioned_models["2000-01-01"][_ColorThatHeadRemoved]
+    assert list(migrated.body.colors) == [old_colors["blue"], old_colors["red"]]
+
+
 @pytest.mark.parametrize(
     ("migrate", "message"),
     [

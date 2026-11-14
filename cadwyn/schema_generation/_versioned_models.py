@@ -209,13 +209,9 @@ def migrate_response(
         source_model = generate_versioned_models(versions)[from_version][latest_response_model]
     content = _prepare_response_content(body, exclude_unset=False)
     if from_version is not None and versions._has_versioned_plain_enums:
-        # Response migrations get the members of head enums, as in routes, instead of those of the copies of a version
-        content = _to_head_values(
-            content,
-            replace_enum_members=True,
-            replay_lazy_iterators=False,
-            walk_lazy_item=_get_lazy_item_walker(replace_enum_members=True, replay_lazy_iterators=False),
-        )
+        # Response migrations get the members of head enums, as in routes, instead of those of the copies of a version.
+        # We leave lazy iterators as they are: the version gets their items after the migrations.
+        content = _to_head_values(content, replace_enum_members=True, replay_lazy_iterators=False, walk_lazy_item=None)
     response_info = _get_standalone_response_info(content, status_code, headers)
     versioned_response_model, migrated_body = _run_response_migrations(
         versions, latest_response_model, response_info, version, from_version=from_version
