@@ -22,6 +22,7 @@ _PACKAGES_THAT_IMPORT_FASTAPI = ("cadwyn", "cadwyn.structure")
 
 _IMPORT_WITH_ONLY_PYDANTIC = textwrap.dedent(
     """
+    import builtins
     import importlib
     import importlib.abc
     import importlib.machinery
@@ -46,6 +47,21 @@ _IMPORT_WITH_ONLY_PYDANTIC = textwrap.dedent(
 
 
     sys.meta_path.insert(0, OnlyAllowedInstalledPackages())
+    # Modules that are imported already (e.g. coverage, which measures this process) skip the finders
+    original_import = builtins.__import__
+
+
+    def import_only_allowed_installed_packages(name, globals=None, locals=None, fromlist=(), level=0):
+        module = original_import(name, globals, locals, fromlist, level)
+        top_level_name = name.partition(".")[0]
+        importer = (globals or {}).get("__name__") or ""
+        if level == 0 and importer.partition(".")[0] == "cadwyn" and top_level_name not in allowed:
+            if (getattr(sys.modules.get(top_level_name), "__file__", None) or "").startswith(installed_package_dirs):
+                raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return module
+
+
+    builtins.__import__ = import_only_allowed_installed_packages
     try:
         import fastapi  # noqa: F401
     except ModuleNotFoundError:
