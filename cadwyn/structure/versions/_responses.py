@@ -37,6 +37,12 @@ if TYPE_CHECKING:
     from ._bundle import VersionBundle
 
 
+def _is_json_content_type(response: FastapiResponse) -> bool:
+    """Return True if the response content-type indicates JSON."""
+    content_type = response.headers.get("content-type", "")
+    return content_type.lower().startswith("application/json")
+
+
 def _prepare_response_content(
     res: Any,
     *,
@@ -145,10 +151,22 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
         if isinstance(response_or_response_body, StreamingResponse | FileResponse):
             body = None
         elif response_or_response_body.body:
-            if (isinstance(response_or_response_body, JSONResponse) or raised_exception is not None) and isinstance(
-                response_or_response_body.body, str | bytes
-            ):
-                body = json.loads(response_or_response_body.body)
+            should_load_json = (
+                isinstance(response_or_response_body, JSONResponse)
+                or raised_exception is not None
+                or _is_json_content_type(response_or_response_body)
+            )
+            if should_load_json and isinstance(response_or_response_body.body, str | bytes):
+                try:
+                    body = json.loads(response_or_response_body.body)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    # Not valid JSON; fall back to text decoding
+                    if isinstance(response_or_response_body.body, bytes):
+                        body = response_or_response_body.body.decode(
+                            response_or_response_body.charset, errors="replace"
+                        )
+                    else:
+                        body = response_or_response_body.body
             elif isinstance(response_or_response_body.body, bytes):
                 body = response_or_response_body.body.decode(response_or_response_body.charset)
             else:  # pragma: no cover # I don't see a good use case here yet
