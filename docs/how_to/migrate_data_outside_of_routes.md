@@ -19,7 +19,7 @@ use
 Here's what changes:
 
 * The body argument is `body` instead of `latest_body`, and you get the body from the `body` of the result.
-* You can pass objects of your HEAD models, which `migrate_response_body()` rejects. They become data before the migrations run, as in routes. Migrations always get data, so the ones that turn the object into data themselves can stop doing it.
+* You can pass objects of your HEAD models, which `migrate_response_body()` rejects. They become data with all their fields by their aliases before the migrations run, as in routes. Migrations always get data, so the ones that turn the object into data themselves can stop doing it. If you pass a dict that you've dumped in another way, e.g. without aliases or with `mode="json"`, migrations keep getting what they got before.
 * The migrated body is validated as FastAPI validates responses: by the attributes of objects too, and without your overrides of `model_validate()`.
 * The status code and the headers are part of the result, so the headers and the cookies that migrations set are no longer thrown away. Pass `status_code` and `headers` if your migrations need them.
 * If a migration turns the response into an error, you get the error body and its status code, while `migrate_response_body()` fails to validate the error body as your model.
@@ -40,6 +40,8 @@ They also do what routes do around the migrations, which a loop of your own usua
 * Once a migration turns a response into an error, they only run the migrations that set `migrate_http_errors=True`.
 * They take dates and pick the closest older version, as `migrate_response_body()` does.
 * They migrate between any two versions: pass `to_version` to `migrate_request()` or `from_version` to `migrate_response()` if your loop doesn't start or end at HEAD.
+
+If you send the result as JSON, e.g. in a message, dump it as routes do: `migrate_response(...).body.model_dump(mode="json", by_alias=True)`.
 
 Your loop keeps working too: the attributes that it uses are part of the [supported API](../theory/design_decisions.md#supported-api).
 
