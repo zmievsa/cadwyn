@@ -88,7 +88,14 @@ _IMPORT_WITH_ONLY_PYDANTIC = textwrap.dedent(
         "cadwyn.structure.endpoints",
         "cadwyn.structure.enums",
         "cadwyn.structure.schemas",
+        "cadwyn.structure.versions._aliases",
+        "cadwyn.structure.versions._bundle",
         "cadwyn.structure.versions._changes",
+        "cadwyn.structure.versions._core_schema",
+        "cadwyn.structure.versions._enums",
+        "cadwyn.structure.versions._json",
+        "cadwyn.structure.versions._migration_targets",
+        "cadwyn.structure.versions._migrations",
     ],
 )
 def test__import__without_fastapi_and_its_dependencies__should_succeed(module_name: str):

@@ -34,8 +34,7 @@ from cadwyn.structure.versions._json import (
     _get_json_values_plan,
 )
 from cadwyn.structure.versions._migration_targets import _get_schema_migration_target, _no_union_member
-from cadwyn.structure.versions._request_body import _dump_request_body
-from cadwyn.structure.versions._requests import _run_request_migrations
+from cadwyn.structure.versions._migrations import _dump_request_body, _run_request_migrations
 
 from ._annotation_transformer import (
     _ReferencedModelCollector,
