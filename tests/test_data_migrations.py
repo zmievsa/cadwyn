@@ -18,7 +18,7 @@ from collections.abc import Callable, Coroutine, Generator, Iterable, Iterator, 
 from collections.abc import Set as AbstractSet
 from contextlib import nullcontext
 from contextvars import ContextVar
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, Flag, FlagBoundary, IntEnum, StrEnum
 from io import BufferedRandom, BytesIO, FileIO, RawIOBase, StringIO, UnsupportedOperation
@@ -86,6 +86,7 @@ from pydantic import (
 )
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import core_schema
+from starlette.datastructures import MutableHeaders
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.formparsers import MultiPartParser
 from starlette.middleware import Middleware
@@ -109,7 +110,7 @@ from cadwyn.exceptions import (
     RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
     RouterGenerationError,
 )
-from cadwyn.schema_generation import migrate_response_body
+from cadwyn.schema_generation import migrate_request_body, migrate_response_body
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -343,6 +344,22 @@ class TestRequestMigrations:
             "cookies": {"cookie_key": "cookie val 2", "5": "6"},
             "query_params": {"query_param_key": "query_param val 2", "7": "8"},
         }
+
+    def test__request_migration__that_replaces_the_headers__should_send_the_new_headers_to_the_endpoint(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        _post_endpoint: None,
+    ):
+        @convert_request_to_next_version_for(AnyRequestSchema)
+        def migrator(request: RequestInfo):
+            request.headers = MutableHeaders({**request.headers, "header_key": "header val"})
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients["2000-01-01"].post(test_path, json={}, headers={"other_key": "other val"}).json()[
+            "headers"
+        ] == IsPartialDict({"header_key": "header val", "other_key": "other val"})
 
     def test__all_request_components_migration__get_endpoint__migration_filled_results_up(
         self,
@@ -14080,6 +14097,235 @@ def test__manual_response_migrations__with_rescue_that_raises__should_raise_the_
         migrate_response_body(
             version_bundle, SchemaWithValidatorThatRaisesTypeError, latest_body={"x": -1}, version="2000-01-01"
         )
+
+
+class _ColorWithEnumInstructions(Enum):
+    red = "r"
+
+
+class _ItemForManualRequestMigrations(BaseModel):
+    full_name: str
+    age: int = 30
+    color: Union[_ColorWithEnumInstructions, None] = None
+    value: int = Field(default=0, alias="x", validation_alias="v")
+
+
+class _ItemWithJsonForManualRequestMigrations(BaseModel):
+    full_name: str
+    age: int = 30
+    data: Json[Any]
+
+
+@convert_request_to_next_version_for(_ItemForManualRequestMigrations)
+def _migrate_name_and_color_of_item(request: RequestInfo):
+    request.body["full_name"] = request.body.pop("name")
+    if request.body.get("color") is not None and request.body["color"].value == "b":
+        request.body["color"] = _ColorWithEnumInstructions.red
+
+
+@convert_request_to_next_version_for(_ItemWithJsonForManualRequestMigrations)
+def _migrate_age_of_item_with_json(request: RequestInfo):
+    request.body["age"] = 1
+
+
+def _get_versions_of_item_for_manual_request_migrations() -> VersionBundle:
+    return VersionBundle(*conftest_versions(_get_version_change_of_item_for_manual_request_migrations()))
+
+
+def _get_version_change_of_item_for_manual_request_migrations() -> type[VersionChange]:
+    return version_change(
+        schema(_ItemForManualRequestMigrations).field("full_name").had(name="name"),
+        enum(_ColorWithEnumInstructions).had(blue="b"),
+        migrate=_migrate_name_and_color_of_item,
+    )
+
+
+def _get_version_change_of_item_with_json() -> type[VersionChange]:
+    # Routes only encode the parsed values of `Json[...]` fields for the head if the version doesn't change the body
+    return version_change(migrate=_migrate_age_of_item_with_json)
+
+
+@pytest.mark.parametrize(
+    ("model", "get_version_change", "body"),
+    [
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            _get_version_change_of_item_for_manual_request_migrations,
+            {"name": "John"},
+            id="renamed_field",
+        ),
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            _get_version_change_of_item_for_manual_request_migrations,
+            {"name": "John", "age": 5},
+            id="field_with_default",
+        ),
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            _get_version_change_of_item_for_manual_request_migrations,
+            {"name": "John", "color": "b"},
+            id="member_of_copy_of_plain_enum",
+        ),
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            _get_version_change_of_item_for_manual_request_migrations,
+            {"name": "John", "color": "r"},
+            id="member_that_head_has",
+        ),
+        pytest.param(
+            _ItemForManualRequestMigrations,
+            _get_version_change_of_item_for_manual_request_migrations,
+            {"name": "John", "v": 7},
+            id="field_with_validation_alias",
+        ),
+        pytest.param(
+            _ItemWithJsonForManualRequestMigrations,
+            _get_version_change_of_item_with_json,
+            {"full_name": "John", "data": '"5"'},
+            id="json_string",
+        ),
+        pytest.param(
+            _ItemWithJsonForManualRequestMigrations,
+            _get_version_change_of_item_with_json,
+            {"full_name": "John", "data": '{"a": [1, 2]}'},
+            id="json_object",
+        ),
+    ],
+)
+def test__migrate_request_body__for_body_that_a_route_gets__should_give_what_the_endpoint_gets(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+    test_path: Literal["/test"],
+    model: type[BaseModel],
+    get_version_change: Callable[[], type[VersionChange]],
+    body: dict[str, Any],
+):
+    async def endpoint(item: Any):
+        return {"item": repr(item), "fields_set": sorted(item.model_fields_set)}
+
+    endpoint.__annotations__["item"] = model
+    router.post(test_path)(endpoint)
+    app = create_versioned_app(get_version_change())
+    route_result = CadwynTestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"}).post(
+        test_path, json=body
+    )
+    assert route_result.status_code == 200
+
+    migrated = migrate_request_body(app.versions, model, body=body, version="2000-01-01")
+
+    assert type(migrated) is model
+    assert {"item": repr(migrated), "fields_set": sorted(migrated.model_fields_set)} == route_result.json()
+
+
+def test__migrate_request_body__for_date_between_versions__should_migrate_from_the_closest_older_version():
+    versions = _get_versions_of_item_for_manual_request_migrations()
+
+    migrated = migrate_request_body(
+        versions, _ItemForManualRequestMigrations, body={"name": "John"}, version=date(2000, 6, 1)
+    )
+
+    assert migrated.full_name == "John"
+
+
+def test__migrate_request_body__from_latest_version__should_run_no_migrations():
+    versions = _get_versions_of_item_for_manual_request_migrations()
+
+    migrated = migrate_request_body(
+        versions, _ItemForManualRequestMigrations, body={"full_name": "John"}, version="2001-01-01"
+    )
+
+    assert migrated == _ItemForManualRequestMigrations(full_name="John")
+
+
+@pytest.mark.parametrize("version", ["1999-01-01", date(1999, 1, 1)])
+def test__migrate_request_body__from_unknown_version__should_raise_cadwyn_error(version: Union[str, date]):
+    versions = _get_versions_of_item_for_manual_request_migrations()
+
+    with pytest.raises(CadwynError):
+        migrate_request_body(versions, _ItemForManualRequestMigrations, body={"name": "John"}, version=version)
+
+
+def test__migrate_request_body__with_body_that_its_version_rejects__should_raise_validation_error():
+    versions = _get_versions_of_item_for_manual_request_migrations()
+
+    with pytest.raises(ValidationError) as exc_info:
+        migrate_request_body(
+            versions, _ItemForManualRequestMigrations, body={"full_name": "John"}, version="2000-01-01"
+        )
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors()] == [("missing", ("name",))]
+
+
+def test__migrate_request_body__with_migration_that_breaks_the_body__should_raise_head_request_validation_error():
+    @convert_request_to_next_version_for(_ItemForManualRequestMigrations)
+    def migration(request: RequestInfo):
+        request.body["age"] = "not a number"
+
+    versions = VersionBundle(*conftest_versions(version_change(migration=migration)))
+
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        migrate_request_body(
+            versions, _ItemForManualRequestMigrations, body={"full_name": "John"}, version="2000-01-01"
+        )
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("int_parsing", ("age",))]
+    assert exc_info.value.version == "2000-01-01"
+
+
+def test__migrate_request_body__with_migration_by_path__should_run_only_migrations_by_schema(test_path: str):
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migration_by_path(request: RequestInfo):
+        raise NotImplementedError
+
+    @convert_request_to_next_version_for(_ItemForManualRequestMigrations)
+    def migration_by_schema(request: RequestInfo):
+        request.body["age"] = 5
+
+    versions = VersionBundle(
+        *conftest_versions(version_change(migration_by_path=migration_by_path, migration_by_schema=migration_by_schema))
+    )
+
+    migrated = migrate_request_body(
+        versions, _ItemForManualRequestMigrations, body={"full_name": "John"}, version="2000-01-01"
+    )
+
+    assert migrated.age == 5
+
+
+@pytest.mark.parametrize(
+    "use_http_detail",
+    [
+        pytest.param(lambda request: request.headers, id="headers"),
+        pytest.param(lambda request: setattr(request, "headers", {}), id="assigned_headers"),
+        pytest.param(lambda request: request.cookies, id="cookies"),
+        pytest.param(lambda request: request.query_params, id="query_params"),
+    ],
+)
+def test__migrate_request_body__with_migration_that_uses_http_details__should_raise_cadwyn_error(
+    use_http_detail: Callable[[RequestInfo], object],
+):
+    @convert_request_to_next_version_for(_ItemForManualRequestMigrations)
+    def migration(request: RequestInfo):
+        use_http_detail(request)
+
+    versions = VersionBundle(*conftest_versions(version_change(migration=migration)))
+
+    with pytest.raises(CadwynError, match=r"`migrate_request_body\(\)` migrates only the body"):
+        migrate_request_body(
+            versions, _ItemForManualRequestMigrations, body={"full_name": "John"}, version="2000-01-01"
+        )
+
+
+def test__migrate_request_body__with_migration_that_reads_the_form__should_get_none():
+    forms: list[object] = []
+
+    @convert_request_to_next_version_for(_ItemForManualRequestMigrations)
+    def migration(request: RequestInfo):
+        forms.append(request.form)
+
+    versions = VersionBundle(*conftest_versions(version_change(migration=migration)))
+
+    migrate_request_body(versions, _ItemForManualRequestMigrations, body={"full_name": "John"}, version="2000-01-01")
+
+    assert forms == [None]
 
 
 def test__request_and_response_migrations__with_multiple_schemas_in_converters(

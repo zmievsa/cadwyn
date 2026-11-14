@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+- `migrate_request_body()` migrates a request body from an older version up to HEAD outside of routing, e.g. for a message from a queue, and returns the HEAD model, as an endpoint gets it. It runs the same migrations by schema as routes, and raises an error if a migration uses HTTP details that it has no request for ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
+
 ### Changed
 
 - The docs now call request and response converters "data migrations", and name them "migrations by schema" and "migrations by path" everywhere.

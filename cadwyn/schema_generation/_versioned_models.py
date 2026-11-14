@@ -12,10 +12,11 @@ import fastapi.params
 import pydantic
 from fastapi import Response
 from pydantic import BaseModel
+from typing_extensions import TypeVar
 
-from cadwyn.exceptions import CadwynError
+from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError
 from cadwyn.structure.common import VersionType
-from cadwyn.structure.data import ResponseInfo
+from cadwyn.structure.data import ResponseInfo, _get_body_only_request_info
 from cadwyn.structure.schemas import (
     SchemaHadInstruction,
 )
@@ -25,7 +26,16 @@ from cadwyn.structure.versions import (  # noqa: TC001 # Needed by runtime annot
     VersionBundle,
 )
 from cadwyn.structure.versions._aliases import _rescue_model_data
-from cadwyn.structure.versions._migration_targets import _get_schema_migration_target
+from cadwyn.structure.versions._enums import _get_lazy_item_walker, _to_head_values
+from cadwyn.structure.versions._json import (
+    _ClientJsonStrings,
+    _copy_decoded_json_strings,
+    _encode_planned_json_values,
+    _get_json_values_plan,
+)
+from cadwyn.structure.versions._migration_targets import _get_schema_migration_target, _no_union_member
+from cadwyn.structure.versions._request_body import _dump_request_body
+from cadwyn.structure.versions._requests import _run_request_migrations
 
 from ._annotation_transformer import (
     _ReferencedModelCollector,
@@ -54,6 +64,61 @@ from ._schema_generator import (
     _RuntimeSchemaGenContext,
 )
 
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+
+def migrate_request_body(
+    versions: "VersionBundle",
+    latest_request_model: type[_ModelT],
+    *,
+    body: Any,
+    version: Union[VersionType, date],
+) -> _ModelT:
+    """Migrate the body of a request from a version up to head
+
+    Validate the body with the passed version of latest_request_model, apply all version changes from that version
+    up to head, and validate the result with latest_request_model, as a route does before it calls its endpoint
+    """
+    version = _get_version_to_migrate(versions, version)
+    versioned_request_model = generate_versioned_models(versions)[version][latest_request_model]
+    # Like routes, we migrate the data that the client has sent, so the body has the keys of
+    # `model_dump(by_alias=True)` and only the fields that the client has set
+    validated_body = versioned_request_model.model_validate(body)
+    json_values_plan = _get_json_values_plan(latest_request_model, versioned_request_model)
+    client_json_strings = _ClientJsonStrings()
+    request_info = _get_body_only_request_info(
+        _copy_decoded_json_strings(json_values_plan, _dump_request_body(validated_body), client_json_strings)
+    )
+    has_run_migrations = _run_request_migrations(
+        versions,
+        request_info,
+        version,
+        _get_schema_migration_target(latest_request_model),
+        _no_union_member,
+        head_route=None,
+        uploads=None,
+    )
+    if has_run_migrations:
+        client_json_strings.forget_shared_strings()
+    replace_enum_members = versions._has_versioned_plain_enums
+    migrated_body = _to_head_values(
+        request_info.body,
+        replace_enum_members=replace_enum_members,
+        replay_lazy_iterators=False,
+        walk_lazy_item=_get_lazy_item_walker(replace_enum_members=True, replay_lazy_iterators=False)
+        if replace_enum_members
+        else None,
+    )
+    migrated_body = _rescue_model_data(latest_request_model, migrated_body)
+    if json_values_plan is not None:
+        migrated_body = _encode_planned_json_values(
+            json_values_plan, migrated_body, client_json_strings, has_other_body_readers=lambda: False
+        )
+    try:
+        return latest_request_model.model_validate(migrated_body)
+    except pydantic.ValidationError as exc:
+        raise CadwynHeadRequestValidationError(exc.errors(), body=request_info.body, version=version) from exc
+
 
 def migrate_response_body(
     versions: "VersionBundle",
@@ -67,11 +132,7 @@ def migrate_response_body(
     Apply all version changes from latest until the passed version in reverse order
     and wrap the result in the correct version of latest_response_model
     """
-    if isinstance(version, date):
-        version = version.isoformat()
-        version = versions._get_closest_lesser_version(version)
-    if version not in versions._version_values_set:
-        raise CadwynError(f"Version {version} not found in version bundle")
+    version = _get_version_to_migrate(versions, version)
     response = ResponseInfo(Response(status_code=200), body=latest_body)
     migrated_response = versions._migrate_response(
         response,
@@ -87,6 +148,16 @@ def migrate_response_body(
     # restore its validation aliases if it surely fails as it is, and we validate it once, whichever body it is,
     # because validators can have side effects.
     return versioned_response_model.model_validate(_rescue_model_data(versioned_response_model, migrated_response.body))
+
+
+def _get_version_to_migrate(versions: "VersionBundle", version: Union[VersionType, date]) -> VersionType:
+    """Return the version of the bundle that a body of this version or date has"""
+    if isinstance(version, date):
+        version = version.isoformat()
+        version = versions._get_closest_lesser_version(version)
+    if version not in versions._version_values_set:
+        raise CadwynError(f"Version {version} not found in version bundle")
+    return version
 
 
 def get_models_that_routes_request(routers: "collections.abc.Iterable[fastapi.routing.APIRouter]") -> set[type[Any]]:
