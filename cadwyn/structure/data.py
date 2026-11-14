@@ -184,7 +184,13 @@ class _HeadersWithoutStarlette:
             "e.g. with `pip install starlette`."
         )
 
-    __getattr__ = __getitem__ = __setitem__ = __delitem__ = __contains__ = __iter__ = __len__ = __bool__ = _fail
+    __getitem__ = __setitem__ = __delitem__ = __contains__ = __iter__ = __len__ = __bool__ = _fail
+
+    def __getattr__(self, name: str) -> NoReturn:
+        # Copying and pickling look up special methods, e.g. when a migration copies the request
+        if name.startswith("__"):
+            raise AttributeError(name)
+        self._fail()
 
 
 class _ResponseWithoutStarlette:

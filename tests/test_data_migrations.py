@@ -14752,6 +14752,50 @@ def test__migrate_request__with_parametrization_of_generic_of_its_version__shoul
     assert migrated.body.items == [100]
 
 
+class _ItemOfBoundForVersionChecks(BaseModel):
+    a: int = 1
+    b: int = 2
+
+
+_BoundItemT = TypeVar("_BoundItemT", bound=_ItemOfBoundForVersionChecks)
+
+
+class _PageWithBoundForVersionChecks(BaseModel, Generic[_BoundItemT]):
+    items: list[_BoundItemT]
+
+
+class _WrapperOfPageWithBoundForVersionChecks(BaseModel):
+    page: _PageWithBoundForVersionChecks[_ItemOfBoundForVersionChecks]
+
+
+@pytest.mark.parametrize("direction", ["request", "response"])
+def test__migrate_request_and_response__with_generic_whose_bound_the_version_changes__should_migrate_it(
+    direction: str,
+):
+    versions = VersionBundle(
+        *conftest_versions(version_change(schema(_ItemOfBoundForVersionChecks).field("b").didnt_exist))
+    )
+    # The version has a copy of the generic itself, because the bound of its type param changes
+    body = generate_versioned_models(versions)["2000-01-01"][_WrapperOfPageWithBoundForVersionChecks].model_validate(
+        {"page": {"items": [{"a": 1}]}}
+    )
+
+    if direction == "request":
+        migrated: Any = migrate_request(
+            versions, _WrapperOfPageWithBoundForVersionChecks, body=body, version="2000-01-01"
+        )
+    else:
+        migrated = migrate_response(
+            versions,
+            _WrapperOfPageWithBoundForVersionChecks,
+            body=body,
+            version="2000-01-01",
+            from_version="2000-01-01",
+        )
+
+    assert migrated.body.model_dump(include={"page"})["page"]["items"][0]["a"] == 1
+
+
 def test__migrate_response__with_object_of_model_that_versions_share__should_migrate_it():
     versions = _get_versions_for_version_checks()
     # No version changes the nodes, so every version has the head nodes
@@ -14785,7 +14829,13 @@ def test__migrate_response__with_head_objects_in_data__should_migrate_the_data()
     migrated = migrate_response(
         versions,
         _ItemForManualResponseMigrations,
-        body={"full_name": "John", "related": [_ItemForManualResponseMigrations(full_name="Jane")]},
+        body={
+            "full_name": "John",
+            "related": [
+                _ItemForManualResponseMigrations(full_name="Jane"),
+                _ItemForManualResponseMigrations(full_name="Jo"),
+            ],
+        },
         version="2000-01-01",
     )
 

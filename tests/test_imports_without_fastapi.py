@@ -348,3 +348,27 @@ def test__migrations__that_use_headers_without_starlette__should_raise_cadwyn_er
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test__migrations__that_copy_the_request_without_starlette__should_work():
+    result = _run_without_fastapi(
+        _VERSIONS_OF_USERS
+        + """
+    import copy
+
+
+    class CopyTheRequest(VersionChange):
+        description = "Copies the request"
+        instructions_to_migrate_to_previous_version = ()
+
+        @convert_request_to_next_version_for(User)
+        def copy_the_request(request: RequestInfo):
+            assert not hasattr(copy.deepcopy(request.headers), "__fspath__")
+
+
+    copying_versions = VersionBundle(Version("2001-01-01", CopyTheRequest), Version("2000-01-01"))
+    assert migrate_request(copying_versions, User, body={"full_name": "John"}, version="2000-01-01").headers is None
+    """
+    )
+
+    assert result.returncode == 0, result.stderr

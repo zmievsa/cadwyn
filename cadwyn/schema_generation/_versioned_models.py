@@ -352,13 +352,13 @@ def _check_that_response_body_is_of_version(
     if status_code >= 300:
         return
     generator = None if from_version is None else generate_versioned_models(versions)[from_version]
-    for model_object in _iter_model_objects(body):
-        if not _is_of_version(type(model_object), generator):
-            version = "HEAD" if from_version is None else f"from_version={from_version!r}"
-            raise CadwynError(
-                f"`migrate_response()` got an object of {type(model_object).__name__} that isn't of {version}. Pass "
-                f"data, or objects of the models of {version}."
-            )
+    model_object = next(_iter_model_objects_of_other_versions(body, generator), None)
+    if model_object is not None:
+        version = "HEAD" if from_version is None else f"from_version={from_version!r}"
+        raise CadwynError(
+            f"`migrate_response()` got an object of {type(model_object).__name__} that isn't of {version}. Pass "
+            f"data, or objects of the models of {version}."
+        )
 
 
 def _check_that_request_body_is_of_version(body: Any, generator: SchemaGenerator, version: VersionType) -> None:
@@ -366,13 +366,13 @@ def _check_that_request_body_is_of_version(body: Any, generator: SchemaGenerator
 
     Pydantic takes some of them, e.g. by their attributes or as the parametrizations of generics.
     """
-    for model_object in _iter_model_objects(body):
-        if not _is_of_version(type(model_object), generator):
-            raise CadwynError(
-                f"`migrate_request()` got an object of {type(model_object).__name__} that isn't of "
-                f"version={version!r}. Pass the data that the client has sent, as routes get it, or objects of the "
-                "models of that version."
-            )
+    model_object = next(_iter_model_objects_of_other_versions(body, generator), None)
+    if model_object is not None:
+        raise CadwynError(
+            f"`migrate_request()` got an object of {type(model_object).__name__} that isn't of "
+            f"version={version!r}. Pass the data that the client has sent, as routes get it, or objects of the "
+            "models of that version."
+        )
 
 
 def _is_of_version(cls: type[BaseModel], generator: Union[SchemaGenerator, None]) -> bool:
@@ -385,7 +385,23 @@ def _is_of_version(cls: type[BaseModel], generator: Union[SchemaGenerator, None]
     head_model = getattr(origin, "__cadwyn_original_model__", None)
     if generator is None:
         return head_model is None
-    return issubclass(origin, generator[origin if head_model is None else head_model])
+    head_model = origin if head_model is None else head_model
+    # A generic used without type args can have a copy of its own if its type params use the models of the version
+    # (e.g. in their bounds), but its parametrizations come from its template
+    return issubclass(origin, generator[head_model]) or issubclass(origin, generator._get_template(head_model))
+
+
+def _iter_model_objects_of_other_versions(
+    data: Any, generator: Union[SchemaGenerator, None]
+) -> "collections.abc.Iterator[BaseModel]":
+    """Yield the model objects in the data whose models aren't of the version (of HEAD for None)"""
+    classes_of_version: dict[type[BaseModel], bool] = {}
+    for model_object in _iter_model_objects(data):
+        cls = type(model_object)
+        if cls not in classes_of_version:
+            classes_of_version[cls] = _is_of_version(cls, generator)
+        if not classes_of_version[cls]:
+            yield model_object
 
 
 def _iter_model_objects(data: Any) -> "collections.abc.Iterator[BaseModel]":
