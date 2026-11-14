@@ -49,6 +49,8 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
+    # Exactly the same version, which `cadwyn` and `cadwyn_core` also check at import
+    "cadwyn-core==9.0.0",
     "fastapi >=0.137.1",
     "starlette >=0.30.0",
     "pydantic >=2.12.0",
@@ -99,8 +101,14 @@ dev = [
 [tool.uv]
 default-groups = ['dev']
 
+[tool.uv.workspace]
+members = ["cadwyn-core"]
+
+[tool.uv.sources]
+cadwyn-core = { workspace = true }
+
 [tool.hatch.build]
-exclude = ["/node_modules"]
+exclude = ["/node_modules", "/cadwyn-core"]
 skip-excluded-dirs = true
 
 
