@@ -7,7 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-- `migrate_request_body()` migrates a request body from an older version up to HEAD outside of routing, e.g. for a message from a queue, and returns the HEAD model, as an endpoint gets it. It runs the same migrations by schema as routes, and raises an error if a migration uses HTTP details that it has no request for ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
+- `migrate_request()` and `migrate_response()` migrate requests and responses outside of routes, e.g. for webhooks, messages in queues, or APIs that aren't built with FastAPI. They run the same migrations by schema as routes and do what routes do around them, take and return the body, the headers, the cookies, and the query params or the status code, and return them in the new `MigratedRequest` and `MigratedResponse`. See [how to migrate data outside of routes](https://docs.cadwyn.dev/how_to/migrate_data_outside_of_routes/) to move from `migrate_response_body()`, which works as before ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 
 ### Changed
 

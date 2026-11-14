@@ -25,57 +25,17 @@ from cadwyn.structure.data import (
     ResponseInfo,
 )
 
-from ._aliases import _get_restorer_spec, _is_dumped_from_models, _rescue_body
+from ._aliases import _rescue_body
 from ._common import _CADWYN_RESPONSE_PARAM_NAME
 from ._migration_targets import (
     _get_closest_union_member,
     _no_union_member,
     _SchemaMigrationTarget,
 )
+from ._migrations import _keep_restored_dumps_of_head_models, _prepare_response_content
 
 if TYPE_CHECKING:
     from ._bundle import VersionBundle
-
-
-def _prepare_response_content(
-    res: Any,
-    *,
-    exclude_unset: bool,
-    exclude_defaults: bool = False,
-    exclude_none: bool = False,
-) -> Any:
-    """Serialize Pydantic models to dicts for response processing.
-
-    It is much easier to alter dicts and lists than Pydantic models in request/response migrations
-    """
-    if isinstance(res, BaseModel):
-        return res.model_dump(
-            by_alias=True,
-            exclude_unset=exclude_unset,
-            exclude_defaults=exclude_defaults,
-            exclude_none=exclude_none,
-        )
-    elif isinstance(res, list):
-        return [
-            _prepare_response_content(
-                item,
-                exclude_unset=exclude_unset,
-                exclude_defaults=exclude_defaults,
-                exclude_none=exclude_none,
-            )
-            for item in res
-        ]
-    elif isinstance(res, dict):
-        return {
-            k: _prepare_response_content(
-                v,
-                exclude_unset=exclude_unset,
-                exclude_defaults=exclude_defaults,
-                exclude_none=exclude_none,
-            )
-            for k, v in res.items()
-        }
-    return res
 
 
 def _rescue_response(response_field: ModelField, head_response_model: object, content: Any, data: Any) -> Any:
@@ -89,16 +49,7 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     as it always did, and responses that pass stay exactly as they are, even if a field gets its default instead
     of its value.
     """
-    restored = _rescue_body(response_field, data)
-    if restored is data:
-        return data
-    # We only restore the dumps of the models of the head response model that the endpoint returned. FastAPI validates
-    # the dicts that the endpoint returns as they are, and the dump of another model can have the dumped keys of
-    # a response model with values that it doesn't accept.
-    head_spec = _get_restorer_spec(head_response_model)
-    if head_spec is None or not _is_dumped_from_models(content, head_spec):
-        return data
-    return restored
+    return _keep_restored_dumps_of_head_models(_rescue_body(response_field, data), data, head_response_model, content)
 
 
 async def _convert_endpoint_response_to_version(  # noqa: C901

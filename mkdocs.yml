@@ -117,6 +117,7 @@ nav:
           - "Change a schema that is not used in any endpoint": "how_to/change_openapi_schemas/change_schema_without_endpoint.md"
       - "Change business logic": "how_to/change_business_logic/index.md"
       - "Change endpoints": "how_to/change_endpoints/index.md"
+      - "Migrate data outside of routes": "how_to/migrate_data_outside_of_routes.md"
 
   - "Concepts":
       - "concepts/index.md"

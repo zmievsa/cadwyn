@@ -37,7 +37,8 @@ from ._fields import dict_of_empty_field_info as dict_of_empty_field_info
 from ._schema_generator import SchemaGenerator as SchemaGenerator
 from ._versioned_models import generate_versioned_models as generate_versioned_models
 from ._versioned_models import get_models_that_routes_request as get_models_that_routes_request
-from ._versioned_models import migrate_request_body as migrate_request_body
+from ._versioned_models import migrate_request as migrate_request
+from ._versioned_models import migrate_response as migrate_response
 from ._versioned_models import migrate_response_body as migrate_response_body
 
 # These modules import some names only for type checking because importing them at runtime would be cyclic.

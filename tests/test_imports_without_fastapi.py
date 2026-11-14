@@ -113,42 +113,111 @@ def test__import__without_fastapi_and_its_dependencies__should_succeed(module_na
     assert result.returncode == 0, result.stderr
 
 
-def test__migrate_request_body__without_fastapi_and_its_dependencies__should_migrate_the_body():
+_VERSIONS_OF_USERS = """
+    from pydantic import BaseModel
+
+    from cadwyn.exceptions import CadwynError
+    from cadwyn.schema_generation import generate_versioned_models, migrate_request, migrate_response
+    from cadwyn.structure import (
+        MigratedRequest,
+        MigratedResponse,
+        RequestInfo,
+        ResponseInfo,
+        Version,
+        VersionBundle,
+        VersionChange,
+        convert_request_to_next_version_for,
+        convert_response_to_previous_version_for,
+        schema,
+    )
+
+
+    class User(BaseModel):
+        full_name: str
+
+
+    headers_of_migrations = []
+
+
+    class RenameNameToFullName(VersionChange):
+        description = "'name' is now called 'full_name'"
+        instructions_to_migrate_to_previous_version = (schema(User).field("full_name").had(name="name"),)
+
+        @convert_request_to_next_version_for(User)
+        def rename_name_to_full_name(request: RequestInfo):
+            headers_of_migrations.append(request.headers)
+            request.body["full_name"] = request.body.pop("name")
+
+        @convert_response_to_previous_version_for(User)
+        def rename_full_name_to_name(response: ResponseInfo):
+            headers_of_migrations.append(response.headers)
+            response.body["name"] = response.body.pop("full_name")
+
+
+    versions = VersionBundle(Version("2001-01-01", RenameNameToFullName), Version("2000-01-01"))
+"""
+
+
+def test__generate_versioned_models__without_fastapi_and_its_dependencies__should_generate_the_models():
     result = _run_without_fastapi(
-        """
-        from pydantic import BaseModel
+        _VERSIONS_OF_USERS
+        + """
+    assert list(generate_versioned_models(versions)["2000-01-01"][User].model_fields) == ["name"]
+    """
+    )
 
-        from cadwyn.schema_generation import generate_versioned_models, migrate_request_body
-        from cadwyn.structure import (
-            RequestInfo,
-            Version,
-            VersionBundle,
-            VersionChange,
-            convert_request_to_next_version_for,
-            schema,
-        )
+    assert result.returncode == 0, result.stderr
 
 
-        class User(BaseModel):
-            full_name: str
+def test__migrate_request__without_fastapi_and_its_dependencies__should_migrate_the_request_without_headers():
+    result = _run_without_fastapi(
+        _VERSIONS_OF_USERS
+        + """
+    migrated = migrate_request(
+        versions, User, body={"name": "John"}, version="2000-01-01", cookies={"a": "b"}, query_params={"c": "d"}
+    )
+    assert migrated == MigratedRequest(
+        body=User(full_name="John"), headers=None, cookies={"a": "b"}, query_params={"c": "d"}
+    )
+    assert headers_of_migrations == [None]
+    """
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
-        class RenameNameToFullName(VersionChange):
-            description = "'name' is now called 'full_name'"
-            instructions_to_migrate_to_previous_version = (schema(User).field("full_name").had(name="name"),)
+def test__migrate_response__without_fastapi_and_its_dependencies__should_migrate_the_response_without_headers():
+    result = _run_without_fastapi(
+        _VERSIONS_OF_USERS
+        + """
+    migrated = migrate_response(versions, User, body=User(full_name="John"), version="2000-01-01", status_code=201)
+    assert migrated.body.model_dump() == {"name": "John"}
+    assert (migrated.status_code, migrated.headers) == (201, None)
+    assert headers_of_migrations == [None]
+    """
+    )
 
-            @convert_request_to_next_version_for(User)
-            def rename_name_to_full_name(request: RequestInfo):
-                request.body["full_name"] = request.body.pop("name")
+    assert result.returncode == 0, result.stderr
 
 
-        versions = VersionBundle(Version("2001-01-01", RenameNameToFullName), Version("2000-01-01"))
-
-        assert list(generate_versioned_models(versions)["2000-01-01"][User].model_fields) == ["name"]
-        assert migrate_request_body(versions, User, body={"name": "John"}, version="2000-01-01") == User(
-            full_name="John"
-        )
-        """
+@pytest.mark.parametrize(
+    "migrate",
+    [
+        'migrate_request(versions, User, body={"name": "John"}, version="2000-01-01", headers={"a": "b"})',
+        'migrate_response(versions, User, body={"full_name": "John"}, version="2000-01-01", headers={"a": "b"})',
+    ],
+)
+def test__migrate_request_and_response__with_headers_without_starlette__should_raise_cadwyn_error(migrate: str):
+    result = _run_without_fastapi(
+        _VERSIONS_OF_USERS
+        + f"""
+    try:
+        {migrate}
+    except CadwynError as error:
+        assert str(error) == "Migrating headers needs Starlette. Install it, e.g. with `pip install starlette`."
+    else:
+        raise AssertionError("Passing headers without Starlette must fail")
+    """
     )
 
     assert result.returncode == 0, result.stderr

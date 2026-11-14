@@ -1,14 +1,19 @@
 import functools
 import inspect
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, Union, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, Union, cast, overload
+
+from pydantic import BaseModel
+from typing_extensions import TypeVar
 
 from cadwyn._utils import UnionType, _callable_name
 from cadwyn.exceptions import CadwynError
 from cadwyn.structure.common import _validate_schema_is_versionable
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 if TYPE_CHECKING:
     from fastapi import Request, Response
@@ -21,14 +26,14 @@ class RequestInfo:
     __slots__ = ("_body", "_body_is_assigned", "_cookies", "_form", "_headers", "_query_params", "_request")
 
     def __init__(self, request: "Request", body: Any) -> None:
-        # Routes make it, so FastAPI is there. Standalone use makes it with `_get_body_only_request_info()`.
+        # Routes make it, so FastAPI is there. `migrate_request()` makes it with `_get_standalone_request_info()`.
         from starlette.datastructures import FormData
 
         super().__init__()
         self._body = body
         # Whether a request migration has assigned the body, so that `None` means an omitted body
         self._body_is_assigned = False
-        self._headers = request.headers.mutablecopy()
+        self.headers = request.headers.mutablecopy()
         self._cookies = request.cookies
         self._query_params = request.query_params._dict
         self._request: Union[Request, None] = request
@@ -39,12 +44,10 @@ class RequestInfo:
 
     @property
     def headers(self) -> "MutableHeaders":
-        self._check_that_request_exists("headers")
         return self._headers
 
     @headers.setter
     def headers(self, value: "MutableHeaders") -> None:
-        self._check_that_request_exists("headers")
         self._headers = value
 
     @property
@@ -58,36 +61,57 @@ class RequestInfo:
 
     @property
     def cookies(self) -> dict[str, str]:
-        self._check_that_request_exists("cookies")
         return self._cookies
 
     @property
     def query_params(self) -> dict[str, str]:
-        self._check_that_request_exists("query_params")
         return self._query_params
 
     @property
     def form(self) -> "Union[list[tuple[str, Union[UploadFile, str]]], None]":
         return self._form
 
-    def _check_that_request_exists(self, attribute: str) -> None:
-        """Fail instead of silently losing what a migration reads or changes in a request that doesn't exist"""
-        if self._request is None:
-            raise CadwynError(
-                f"A request migration has used `request.{attribute}`, but `migrate_request_body()` migrates only "
-                "the body, without an HTTP request. Make the migrations by schema of this model use only "
-                "`request.body`, or migrate this request in a route."
-            )
+
+# The headers that a caller passes: a mapping, or a list of pairs of names and values, which can repeat names
+_HeadersInput: TypeAlias = Union[Mapping[str, str], list[tuple[str, str]], None]
 
 
-def _get_body_only_request_info(body: Any) -> RequestInfo:
-    """Return the `RequestInfo` of a body that `migrate_request_body()` migrates without an HTTP request"""
+def _get_standalone_request_info(
+    body: Any, headers: _HeadersInput, cookies: dict[str, str], query_params: dict[str, str]
+) -> RequestInfo:
+    """Return the `RequestInfo` of a request that `migrate_request()` migrates without FastAPI"""
     request_info = RequestInfo.__new__(RequestInfo)
     request_info._body = body
     request_info._body_is_assigned = False
+    # Without Starlette, there are no headers. Migrations get None, and the caller can't pass any.
+    request_info._headers = cast("MutableHeaders", _get_starlette_headers(headers))
+    request_info._cookies = cookies
+    request_info._query_params = query_params
     request_info._request = None
     request_info._form = None
     return request_info
+
+
+@dataclass
+class MigratedRequest(Generic[_ModelT]):
+    """A request that `migrate_request()` has migrated up to head"""
+
+    body: _ModelT
+    # None without Starlette, which the headers need
+    headers: Union[list[tuple[str, str]], None]
+    cookies: dict[str, str]
+    query_params: dict[str, str]
+
+
+@dataclass
+class MigratedResponse:
+    """A response that `migrate_response()` has migrated down to a version"""
+
+    # The version's model, or the body as the migrations have left it if they have made the response an error
+    body: Any
+    status_code: int
+    # None without Starlette, which the headers and the cookies need
+    headers: Union[list[tuple[str, str]], None]
 
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background
@@ -127,6 +151,48 @@ class ResponseInfo:
 
         def delete_cookie(self, *args: Any, **kwargs: Any) -> None:
             return self._response.delete_cookie(*args, **kwargs)
+
+
+def _get_standalone_response_info(body: Any, status_code: int, headers: _HeadersInput) -> ResponseInfo:
+    """Return the `ResponseInfo` of a response that `migrate_response()` migrates without FastAPI"""
+    starlette_headers = _get_starlette_headers(headers)
+    if starlette_headers is None:
+        # Without Starlette, a response is only its status code. Migrations get None for its headers.
+        return ResponseInfo(cast("Response", _ResponseWithoutStarlette(status_code)), body)
+    from starlette.responses import Response
+
+    # Like the response that FastAPI gives to the dependencies of a route
+    response = Response()
+    del response.headers["content-length"]
+    response.status_code = status_code
+    for key, value in starlette_headers.items():
+        response.headers.append(key, value)
+    return ResponseInfo(response, body)
+
+
+class _ResponseWithoutStarlette:
+    __slots__ = ("headers", "status_code")
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__()
+        self.status_code = status_code
+        self.headers = None
+
+
+def _get_starlette_headers(headers: _HeadersInput) -> "Union[MutableHeaders, None]":
+    """Return Starlette's headers with these headers, or None without Starlette, which can only be without headers"""
+    try:
+        from starlette.datastructures import MutableHeaders
+    except ModuleNotFoundError as exc:
+        if exc.name is None or exc.name.partition(".")[0] != "starlette":  # pragma: no cover # A broken Starlette
+            raise
+        if headers is not None:
+            raise CadwynError(
+                "Migrating headers needs Starlette. Install it, e.g. with `pip install starlette`."
+            ) from exc
+        return None
+    pairs = headers.items() if isinstance(headers, Mapping) else (headers or [])
+    return MutableHeaders(raw=[(key.lower().encode("latin-1"), value.encode("latin-1")) for key, value in pairs])
 
 
 @dataclass

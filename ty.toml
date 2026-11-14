@@ -35,7 +35,7 @@ import-not-found = "ignore"
 [[overrides]]
 # These doc examples import the modules of an imaginary app (e.g. `from users import User`).
 # Their tests register stand-ins for these modules before they import the examples.
-include = ["docs_src/concepts/version_changes/block*.py"]
+include = ["docs_src/concepts/version_changes/block*.py", "docs_src/how_to/migrate_data_outside_of_routes/block*.py"]
 
 [overrides.rules]
 import-not-found = "ignore"

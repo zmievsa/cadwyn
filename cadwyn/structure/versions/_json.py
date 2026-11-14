@@ -189,7 +189,7 @@ _JSON_CHILD_SCHEMA_KEYS = {
     "list": ("items_schema", "items"),
     "dict": ("values_schema", "values"),
 }
-# What the head validates the body with: the body field of a route, or the model of `migrate_request_body()`
+# What the head validates the body with: the body field of a route, or the model of `migrate_request()`
 _JsonPlanSource: TypeAlias = "Union[ModelField, type[BaseModel]]"
 # The descriptions of the body fields, and the plans for the pairs of a head body field and a body field of a version
 _BODY_FIELD_JSON_PLANS: dict[int, tuple[_JsonPlanSource, Union[_JsonValuesPlan, None]]] = {}

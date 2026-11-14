@@ -229,26 +229,31 @@ So now your migration will look like the following:
 
 Yes, you no longer need any of the migrations because responses are handled automatically. See the how-to section for an example of how to achieve the same result with requests.
 
-#### Manual body migrations
+#### Migrations outside of routes
 
-Often you will need to migrate your data outside of routing, manually. For example, you might need to send a versioned response to your client via a webhook or inside a worker/cronjob. In these cases, use `cadwyn.schema_generation.migrate_response_body()`:
+Sometimes you need to migrate data outside of routes, e.g. to send a webhook or a message from a worker in a client's version, to read a message that a client of an older version has put into a queue, or to version an API that isn't built with FastAPI. Use `migrate_response()` and `migrate_request()` for that. They run the same migrations by schema as routes, so the same version changes give the same data either way. Migrations by path don't run, since there is no route.
 
+`migrate_response()` does what a route does with what your endpoint returns:
 
 ```python
 {! ./docs_src/concepts/version_changes/block011.py !}
 ```
 
-The returned `body_from_2000_01_01` is your data passed through the migrations by schema of `UserResource` (migrations by path don't run, since there is no route) and wrapped in the `2000-01-01` version of `UserResource`. Because the data is wrapped, you can include Pydantic’s defaults.
+It turns the models in `body` into data, as routes do, passes it through the migrations by schema of `UserResource` from HEAD down to `2000-01-01`, and validates the result with the `2000-01-01` version of `UserResource`. It returns a `MigratedResponse` with that `body`, the `status_code`, which is 200 unless you pass another one, and the `headers`, which include the cookies that the migrations set. If a migration turns the response into an error (a status code of 300 or more), `body` is the error body as the migrations have left it, because it's not a `UserResource` anymore, and the older migrations that don't set `migrate_http_errors=True` don't run, as in routes.
 
-To migrate data that a client of an older version has sent you outside of routing, e.g. a message from a queue, use `cadwyn.schema_generation.migrate_request_body()`:
+Like route responses, `migrate_response()` restores validation aliases only when missing keys would certainly fail validation, such as required fields or forbidden extras. In other cases, make migrations set validation keys explicitly, e.g. `v` for `Field(alias="x", validation_alias="v")`. Restored bodies are validated once and report their own errors; aliased fields whose defaults come only from custom core schemas keep supplied values or reject invalid ones instead of silently using defaults. To request the default, delete the value in a response migration, or from `body` before calling `migrate_response()`.
+
+`migrate_request()` does what a route does with a request before it calls your endpoint:
 
 ```python
 {! ./docs_src/concepts/version_changes/block018.py !}
 ```
 
-It does what a route does with a request body before it calls your endpoint: it validates the body with the `2000-01-01` version of `UserCreateRequest`, passes the data that the client has set through the migrations by schema of `UserCreateRequest` up to HEAD, and returns the HEAD `UserCreateRequest` that your business logic expects. Migrations by path don't run, since there is no route. If the body doesn't fit its version, you get Pydantic's `ValidationError`. If the migrated body doesn't fit HEAD, or a migration sets it to `None`, which omits the body, you get `CadwynHeadRequestValidationError`, which means that your migrations are wrong. There is no HTTP request either, so a migration that uses `request.headers`, `request.cookies`, or `request.query_params` raises a `CadwynError` instead of losing what it reads or changes, and `request.form` is `None`.
+It validates the body with the `2000-01-01` version of `UserCreateRequest`, passes the data that the client has set through the migrations by schema of `UserCreateRequest` up to HEAD, and returns a `MigratedRequest` with the HEAD `UserCreateRequest` that your business logic expects as its `body`, and the migrated `headers`, `cookies`, and `query_params`. If the body doesn't fit its version, you get Pydantic's `ValidationError`. If the migrated body doesn't fit HEAD, or a migration sets it to `None`, which omits the body, you get `CadwynHeadRequestValidationError`, which means that your migrations are wrong. `request.form` is always `None`.
 
-Like route responses, `migrate_response_body()` restores validation aliases only when missing keys would certainly fail validation, such as required fields or forbidden extras. In other cases, make migrations set validation keys explicitly, e.g. `v` for `Field(alias="x", validation_alias="v")`. Restored bodies are validated once and report their own errors; aliased fields whose defaults come only from custom core schemas keep supplied values or reject invalid ones instead of silently using defaults. To request the default, delete the value in a response migration, or from `latest_body` before calling `migrate_response_body()`.
+Both functions give the migrations empty HTTP details for the ones that you don't pass. Headers need Starlette, which FastAPI installs: without it, you can't pass headers, migrations get `None` for them, and the `headers` of the results are `None`.
+
+`migrate_response_body()` is the older way to migrate responses outside of routes, and it works as before. Its migrations get `latest_body` as you pass it, without turning models into data, and a response with the status code 200 whose headers and cookies it throws away, and it returns only the body. See [how to migrate data outside of routes](../how_to/migrate_data_outside_of_routes.md) to move to `migrate_response()`.
 
 #### StreamingResponse and FileResponse migrations
 
