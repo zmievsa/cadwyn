@@ -3,6 +3,7 @@ from collections.abc import (
     Iterable,  # noqa: TC003 # Needed by runtime annotation introspection.
 )
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     NamedTuple,
@@ -12,8 +13,6 @@ from typing import (
     get_origin,
 )
 
-from fastapi import Response as FastapiResponse
-from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 from typing_inspection.typing_objects import is_typealiastype
@@ -26,6 +25,9 @@ from cadwyn._utils import (
 from cadwyn.exceptions import (
     CadwynError,
 )
+
+if TYPE_CHECKING:
+    from fastapi.routing import APIRoute
 
 
 def _get_schema_migration_key(annotation: object) -> object:
@@ -172,7 +174,7 @@ def _get_union_member_of_body(
     return _get_closest_union_member(validated_body, members, annotation)
 
 
-def _raise_unknown_union_member_of_body(route: APIRoute, body_field_alias: Union[str, None]) -> NoReturn:
+def _raise_unknown_union_member_of_body(route: "APIRoute", body_field_alias: Union[str, None]) -> NoReturn:
     body_annotation = route.body_field.field_info.annotation if route.body_field is not None else None
     raise CadwynError(
         f"Cadwyn can't tell which member of {body_annotation!r} the body of {sorted(route.methods or ())} "
@@ -182,7 +184,7 @@ def _raise_unknown_union_member_of_body(route: APIRoute, body_field_alias: Union
     )
 
 
-def _get_request_body_target(head_body_field: object, head_route: APIRoute) -> _SchemaMigrationTarget:
+def _get_request_body_target(head_body_field: object, head_route: "APIRoute") -> _SchemaMigrationTarget:
     """Return what the schema migrations of the body of a route with a single body param are looked up by.
 
     `head_body_field` is the model of the body of the route's version in the latest version. A union keeps the models
@@ -196,33 +198,3 @@ def _get_request_body_target(head_body_field: object, head_route: APIRoute) -> _
     if key is None or key in target.keys:
         return target
     return target._replace(keys=(key, *target.keys))
-
-
-def _get_union_member_of_response(
-    returned: object, members: tuple[type[BaseModel], ...], route: APIRoute, head_route: APIRoute
-) -> Union[type[BaseModel], None]:
-    """Return the member of the union that the endpoint has returned.
-
-    FastAPI validates the response after the migrations, with the models of the client's version, so we can't reuse
-    that validation. Validating the response before the migrations would run the validators of its models twice, so
-    we only tell the member by the type of what the endpoint returns: a model object (or None, which is no member).
-    """
-    if returned is None:
-        return None
-    if isinstance(returned, BaseModel):
-        member = _get_closest_union_member(returned, members, head_route.response_model)
-        if member is not None:
-            return member
-    if isinstance(returned, FastapiResponse):
-        reason = f"has returned a {type(returned).__name__}, which FastAPI doesn't validate"
-    else:
-        reason = (
-            f"has returned a {type(returned).__name__} object instead of an object of a member, and Cadwyn would have "
-            "to validate it to find out which member it becomes, which would run its validators twice"
-        )
-    raise CadwynError(
-        f"Cadwyn can't tell which member of {head_route.response_model!r} the response of "
-        f"{sorted(route.methods or ())} {route.path} is because the endpoint {reason}. So it can't tell which of "
-        "their schema migrations to run. Return an object of the member's model instead, or migrate this endpoint "
-        "by its path instead."
-    )

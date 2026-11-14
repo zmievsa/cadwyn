@@ -43,10 +43,16 @@ from . import (
     _migration_targets as _migration_targets,
 )
 from . import (
+    _migrations as _migrations,
+)
+from . import (
     _request_body as _request_body,
 )
 from . import (
     _uploads as _uploads,
+)
+from . import (
+    _versioned_endpoints as _versioned_endpoints,
 )
 from ._bundle import VersionBundle as VersionBundle
 from ._changes import APIVersionVarType as APIVersionVarType
@@ -62,6 +68,8 @@ from ._changes import get_cls_pythonpath as get_cls_pythonpath
 _changes.VersionBundle = VersionBundle
 _requests.VersionBundle = VersionBundle
 _responses.VersionBundle = VersionBundle
+_migrations.VersionBundle = VersionBundle
+_versioned_endpoints.VersionBundle = VersionBundle
 
 # This package used to be a single module. Keep its objects' __module__ and namespace as they were then.
 present_private_submodules_as_package(__name__)

@@ -2,11 +2,8 @@ import functools
 from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterator
 from enum import Enum
-from typing import Any, Union, cast
+from typing import TYPE_CHECKING, Any, Union, cast
 
-from fastapi._compat import ModelField
-from fastapi.dependencies.models import Dependant
-from fastapi.routing import APIRoute
 from pydantic.errors import PydanticUserError
 from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
 from typing_extensions import override
@@ -18,8 +15,13 @@ from cadwyn._utils import (
 
 from ._core_schema import _CORE_SCHEMA_DEFINITIONS, _register_core_schema_definitions
 
+if TYPE_CHECKING:
+    from fastapi._compat import ModelField
+    from fastapi.dependencies.models import Dependant
+    from fastapi.routing import APIRoute
 
-def _can_lazy_items_be_plain_enum_copies(route: APIRoute) -> bool:
+
+def _can_lazy_items_be_plain_enum_copies(route: "APIRoute") -> bool:
     """Whether the request body of the route can have lazy items that are members of copies of plain enums or flags.
 
     We only say no when the schema of its single body param is made of nothing but schemas that we know can't make
@@ -36,7 +38,7 @@ def _can_lazy_items_be_plain_enum_copies(route: APIRoute) -> bool:
     return result
 
 
-_CAN_LAZY_ITEMS_BE_PLAIN_ENUM_COPIES: dict[int, tuple[ModelField, bool]] = {}
+_CAN_LAZY_ITEMS_BE_PLAIN_ENUM_COPIES: "dict[int, tuple[ModelField, bool]]" = {}
 # The core schemas that only make values of builtin types
 _SCHEMAS_OF_BUILTIN_VALUES = frozenset(
     (
@@ -107,7 +109,7 @@ def _can_schema_make_members_of_plain_enum_copies(schema: dict[str, Any]) -> boo
     return False
 
 
-def _can_body_have_lazy_iterators(route: APIRoute, *, in_lazy_items: bool) -> bool:
+def _can_body_have_lazy_iterators(route: "APIRoute", *, in_lazy_items: bool) -> bool:
     """Whether the request body of the route can have Pydantic's lazy iterators, or such iterators in their items.
 
     We only say no when the schemas of all body params that FastAPI validates for the route have no generator schema
@@ -130,10 +132,10 @@ def _can_body_have_lazy_iterators(route: APIRoute, *, in_lazy_items: bool) -> bo
     return result
 
 
-_CAN_BODY_HAVE_LAZY_ITERATORS: dict[tuple[int, bool], tuple[Dependant, bool]] = {}
+_CAN_BODY_HAVE_LAZY_ITERATORS: "dict[tuple[int, bool], tuple[Dependant, bool]]" = {}
 
 
-def _iter_body_params(dependant: Dependant) -> Iterator[ModelField]:
+def _iter_body_params(dependant: "Dependant") -> "Iterator[ModelField]":
     """Yield the body params of the dependant and of all of its sub-dependants"""
     dependants = [dependant]
     while dependants:

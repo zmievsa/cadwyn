@@ -1,8 +1,5 @@
 import email.message
 import json
-from collections.abc import (
-    Callable,
-)
 from typing import (
     Any,
     Union,
@@ -16,7 +13,6 @@ from fastapi._compat import (
 from fastapi.datastructures import DefaultPlaceholder
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import _get_scope_effective_route_context
-from pydantic import BaseModel
 from pydantic_core import (
     PydanticUndefined,
 )
@@ -24,24 +20,6 @@ from pydantic_core import (
 from cadwyn.exceptions import (
     CadwynError,
 )
-from cadwyn.structure.data import (
-    RequestInfo,
-)
-
-from ._uploads import _UploadsToClose
-
-
-def _dump_request_body(body: BaseModel) -> dict[str, Any]:
-    """Return the data that the client has sent for a model body, without the values of its computed fields.
-
-    The head would take them as input: as extra keys, as a 500 for models that forbid extra keys, or as the values of
-    the fields that they share a key with. Like FastAPI, the head computes them itself. We can't tell whether an
-    override of `model_dump()` takes `exclude_computed_fields` (e.g. the one of SQLModel before 0.0.26 doesn't), so we
-    dump such models as before.
-    """
-    if type(body).model_dump is BaseModel.model_dump:
-        return body.model_dump(by_alias=True, exclude_unset=True, exclude_computed_fields=True)
-    return body.model_dump(by_alias=True, exclude_unset=True)
 
 
 def _get_strict_content_type(request: FastapiRequest) -> bool:
@@ -68,17 +46,6 @@ def _get_strict_content_type(request: FastapiRequest) -> bool:
             "GitHub."
         )
     return strict_content_type
-
-
-def _run_request_migration(
-    migration: Callable[[RequestInfo], None], request_info: RequestInfo, uploads: Union[_UploadsToClose, None]
-) -> None:
-    try:
-        migration(request_info)
-    finally:
-        # A later migration can replace or remove the uploads that this one has put into the form
-        if uploads is not None and request_info._form is not None:
-            uploads.add(request_info._form)
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form

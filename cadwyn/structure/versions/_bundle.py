@@ -1,74 +1,34 @@
 import functools
 from collections.abc import (
-    Callable,
-    Coroutine,
+    Callable,  # Needed by runtime annotation introspection.
     Iterator,
 )
-from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from enum import Enum
 from typing import (
-    Any,
+    TYPE_CHECKING,
     Union,
 )
 
-from fastapi import BackgroundTasks
-from fastapi import Request as FastapiRequest
-from fastapi import Response as FastapiResponse
-from fastapi.dependencies.models import Dependant
-from fastapi.routing import APIRoute
-from pydantic import BaseModel
-from typing_extensions import ParamSpec, TypeVar
+from pydantic import BaseModel  # noqa: TC002 # Needed by runtime annotation introspection.
 
-from cadwyn._utils import (
-    Sentinel,
-    is_enum_looked_up_by_value,
-)
+from cadwyn._utils import is_enum_looked_up_by_value
 from cadwyn.exceptions import (
     CadwynError,
     CadwynStructureError,
 )
-from cadwyn.structure.common import Endpoint, VersionedModel, VersionType
-from cadwyn.structure.data import (
-    RequestInfo,
-    ResponseInfo,
-)
+from cadwyn.structure.common import VersionedModel, VersionType
+from cadwyn.structure.data import ResponseInfo
 
-from ._background import _add_keyword_only_parameter, _DroppedBackgroundTasksWarning
 from ._changes import HeadVersion, IdentifierPythonPath, Version, VersionChange, get_cls_pythonpath
-from ._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME
-from ._dependencies import _has_several_body_readers
-from ._enums import (
-    _can_body_have_lazy_iterators,
-    _can_lazy_items_be_plain_enum_copies,
-    _get_lazy_item_walker,
-    _to_head_values,
-)
-from ._forms import (
-    _FormModelOmission,  # noqa: TC001 # Needed by runtime annotation introspection.
-)
-from ._json import _ClientJsonStrings  # noqa: TC001 # Needed by runtime annotation introspection.
 from ._migration_targets import (
     _get_models_of_schema,
-    _get_request_body_target,
-    _get_schema_migration_target,
-    _has_union_member_migrations,
-    _SchemaMigrationTarget,
+    _SchemaMigrationTarget,  # Needed by runtime annotation introspection.
 )
-from ._requests import (
-    _convert_endpoint_kwargs_to_version,
-    _migrate_request,
-)
-from ._responses import (
-    _convert_endpoint_response_to_version,
-    _migrate_response,
-)
-from ._uploads import (
-    _UploadPositions,  # noqa: TC001 # Needed by runtime annotation introspection.
-)
+from ._migrations import _migrate_response
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
+if TYPE_CHECKING:
+    from fastapi.routing import APIRoute
 
 
 class VersionBundle:
@@ -170,82 +130,17 @@ class VersionBundle:
         """
         return any(not is_enum_looked_up_by_value(enum) for enum in self.versioned_enums.values())
 
-    def _to_head_values(self, body: Any, route: APIRoute, head_dependant: Dependant, head_route: APIRoute) -> Any:
-        replace_enum_members = self._has_versioned_plain_enums
-        # A single param can't share the iterators with anyone
-        replay_lazy_iterators = _can_body_have_lazy_iterators(route, in_lazy_items=False) and _has_several_body_readers(
-            head_dependant, head_route
-        )
-        if not replace_enum_members and not replay_lazy_iterators:
-            return body
-        replace_lazy_enum_members = replace_enum_members and _can_lazy_items_be_plain_enum_copies(route)
-        walk_lazy_items = replace_lazy_enum_members or (
-            replay_lazy_iterators and _can_body_have_lazy_iterators(route, in_lazy_items=True)
-        )
-        return _to_head_values(
-            body,
-            replace_enum_members=replace_enum_members,
-            replay_lazy_iterators=replay_lazy_iterators,
-            walk_lazy_item=_get_lazy_item_walker(
-                replace_enum_members=replace_lazy_enum_members, replay_lazy_iterators=replay_lazy_iterators
-            )
-            if walk_lazy_items
-            else None,
-        )
-
     def _get_closest_lesser_version(self, version: VersionType):
         for defined_version in self.version_values:
             if defined_version <= version:
                 return defined_version
         raise CadwynError("You tried to migrate to version that is earlier than the first version which is prohibited.")
 
-    async def _migrate_request(
-        self,
-        body_target: "_SchemaMigrationTarget",
-        head_dependant: Dependant,
-        request: FastapiRequest,
-        response: FastapiResponse,
-        request_info: RequestInfo,
-        current_version: VersionType,
-        head_route: APIRoute,
-        *,
-        route: APIRoute,
-        exit_stack: AsyncExitStack,
-        embed_body_fields: bool,
-        background_tasks: Union[BackgroundTasks, None],
-        dumped_body: Union[BaseModel, None],
-        body_is_omitted: bool,
-        form_model_omission: "_FormModelOmission",
-        uploads_read_by_fastapi: "Union[_UploadPositions, None]",
-        get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
-        client_json_strings: "_ClientJsonStrings",
-    ) -> dict[str, Any]:
-        return await _migrate_request(
-            self,
-            body_target,
-            head_dependant,
-            request,
-            response,
-            request_info,
-            current_version,
-            head_route,
-            route=route,
-            exit_stack=exit_stack,
-            embed_body_fields=embed_body_fields,
-            background_tasks=background_tasks,
-            dumped_body=dumped_body,
-            body_is_omitted=body_is_omitted,
-            form_model_omission=form_model_omission,
-            uploads_read_by_fastapi=uploads_read_by_fastapi,
-            get_body_union_member=get_body_union_member,
-            client_json_strings=client_json_strings,
-        )
-
     def _migrate_response(
         self,
         response_info: ResponseInfo,
         current_version: VersionType,
-        head_route: Union[APIRoute, None],
+        head_route: "Union[APIRoute, None]",
         response_target: "_SchemaMigrationTarget",
         get_response_union_member: "Union[Callable[[], Union[type[BaseModel], None]], None]" = None,
     ) -> ResponseInfo:
@@ -256,163 +151,4 @@ class VersionBundle:
             head_route,
             response_target,
             get_response_union_member,
-        )
-
-    # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
-    def _versioned(
-        self,
-        head_body_field: object,
-        module_body_field_name: Union[str, None],
-        route: APIRoute,
-        head_route: APIRoute,
-        dependant_for_request_migrations: Dependant,
-        *,
-        request_param_name: str,
-        background_tasks_param_name: Union[str, None],
-        hidden_background_tasks_param_name: Union[str, None],
-        response_param_name: str,
-        dropped_background_tasks_warning: "_DroppedBackgroundTasksWarning",
-    ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
-        request_target = _get_request_body_target(head_body_field, head_route)
-        response_target = _get_schema_migration_target(head_route.response_model)
-        # Routes whose union members have no migrations don't need to tell which member a body or a response is
-        if not _has_union_member_migrations(
-            request_target, (change.alter_request_by_schema_instructions for change in self._all_changes)
-        ):
-            request_target = request_target._replace(union_members=())
-        if not _has_union_member_migrations(
-            response_target, (change.alter_response_by_schema_instructions for change in self._all_changes)
-        ):
-            response_target = response_target._replace(union_members=())
-
-        def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
-            @functools.wraps(endpoint)
-            async def decorator(*args: Any, **kwargs: Any) -> _R:
-                request_param: FastapiRequest = kwargs[request_param_name]
-                response_param: FastapiResponse = kwargs[response_param_name]
-                # FastAPI runs these background tasks after the response
-                if hidden_background_tasks_param_name is not None:
-                    background_tasks_of_latest_version = kwargs.pop(hidden_background_tasks_param_name)
-                elif background_tasks_param_name is not None:
-                    background_tasks_of_latest_version = kwargs[background_tasks_param_name]
-                else:
-                    # Cadwyn 8.x behavior: the endpoint doesn't declare BackgroundTasks, so the tasks that the
-                    # dependencies add in the solve of the latest version are dropped
-                    background_tasks_of_latest_version = BackgroundTasks()
-                method = request_param.method
-                response = Sentinel
-                async with AsyncExitStack() as exit_stack:
-                    kwargs = await self._convert_endpoint_kwargs_to_version(
-                        head_body_field,
-                        module_body_field_name,
-                        # Dependant must be from the version of the finally migrated request,
-                        # not the version of endpoint
-                        dependant_for_request_migrations,
-                        request_param_name,
-                        kwargs,
-                        response_param,
-                        route,
-                        head_route,
-                        exit_stack=exit_stack,
-                        embed_body_fields=route._embed_body_fields,
-                        background_tasks=background_tasks_of_latest_version,
-                        request_target=request_target,
-                    )
-
-                    response = await self._convert_endpoint_response_to_version(
-                        endpoint,
-                        head_route,
-                        route,
-                        method,
-                        response_param_name,
-                        kwargs,
-                        response_param,
-                        response_target=response_target,
-                    )
-                if response is Sentinel:  # pragma: no cover
-                    raise CadwynError(
-                        "No response object was returned. There's a high chance that the "
-                        "application code is raising an exception and a dependency with yield "
-                        "has a block with a bare except, or a block with except Exception, "
-                        "and is not raising the exception again. Read more about it in the "
-                        "docs: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/"
-                        "#dependencies-with-yield-and-except"
-                    )
-                # FastAPI only runs the background tasks of the dependencies if the response has no background of its
-                # own. We don't warn about the tasks that dependencies add after this point, e.g. in their teardown.
-                if (
-                    hidden_background_tasks_param_name is None
-                    and background_tasks_param_name is None
-                    and background_tasks_of_latest_version.tasks
-                    and not (isinstance(response, FastapiResponse) and response.background is not None)
-                ):
-                    await dropped_background_tasks_warning.warn_after_the_response(request_param)
-                return response
-
-            if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
-                _add_keyword_only_parameter(decorator, _CADWYN_REQUEST_PARAM_NAME, FastapiRequest)
-            if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
-                _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
-            if hidden_background_tasks_param_name is not None:
-                _add_keyword_only_parameter(decorator, hidden_background_tasks_param_name, BackgroundTasks)
-
-            return decorator
-
-        return wrapper
-
-    # TODO: Simplify it
-    async def _convert_endpoint_response_to_version(
-        self,
-        func_to_get_response_from: Endpoint,
-        head_route: APIRoute,
-        route: APIRoute,
-        method: str,
-        response_param_name: str,
-        kwargs: dict[str, Any],
-        fastapi_response_dependency: FastapiResponse,
-        *,
-        response_target: "_SchemaMigrationTarget",
-    ) -> Any:
-        return await _convert_endpoint_response_to_version(
-            self,
-            func_to_get_response_from,
-            head_route,
-            route,
-            method,
-            response_param_name,
-            kwargs,
-            fastapi_response_dependency,
-            response_target=response_target,
-        )
-
-    async def _convert_endpoint_kwargs_to_version(
-        self,
-        head_body_field: object,
-        body_field_alias: Union[str, None],
-        head_dependant: Dependant,
-        request_param_name: str,
-        kwargs: dict[str, Any],
-        response: FastapiResponse,
-        route: APIRoute,
-        head_route: APIRoute,
-        *,
-        exit_stack: AsyncExitStack,
-        embed_body_fields: bool,
-        background_tasks: Union[BackgroundTasks, None],
-        request_target: "_SchemaMigrationTarget",
-    ) -> dict[str, Any]:
-        return await _convert_endpoint_kwargs_to_version(
-            self,
-            head_body_field,
-            body_field_alias,
-            head_dependant,
-            request_param_name,
-            kwargs,
-            response,
-            route,
-            head_route,
-            exit_stack=exit_stack,
-            embed_body_fields=embed_body_fields,
-            background_tasks=background_tasks,
-            request_target=request_target,
         )

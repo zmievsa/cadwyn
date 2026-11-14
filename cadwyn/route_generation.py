@@ -48,6 +48,7 @@ from cadwyn.structure.versions._background import (
     _get_hidden_background_tasks_param_name,
 )
 from cadwyn.structure.versions._migration_targets import _get_request_body_target, _get_schema_migration_target
+from cadwyn.structure.versions._versioned_endpoints import _versioned
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -601,7 +602,8 @@ def _add_data_migrations_to_route(
         hidden_background_tasks_param_name = _get_hidden_background_tasks_param_name(route.endpoint)
         route.dependant.background_tasks_param_name = hidden_background_tasks_param_name
 
-    route.endpoint = versions._versioned(
+    route.endpoint = _versioned(
+        versions,
         template_body_field,
         template_body_field_name,
         route,

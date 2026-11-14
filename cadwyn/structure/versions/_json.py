@@ -7,18 +7,13 @@ from collections.abc import (
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import (
+    TYPE_CHECKING,
     Any,
     TypeAlias,
     Union,
     cast,
 )
 
-from fastapi import Request as FastapiRequest
-from fastapi._compat import (
-    ModelField,
-)
-from fastapi.dependencies.models import Dependant
-from fastapi.routing import APIRoute
 from pydantic import BaseModel, RootModel
 from pydantic_core import (
     PydanticSerializationError,
@@ -39,12 +34,15 @@ from ._core_schema import (
     _is_custom_serialization,
     _register_core_schema_definitions,
 )
-from ._dependencies import _has_other_body_readers
-from ._forms import _fastapi_got_no_body
+
+if TYPE_CHECKING:
+    from fastapi._compat import ModelField
+    from fastapi.dependencies.models import Dependant
+    from fastapi.routing import APIRoute
 
 
 def _get_route_json_values_plan(
-    head_dependant: Dependant, route: APIRoute, *, embed_body_fields: bool
+    head_dependant: "Dependant", route: "APIRoute", *, embed_body_fields: bool
 ) -> "Union[_JsonValuesPlan, None]":
     if embed_body_fields or len(head_dependant.body_params) != 1 or len(route.dependant.body_params) != 1:
         return None
@@ -104,33 +102,6 @@ def _copy_decoded_json_string(_check: Any, value: Any, path: "_JsonPath", *, str
             return value
     strings.by_path[path] = copy
     return copy
-
-
-async def _encode_json_values(
-    request: FastapiRequest,
-    head_dependant: Dependant,
-    head_route: APIRoute,
-    route: APIRoute,
-    body: Any,
-    client_json_strings: _ClientJsonStrings,
-    *,
-    embed_body_fields: bool,
-) -> Any:
-    """Return a copy of the migrated body with the parsed values of the head's `Json[...]` fields encoded as JSON.
-
-    We dump bodies in Python mode, so `Json[...]` fields get their parsed values, which they reject because they only
-    accept strings and bytes, or decode once more if they are strings. Request migrations see these parsed values,
-    so we encode them only for the head. We only encode the values that we can find for sure: anything else stays as
-    it is and fails as before.
-    """
-    plan = _get_route_json_values_plan(head_dependant, route, embed_body_fields=embed_body_fields)
-    # FastAPI gives the body param its default without validating it if the request has no body, so the values of
-    # the default might not have the types that the request's version validates them into
-    if plan is None or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields):
-        return body
-    return _encode_planned_json_values(
-        plan, body, client_json_strings, functools.partial(_has_other_body_readers, head_dependant, head_route)
-    )
 
 
 def _encode_planned_json_values(
@@ -219,7 +190,7 @@ _JSON_CHILD_SCHEMA_KEYS = {
     "dict": ("values_schema", "values"),
 }
 # What the head validates the body with: the body field of a route, or the model of `migrate_request_body()`
-_JsonPlanSource: TypeAlias = Union[ModelField, type[BaseModel]]
+_JsonPlanSource: TypeAlias = "Union[ModelField, type[BaseModel]]"
 # The descriptions of the body fields, and the plans for the pairs of a head body field and a body field of a version
 _BODY_FIELD_JSON_PLANS: dict[int, tuple[_JsonPlanSource, Union[_JsonValuesPlan, None]]] = {}
 _NORMALIZED_CORE_SCHEMAS: dict[int, tuple[_JsonPlanSource, Any]] = {}

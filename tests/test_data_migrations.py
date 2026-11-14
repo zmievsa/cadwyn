@@ -15196,7 +15196,7 @@ def test__request_body_migration__with_several_body_params_without_lazy_values__
     router: VersionedAPIRouter,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from cadwyn.structure.versions import _bundle
+    from cadwyn.structure.versions import _requests
 
     @router.post(test_path)
     async def endpoint(a: Annotated[list[int], Body()], b: Annotated[int, Body()]):
@@ -15204,7 +15204,7 @@ def test__request_body_migration__with_several_body_params_without_lazy_values__
 
     clients = create_versioned_clients(version_change())
     # Walking a large body takes as long as validating it, so bodies without lazy values skip it
-    monkeypatch.setattr(_bundle, "_to_head_values", _raise_body_walk_error)
+    monkeypatch.setattr(_requests, "_to_head_values", _raise_body_walk_error)
 
     for version_client in clients.values():
         response = version_client.post(test_path, json={"a": [1, 2], "b": 3})
