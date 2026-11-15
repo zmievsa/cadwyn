@@ -1967,6 +1967,7 @@
 <p>Everything importable from <code>cadwyn</code>, <code>cadwyn_core</code>, and <code>cadwyn_core.exceptions</code> is supported. So are these internals, which Airflow's Task SDK builds on. Changing them is a breaking change:</p>
 <ul>
 <li><code>VersionBundle.versions</code> and <code>VersionBundle.reversed_versions</code></li>
+<li><code>VersionBundle.version_values</code>, e.g. to check that a version exists before you migrate data to or from it</li>
 <li><code>Version.value</code> and <code>Version.changes</code></li>
 <li>the <code>alter_*_instructions</code> attributes of <code>VersionChange</code></li>
 <li>calling the instructions in them (<code>_AlterDataInstruction.__call__</code>) with any object that has a <code>body</code> attribute. <code>migrate_request()</code> and <code>migrate_response()</code> do it for you, and do what routes do around it, so prefer them.</li>

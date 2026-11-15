@@ -10265,6 +10265,9 @@ Please follow <a href="https://keepachangelog.com/en/1.0.0/">the Keep a Changelo
 <li>The docs now call request and response converters "data migrations", and name them "migrations by schema" and "migrations by path" everywhere.</li>
 <li>The docs now say HEAD where they meant the HEAD version rather than the latest version that clients see.</li>
 <li>The introduction to version changes no longer calls HEAD your latest version. Cadwyn generates every other version, including the latest, from HEAD.</li>
+<li>The "Migrate data outside of routes" guide now says what validating the older version first means for your own migration loop: without schema instructions, older requests have to fit HEAD's fields and validators. It also says which errors <code>migrate_request()</code> and <code>migrate_response()</code> raise, and that <code>CadwynHeadRequestValidationError</code> isn't a <code>ValueError</code>.</li>
+<li>The docs now say that <code>cadwyn-core</code> fails at import next to another version of <code>cadwyn</code>, 9.0 included, and that a project that requires both in different packages should require at least the same version of <code>cadwyn</code> as of <code>cadwyn-core</code>.</li>
+<li><code>VersionBundle.version_values</code> is now part of the supported API.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
