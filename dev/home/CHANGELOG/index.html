@@ -1555,7 +1555,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[Unreleased]">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#910rc1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [9.1.0rc1]
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[9.1.0rc1]">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -6003,7 +6014,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[Unreleased]">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#910rc1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [9.1.0rc1]
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[9.1.0rc1]">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -10229,6 +10251,7 @@
 <p>All notable changes to this project will be documented in this file.
 Please follow <a href="https://keepachangelog.com/en/1.0.0/">the Keep a Changelog standard</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="910rc1">[9.1.0rc1]<a class="headerlink" href="#910rc1" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>cadwyn</code> now installs <code>cadwyn-core</code> in the same version, a new package with Cadwyn's versioning that only needs Pydantic. Install it on its own to use versions, version changes, data migrations, and versioned models without FastAPI and Starlette, importing them from <code>cadwyn_core</code>; see <a href="https://github.com/zmievsa/cadwyn/blob/main/docs/how_to/migrate_data_outside_of_routes.md#without-fastapi">Without FastAPI</a>. <code>cadwyn</code> and <code>cadwyn_core</code> fail at import, naming both versions, if their versions differ or <code>cadwyn-core</code> is missing. Runtime annotation introspection, such as <code>typing.get_type_hints()</code>, works on everything in <code>cadwyn_core</code> with or without FastAPI and Starlette: its annotations name Starlette's classes when Starlette is installed, the classes of the objects that Cadwyn gives instead of them without it, and stand-ins for FastAPI's classes until <code>cadwyn</code> is imported (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>).</li>
