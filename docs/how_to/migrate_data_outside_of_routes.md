@@ -34,16 +34,16 @@ If you call the migrations of your version changes yourself, e.g. by walking `Ve
 
 They also do what routes do around the migrations, which a loop of your own usually doesn't:
 
-* They validate the body of the older version first, and migrate only the fields that it has set, by their aliases.
+* `migrate_request()` validates the body of the older version first, and migrates only the fields that it has set, by their aliases. `migrate_response()` validates the result of the migrations with the model of the older version.
 * They give the HEAD the members of its own enums instead of the members of the copies of enums that older versions have.
 * They restore the validation aliases that the migrated body needs, and, in requests, the `Json[...]` values.
 * Once a migration turns a response into an error, they only run the migrations that set `migrate_http_errors=True`.
 * They take dates and pick the closest older version, as `migrate_response_body()` does.
 * They migrate between any two versions: pass `to_version` to `migrate_request()` or `from_version` to `migrate_response()` if your loop doesn't start or end at HEAD.
 
-Validating first means that the older data has to fit that version's model. If your version changes have no schema instructions for a model, every version has HEAD's fields and validators for it, so the older data can't have what HEAD rejects, and a migration can't rename or remove it. Describe how the older version differed with schema instructions, e.g. `schema(User).field("full_name").had(name="name")` or `schema(User).validator(check_name).didnt_exist`. The migrations also get the validated data, e.g. with coerced values, rather than exactly what you passed.
+Validating requests first means that the older data has to fit that version's model. If your version changes have no schema instructions for a model, every version has HEAD's fields and validators for it, so an older request can't have what HEAD rejects, and a migration can't rename or remove it. Describe how the older version differed with schema instructions, e.g. `schema(User).field("full_name").had(name="name")` or `schema(User).validator(check_name).didnt_exist`. Request migrations also get the validated data, e.g. with coerced values, rather than exactly what you passed. Response migrations get `body` as you passed it, with its models turned into data.
 
-If a request doesn't fit its version, or a migrated response doesn't fit the version you migrate it to, you get Pydantic's `ValidationError`. If a migrated request doesn't fit HEAD, `migrate_request()` raises `CadwynHeadRequestValidationError`, which means that a migration is wrong. It's a `CadwynError`, not a `ValueError` like `ValidationError`, so catch it separately if your loop catches `ValueError`.
+If a request doesn't fit its version, or a migrated response doesn't fit the version you migrate it to, you get Pydantic's `ValidationError`. If a migrated request doesn't fit the model that it's migrated to, HEAD's or `to_version`'s, `migrate_request()` raises `CadwynHeadRequestValidationError`, which means that a migration is wrong. It's a `CadwynError`, not a `ValueError` like `ValidationError`, so catch it separately if your loop catches `ValueError`.
 
 If you send the result as JSON, e.g. in a message, dump it as routes do: `migrate_response(...).body.model_dump(mode="json", by_alias=True)`.
 
@@ -65,6 +65,6 @@ Import everything from `cadwyn_core` instead of `cadwyn`, and the errors from `c
 
 `cadwyn` installs `cadwyn-core` in the same version and exports the same objects, with `SchemaGenerator` in `cadwyn.schema_generation` and the errors in `cadwyn.exceptions`, so version changes that import from `cadwyn_core` work in a FastAPI app too. `migrate_response_body()` is only in `cadwyn`: use `migrate_response()` instead.
 
-`cadwyn-core` only works with the `cadwyn` of the same version: `import cadwyn_core` fails with an `ImportError` if another version of `cadwyn` is installed, including `cadwyn` 9.0 and older, which don't use `cadwyn-core`. So if one package of your project requires `cadwyn-core` and another requires `cadwyn`, e.g. a worker and an API server, raise the second one's requirement to `cadwyn>=9.1`, so that the resolver picks a `cadwyn` that installs the same `cadwyn-core`.
+`cadwyn-core` only works with the `cadwyn` of the same version: `import cadwyn_core` fails with an `ImportError` if another version of `cadwyn` is installed, including `cadwyn` 9.0 and older, which don't use `cadwyn-core`. So if one package of your project requires `cadwyn-core` and another requires `cadwyn`, e.g. a worker and an API server, require at least the same version of `cadwyn` there as of `cadwyn-core`, e.g. `cadwyn>=9.1` next to `cadwyn-core>=9.1`, so that the resolver picks a `cadwyn` that installs the same `cadwyn-core`. A release candidate needs its own version in both, e.g. `>=9.1.0rc1`, because `>=9.1` excludes it.
 
 Headers need Starlette. Without it, the results have `headers=None`, and `migrate_request()` and `migrate_response()` raise `CadwynError` if you pass headers or a migration uses them.
