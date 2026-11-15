@@ -1910,7 +1910,7 @@
 <p>Here's what changes:</p>
 <ul>
 <li>The body argument is <code>body</code> instead of <code>latest_body</code>, and you get the body from the <code>body</code> of the result.</li>
-<li>You can pass objects of your HEAD models, which <code>migrate_response_body()</code> rejects. They become data with all their fields by their aliases before the migrations run, as in routes. Migrations always get data, so the ones that turn the object into data themselves can stop doing it. If you pass a dict that you've dumped in another way, e.g. without aliases or with <code>mode="json"</code>, migrations keep getting what they got before.</li>
+<li>You can pass objects of your HEAD models, which can fail in <code>migrate_response_body()</code>. They become data with all their fields by their aliases before the migrations run, as in routes. Migrations always get data, so the ones that turn the object into data themselves can stop doing it. If you pass a dict that you've dumped in another way, e.g. without aliases or with <code>mode="json"</code>, migrations keep getting what they got before.</li>
 <li>The migrated body is validated as FastAPI validates responses: by the attributes of objects too, and without your overrides of <code>model_validate()</code>.</li>
 <li>The status code and the headers are part of the result, so the headers and the cookies that migrations set are no longer thrown away. Pass <code>status_code</code> and <code>headers</code> if your migrations need them.</li>
 <li>If a migration turns the response into an error, you get the error body and its status code, while <code>migrate_response_body()</code> fails to validate the error body as your model.</li>
