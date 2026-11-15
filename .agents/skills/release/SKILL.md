@@ -27,7 +27,7 @@ Only continue when the user explicitly intends to publish. Confirm the exact ver
 gh release create <version> --target main --title <version> --generate-notes
 ```
 
-Add `--prerelease` for a release candidate. Release creation triggers `.github/workflows/release.yaml`. It builds both packages with `uv build --all-packages` and publishes them through PyPI trusted publishing, `cadwyn-core` first, because `cadwyn` needs it. It skips the files that PyPI already has, so if one upload fails, rerun the workflow instead of making a new release.
+Add `--prerelease` for a release candidate. Release creation triggers `.github/workflows/release.yaml`. It builds both packages with `uv build --all-packages` and publishes them through PyPI trusted publishing, `cadwyn-core` first, because `cadwyn` needs it. It skips the files that PyPI already has, so if one upload fails, rerun the failed run with `gh run rerun <run-id> --failed` instead of making a new release. It rebuilds the same files, because hatchling builds are reproducible.
 
 ## Verify
 
