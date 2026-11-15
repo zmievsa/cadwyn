@@ -18,10 +18,18 @@ import pytest
 import cadwyn_core.structure.versions
 from cadwyn_core._utils import classproperty
 
-_SPLIT_MODULES = ("cadwyn.schema_generation", "cadwyn.structure.versions", "cadwyn_core.structure.versions")
+_SPLIT_MODULES = (
+    "cadwyn.schema_generation",
+    "cadwyn.structure.versions",
+    "cadwyn_core.schema_generation",
+    "cadwyn_core.structure.versions",
+)
 _PRIVATE_SUBMODULE_OF_SPLIT_MODULE = re.compile(r"^cadwyn(_core)?\.(schema_generation|structure\.versions)\._")
 # They moved to cadwyn-core whole. Of `cadwyn.structure.versions`, only the objects that work without FastAPI moved.
-_MOVED_MODULES = {f"cadwyn.structure.{name}" for name in ("common", "data", "endpoints", "enums", "schemas")}
+_MOVED_MODULES = {
+    "cadwyn.schema_generation",
+    *(f"cadwyn.structure.{name}" for name in ("common", "data", "endpoints", "enums", "schemas")),
+}
 
 # `__module__` and `__qualname__` of the objects defined in the split modules, and of everything that
 # `cadwyn` and `cadwyn.structure` exported, generated from commit 63e8609^, the last one before the splits.
@@ -540,7 +548,7 @@ def test__module_and_qualname__of_every_importable_definition__should_point_to_t
 @pytest.mark.parametrize(
     ("module_name", "moved_method"),
     [
-        ("cadwyn.schema_generation", "SchemaGenerator.__init__"),
+        ("cadwyn_core.schema_generation", "SchemaGenerator.__init__"),
         ("cadwyn_core.structure.versions", "VersionBundle.__init__"),
     ],
 )

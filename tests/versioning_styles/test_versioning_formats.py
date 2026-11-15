@@ -4,7 +4,7 @@ import pytest
 from pydantic import Field
 
 from cadwyn.exceptions import CadwynError
-from cadwyn.schema_generation import migrate_response_body
+from cadwyn_core.schema_generation import migrate_response_body
 from cadwyn_core.structure.data import ResponseInfo, convert_response_to_previous_version_for
 from cadwyn_core.structure.schemas import schema
 from cadwyn_core.structure.versions import Version, VersionBundle

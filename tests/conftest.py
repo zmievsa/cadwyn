@@ -15,18 +15,18 @@ from pytest_fixture_classes import fixture_class
 from typing_extensions import override
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
-from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
-from cadwyn.schema_generation._annotation_evaluation import _get_model_annotations, _get_model_field_names
-from cadwyn.schema_generation._annotation_transformer import _AnnotationTransformer, _ReferencedModelCollector
-from cadwyn.schema_generation._common import _is_versionable_model, _unwrap_model
-from cadwyn.schema_generation._fields import _extract_passed_field_attributes
-from cadwyn.schema_generation._models import (
+from cadwyn_core._utils import same_method_definition_as_in
+from cadwyn_core.schema_generation import SchemaGenerator, generate_versioned_models
+from cadwyn_core.schema_generation._annotation_evaluation import _get_model_annotations, _get_model_field_names
+from cadwyn_core.schema_generation._annotation_transformer import _AnnotationTransformer, _ReferencedModelCollector
+from cadwyn_core.schema_generation._common import _is_versionable_model, _unwrap_model
+from cadwyn_core.schema_generation._fields import _extract_passed_field_attributes
+from cadwyn_core.schema_generation._models import (
     _change_version_of_model_references,
     _get_head_model_references,
     _PydanticModelWrapper,
 )
-from cadwyn.schema_generation._references import _BareGenericCopier, _CycleCopier
-from cadwyn_core._utils import same_method_definition_as_in
+from cadwyn_core.schema_generation._references import _BareGenericCopier, _CycleCopier
 from cadwyn_core.structure import Version, VersionChange
 from cadwyn_core.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn_core.structure.enums import AlterEnumSubInstruction

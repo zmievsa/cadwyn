@@ -12,10 +12,12 @@ import pytest
 import cadwyn.exceptions
 import cadwyn.structure
 import cadwyn_core.exceptions
+import cadwyn_core.schema_generation
 import cadwyn_core.structure
 import cadwyn_core.structure.versions
 from cadwyn._asts import get_fancy_repr
 from cadwyn._utils import lenient_issubclass
+from cadwyn.schema_generation._schema_generator import SchemaGenerator
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import RequestInfo
 from cadwyn.structure.endpoints import endpoint
@@ -26,10 +28,28 @@ from cadwyn.structure.versions._changes import VersionChange
 
 # The moved packages stay packages in `cadwyn`, because `cadwyn.structure.versions` still has the submodules that
 # need FastAPI. The other moved modules are the same module objects under their old names.
-_MOVED_PACKAGES = ["structure", "structure.versions"]
+_MOVED_PACKAGES = ["schema_generation", "structure", "structure.versions"]
 _MOVED_MODULES = [
     "_asts",
     "_utils",
+    *(
+        f"schema_generation.{name}"
+        for name in (
+            "_annotation_evaluation",
+            "_annotation_transformer",
+            "_callables",
+            "_common",
+            "_core_schema",
+            "_enums",
+            "_fields",
+            "_generics",
+            "_instructions",
+            "_models",
+            "_references",
+            "_schema_generator",
+            "_versioned_models",
+        )
+    ),
     *(f"structure.{name}" for name in ("common", "data", "endpoints", "enums", "schemas")),
     *(
         f"structure.versions.{name}"
@@ -77,14 +97,16 @@ def test__old_name_of_moved_package__should_keep_its_public_names():
     assert cadwyn.structure.__all__ == cadwyn_core.structure.__all__
 
 
+@pytest.mark.parametrize("first_package", ["cadwyn", "cadwyn_core"])
 @pytest.mark.parametrize("name", _MOVED_MODULES)
-def test__old_name_of_moved_module__in_a_new_process__should_be_the_same_module(name: str):
+def test__old_name_of_moved_module__in_a_new_process__should_be_the_same_module(name: str, first_package: str):
+    second_package = "cadwyn_core" if first_package == "cadwyn" else "cadwyn"
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             (
-                f"import cadwyn.{name}, cadwyn_core.{name}, sys; "
+                f"import {first_package}.{name}, {second_package}.{name}, sys; "
                 f"assert sys.modules['cadwyn.{name}'] is cadwyn.{name} is cadwyn_core.{name}"
             ),
         ],
@@ -147,9 +169,13 @@ def test__pickle_of_cadwyn_9_0__with_error_of_cadwyn_core__should_unpickle(error
 _DEFINITIONS_IN_MOVED_STRUCTURE = [
     pytest.param(value, id=f"{value.__module__}.{name}")
     for module in (
-        # Its submodules give their definitions to the package
+        # Their submodules give their definitions to the packages
+        cadwyn_core.schema_generation,
         cadwyn_core.structure.versions,
-        *(importlib.import_module(f"cadwyn_core.{name}") for name in _MOVED_MODULES if name.count(".") == 1),
+        *(
+            importlib.import_module(f"cadwyn_core.structure.{name}")
+            for name in ("common", "data", "endpoints", "enums", "schemas")
+        ),
     )
     for name, value in vars(module).items()
     if (inspect.isclass(value) or inspect.isfunction(value))
@@ -174,6 +200,7 @@ def test__names_imported_from_old_names_of_moved_modules__should_be_the_moved_on
     # The imports above are type checked too, which needs the names to be visible under the old names statically
     import cadwyn_core._asts
     import cadwyn_core._utils
+    import cadwyn_core.schema_generation._schema_generator
     import cadwyn_core.structure.common
     import cadwyn_core.structure.data
     import cadwyn_core.structure.endpoints
@@ -184,6 +211,7 @@ def test__names_imported_from_old_names_of_moved_modules__should_be_the_moved_on
 
     assert get_fancy_repr is cadwyn_core._asts.get_fancy_repr
     assert lenient_issubclass is cadwyn_core._utils.lenient_issubclass
+    assert SchemaGenerator is cadwyn_core.schema_generation._schema_generator.SchemaGenerator
     assert VersionType is cadwyn_core.structure.common.VersionType
     assert RequestInfo is cadwyn_core.structure.data.RequestInfo
     assert endpoint is cadwyn_core.structure.endpoints.endpoint

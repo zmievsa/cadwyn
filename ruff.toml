@@ -302,7 +302,7 @@ ignore = [
     "E501",   # Documentation examples can contain intentionally indivisible lines longer than 80 characters
     "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
 ]
-"cadwyn/schema_generation/_annotation_transformer.py" = [
+"cadwyn-core/cadwyn_core/schema_generation/_annotation_transformer.py" = [
     "ERA001", # Found commented-out code (We want it commented-out and I cannot ignore it per-line)
 ]
 

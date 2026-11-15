@@ -208,6 +208,7 @@ def _run_without_fastapi(code: str) -> subprocess.CompletedProcess[str]:
         "cadwyn.schema_generation",
         "cadwyn.structure",
         "cadwyn.structure.versions",
+        "cadwyn_core.schema_generation",
         "cadwyn_core.structure",
         "cadwyn_core.structure.versions",
     ],
@@ -222,7 +223,7 @@ _VERSIONS_OF_USERS = """
     from pydantic import BaseModel, Field
 
     from cadwyn.exceptions import CadwynError
-    from cadwyn.schema_generation import generate_versioned_models, migrate_request, migrate_response
+    from cadwyn_core.schema_generation import generate_versioned_models, migrate_request, migrate_response
     from cadwyn_core.structure import (
         MigratedRequest,
         MigratedResponse,

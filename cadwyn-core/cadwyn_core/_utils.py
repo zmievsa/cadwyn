@@ -110,10 +110,11 @@ def lenient_issubclass(
 def present_private_submodules_as_package(package_name: str) -> None:
     """Make a package look like the single module it was split from.
 
-    `cadwyn.structure.versions` (now partly `cadwyn_core.structure.versions`) and `cadwyn.schema_generation` used to be
-    single modules. Everything defined or imported in their private submodules stays importable from the package, and
-    every class, function, and type variable defined there has the package as its `__module__`. So error messages,
-    reprs, pickling, `typing.get_type_hints()`, and documentation tools behave as they did before the split.
+    `cadwyn.structure.versions` (now partly `cadwyn_core.structure.versions`) and `cadwyn.schema_generation` (now
+    `cadwyn_core.schema_generation`) used to be single modules. Everything defined or imported in their private
+    submodules stays importable from the package, and every class, function, and type variable defined there has the
+    package as its `__module__`. So error messages, reprs, pickling, `typing.get_type_hints()`, and documentation tools
+    behave as they did before the split.
     """
     namespace = vars(sys.modules[package_name])
     submodules = [

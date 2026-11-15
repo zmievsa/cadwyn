@@ -17,10 +17,10 @@ from starlette.routing import BaseRoute
 import cadwyn_core.structure.versions
 from cadwyn import exceptions
 from cadwyn._internal.old_names import keep_names_of_moved_package
-from cadwyn.schema_generation import _annotation_transformer, _callables, _versioned_models
 from cadwyn.structure.versions import _requests, _responses, _versioned_endpoints
 from cadwyn_core import _utils
 from cadwyn_core._utils import present_private_submodules_as_package
+from cadwyn_core.schema_generation import _annotation_transformer, _callables, _versioned_models
 from cadwyn_core.structure import data, endpoints
 from cadwyn_core.structure.versions import _aliases, _bundle, _enums, _json, _migration_targets, _migrations
 

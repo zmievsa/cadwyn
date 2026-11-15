@@ -31,14 +31,14 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.middleware import APIVersionLocation  # noqa: TC001 # Needed by runtime annotation introspection.
-from cadwyn.schema_generation import generate_versioned_models, get_models_that_routes_request
-from cadwyn.schema_generation._callables import _add_request_and_response_params
 from cadwyn.structure.versions._background import (
     _DroppedBackgroundTasksWarning,
     _get_hidden_background_tasks_param_name,
 )
 from cadwyn.structure.versions._versioned_endpoints import _versioned
 from cadwyn_core._utils import DATACLASS_SLOTS, Sentinel, _callable_name, is_same_value, lenient_issubclass
+from cadwyn_core.schema_generation import generate_versioned_models, get_models_that_routes_request
+from cadwyn_core.schema_generation._callables import _add_request_and_response_params
 from cadwyn_core.structure import Version, VersionBundle
 from cadwyn_core.structure.common import Endpoint, VersionType
 from cadwyn_core.structure.data import _AlterRequestByPathInstruction, _AlterResponseByPathInstruction

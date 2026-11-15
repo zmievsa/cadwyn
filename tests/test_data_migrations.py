@@ -110,7 +110,7 @@ from cadwyn.exceptions import (
     RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
     RouterGenerationError,
 )
-from cadwyn.schema_generation import SchemaGenerator, migrate_request, migrate_response, migrate_response_body
+from cadwyn_core.schema_generation import SchemaGenerator, migrate_request, migrate_response, migrate_response_body
 from cadwyn_core.structure import (
     MigratedRequest,
     MigratedResponse,
