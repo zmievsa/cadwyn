@@ -67,6 +67,16 @@ jobs:
           path: .coverage*
           include-hidden-files: true
           retention-days: 7
+  Standalone-tests:
+    runs-on: ubuntu-latest
+    name: Standalone tests
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-python-uv
+        with:
+          python-version: "3.11"
+      # cadwyn-core installed on its own, without cadwyn, FastAPI, or Starlette
+      - run: tox run -e standalone
   Coverage:
     needs: [Tests, Tutorial-tests]
     runs-on: ubuntu-latest
@@ -118,7 +128,7 @@ jobs:
   CI-passed:
     name: CI passed
     if: always()
-    needs: [Tests, Tutorial-tests, Coverage, Lint, Docs]
+    needs: [Tests, Tutorial-tests, Standalone-tests, Coverage, Lint, Docs]
     runs-on: ubuntu-latest
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')

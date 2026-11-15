@@ -1,7 +1,7 @@
 """Cadwyn's versioning without FastAPI: versions, version changes, data migrations, and versioned models.
 
-The modules of `cadwyn` that work without FastAPI move here step by step
-(https://github.com/zmievsa/cadwyn/issues/203). Nothing here is public yet, besides `__version__`.
+Everything importable from here and from `cadwyn_core.exceptions` is public. `cadwyn` exports the same objects, with
+`SchemaGenerator` in `cadwyn.schema_generation` and the errors in `cadwyn.exceptions`.
 """
 
 import importlib.metadata
@@ -23,3 +23,50 @@ def _check_that_cadwyn_has_the_same_version() -> None:
 
 
 _check_that_cadwyn_has_the_same_version()
+
+
+# isort: split
+# After the version check, so that a mismatch fails with its message rather than with an error of the other code
+from .schema_generation import (  # noqa: E402
+    SchemaGenerator,
+    generate_versioned_models,
+    migrate_request,
+    migrate_response,
+)
+from .structure import (  # noqa: E402
+    HeadVersion,
+    MigratedRequest,
+    MigratedResponse,
+    RequestInfo,
+    ResponseInfo,
+    Version,
+    VersionBundle,
+    VersionChange,
+    VersionChangeWithSideEffects,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+    endpoint,
+    enum,
+    schema,
+)
+
+__all__ = [
+    "HeadVersion",
+    "MigratedRequest",
+    "MigratedResponse",
+    "RequestInfo",
+    "ResponseInfo",
+    "SchemaGenerator",
+    "Version",
+    "VersionBundle",
+    "VersionChange",
+    "VersionChangeWithSideEffects",
+    "convert_request_to_next_version_for",
+    "convert_response_to_previous_version_for",
+    "endpoint",
+    "enum",
+    "generate_versioned_models",
+    "migrate_request",
+    "migrate_response",
+    "schema",
+]
