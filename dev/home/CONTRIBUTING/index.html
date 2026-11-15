@@ -2086,6 +2086,10 @@
 <li>Run <code>make hooks</code> to install the <a href="https://prek.j178.dev/">prek</a> git hooks</li>
 <li>Run <code>make check</code> to verify that the local CI-equivalent checks pass</li>
 </ul>
+<p>The repository has two packages that are released together in the same
+version: <code>cadwyn</code> at its root and <code>cadwyn-core</code> in <code>cadwyn-core/</code>, which holds
+Cadwyn's versioning without FastAPI. They form a uv workspace, so <code>make install</code>
+installs both from the repository.</p>
 <p><code>make install</code> uses uv to create the project environment with every development
 and optional dependency. It also installs prek and tox with the <code>tox-uv</code> plugin
 as standalone tools so repeated checks start quickly.</p>

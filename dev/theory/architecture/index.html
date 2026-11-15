@@ -2039,6 +2039,10 @@
 <td><code>current_dependency_solver()</code> and the context variables behind it.</td>
 </tr>
 <tr>
+<td><code>cadwyn-core/</code></td>
+<td><code>cadwyn-core</code>, the package of Cadwyn's versioning without FastAPI, which <code>cadwyn</code> depends on in exactly the same version (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>). It's empty for now: the modules that standalone use is built from move into it next.</td>
+</tr>
+<tr>
 <td><code>cadwyn/_internal/fastapi_bindings.py</code></td>
 <td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: <code>cadwyn.structure</code>, <code>cadwyn.schema_generation</code>, <code>cadwyn.exceptions</code>, and <code>cadwyn._utils</code>. It binds the FastAPI names in their annotations, registers FastAPI's classes that they recognize in annotations and attributes, and imports the submodules of <code>cadwyn.structure.versions</code> that migrate requests and responses in routes. <code>tests/test_imports_without_fastapi.py</code> checks that the others work without FastAPI.</td>
 </tr>
