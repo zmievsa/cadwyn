@@ -32,10 +32,7 @@ from cadwyn_core._utils import (
 from ._core_schema import (
     _CORE_SCHEMA_DEFINITIONS,
     _CORE_SCHEMA_ERRORS,
-    _BodyType,
     _do_compiled_aliases_match,
-    _get_body_annotation,
-    _get_body_core_schema,
     _get_model_inner_core_schema,
     _get_validation_paths,
     _get_validation_settings,
@@ -52,7 +49,7 @@ if TYPE_CHECKING:
 _RESTORATION = threading.local()
 
 
-def _rescue_body(body_field: "Union[ModelField, _BodyType]", data: Any) -> Any:
+def _rescue_body(body_field: "ModelField", data: Any) -> Any:
     """Restore the validation aliases of a `model_dump(by_alias=True)` body only if it surely fails validation as is.
 
     The dump uses serialization aliases, which can differ from what a field validates
@@ -61,7 +58,7 @@ def _rescue_body(body_field: "Union[ModelField, _BodyType]", data: Any) -> Any:
     instead of a validation key. Bodies that the field accepts as they are stay exactly as they are, even if a field
     gets its default instead of its value. Anything that the restoration plans of the models don't cover is left as is.
     """
-    annotation = _get_body_annotation(body_field)
+    annotation = body_field.field_info.annotation
     # Most bodies have no fields without which they fail, so they aren't walked at all
     if not _annotation_reaches_models_with(annotation, _get_failing_renames, all_fields=False):
         return data
@@ -199,10 +196,10 @@ def _get_field_serializers(model: type[BaseModel], name: str) -> list[Callable[.
     ]
 
 
-_IS_BODY_FIELD_SAFE: "dict[int, tuple[Union[ModelField, _BodyType], bool]]" = {}
+_IS_BODY_FIELD_SAFE: "dict[int, tuple[ModelField, bool]]" = {}
 
 
-def _is_body_field_safe(body_field: "Union[ModelField, _BodyType]", spec: "_RestorerSpec") -> bool:
+def _is_body_field_safe(body_field: "ModelField", spec: "_RestorerSpec") -> bool:
     """Whether the validators of the body parameter (or response field) itself leave the dumped data as valid input.
 
     They come from the parameter's annotation, such as `Annotated[Model, BeforeValidator(...)]`, and wrap the model
@@ -213,7 +210,7 @@ def _is_body_field_safe(body_field: "Union[ModelField, _BodyType]", spec: "_Rest
     if cached is not None and cached[0] is body_field:
         return cached[1]
     try:
-        schema = _register_core_schema_definitions(cast("dict[str, Any]", _get_body_core_schema(body_field)))
+        schema = _register_core_schema_definitions(cast("dict[str, Any]", body_field._type_adapter.core_schema))
         while True:
             # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
             while (
