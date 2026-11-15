@@ -364,6 +364,7 @@ def test__migrate_response__of_union__with_object_of_other_model__should_raise_c
         pytest.param(Optional[list[_Group]], id="optional_list"),
         pytest.param(Union[_User, list[_Group]], id="list"),
         pytest.param(Union[_User, dict[str, _Group]], id="dict"),
+        pytest.param(Union[_User, Annotated[Union[_Group, list[_Group]], "Nested"]], id="nested_union"),
     ],
 )
 def test__migrate_request_and_response__of_union_with_models_in_member__should_raise_cadwyn_error(
