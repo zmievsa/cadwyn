@@ -11,6 +11,7 @@ with pytest.MonkeyPatch.context() as monkeypatch:
         block001,
         block002,
         block003,
+        block004,
     )
 
 
@@ -21,3 +22,7 @@ def test__migrate_response__instead_of_migrate_response_body__should_give_the_sa
 
 def test__migrate_request__for_message_of_older_version__should_give_the_head_model():
     assert block003.user == User(full_name="John")
+
+
+def test__migrate_request__from_cadwyn_core__should_give_the_head_model():
+    assert block004.user == block004.User(full_name="John")

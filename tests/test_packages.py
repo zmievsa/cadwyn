@@ -1,5 +1,6 @@
 """`cadwyn` and `cadwyn-core` are released together in the same version, and they fail at import otherwise."""
 
+import importlib.metadata
 import subprocess
 import sys
 import textwrap
@@ -63,31 +64,11 @@ def test__import__with_another_version_of_cadwyn_core__should_name_the_versions(
     ) in result.stderr
 
 
-def test__import_of_cadwyn_core__without_cadwyn__should_succeed(tmp_path: Path):
-    # Without site-packages, nothing but cadwyn-core is installed, as in a standalone install
-    dist_info = tmp_path / f"cadwyn_core-{cadwyn_core.__version__}.dist-info"
-    dist_info.mkdir()
-    (dist_info / "METADATA").write_text(
-        f"Metadata-Version: 2.1\nName: cadwyn-core\nVersion: {cadwyn_core.__version__}\n"
-    )
-    core_source = str(Path(cadwyn_core.__file__).parent.parent)
+def test__version_check_of_cadwyn_core__without_cadwyn__should_pass(monkeypatch: pytest.MonkeyPatch):
+    # The standalone tox environment imports cadwyn-core where cadwyn really isn't installed
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda **_: iter(()))
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            "-c",
-            (
-                f"import sys; sys.path[:0] = [{core_source!r}, {str(tmp_path)!r}]; import cadwyn_core; "
-                "print(cadwyn_core.__version__)"
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert (result.returncode, result.stdout.strip()) == (0, cadwyn_core.__version__), result.stderr
+    cadwyn_core._check_that_cadwyn_has_the_same_version()
 
 
 def test__import_of_cadwyn__without_cadwyn_core__should_name_the_version_that_it_needs():

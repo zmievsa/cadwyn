@@ -16,12 +16,13 @@ Cadwyn doesn't aim for "pay only for what you use". Prefer one behavior and one 
 
 ## Supported API
 
-Everything importable from `cadwyn` is supported. So are these internals, which Airflow's Task SDK builds on. Changing them is a breaking change:
+Everything importable from `cadwyn`, `cadwyn_core`, and `cadwyn_core.exceptions` is supported. So are these internals, which Airflow's Task SDK builds on. Changing them is a breaking change:
 
 * `VersionBundle.versions` and `VersionBundle.reversed_versions`
+* `Version.value` and `Version.changes`
 * the `alter_*_instructions` attributes of `VersionChange`
-* calling the instructions in them (`_AlterDataInstruction.__call__`) with any object that has a `body` attribute
-* `generate_versioned_models()`, and indexing its result (`SchemaGenerator.__getitem__` from `cadwyn.schema_generation`)
+* calling the instructions in them (`_AlterDataInstruction.__call__`) with any object that has a `body` attribute. `migrate_request()` and `migrate_response()` do it for you, and do what routes do around it, so prefer them.
+* `generate_versioned_models()`, and indexing its result (`SchemaGenerator.__getitem__`, from `cadwyn_core` or `cadwyn.schema_generation`)
 
 ## Costs of the architecture
 

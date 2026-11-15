@@ -161,6 +161,8 @@ omit = [
 ]
 
 [tool.pytest.ini_options]
+# They run in a standalone install of cadwyn-core, which the `standalone` tox environment makes
+addopts = "--ignore=cadwyn-core/tests"
 filterwarnings = [
     # When debugging `ResourceWarning`s, change this to "all" and set PYTHONTRACEMALLOC.
     "error",

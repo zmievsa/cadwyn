@@ -47,4 +47,18 @@ Your loop keeps working too: the attributes that it uses are part of the [suppor
 
 ## Without FastAPI
 
-Cadwyn still installs FastAPI. A separate package that only needs Pydantic is planned in [#203](https://github.com/zmievsa/cadwyn/issues/203). Until then, `migrate_request()` and `migrate_response()` already work in projects that don't use FastAPI otherwise. Headers need Starlette, which FastAPI installs.
+To use versions, version changes, data migrations, and versioned models without FastAPI and Starlette, install `cadwyn-core` instead of `cadwyn`. It only needs Pydantic:
+
+```bash
+uv add cadwyn-core
+```
+
+Import everything from `cadwyn_core` instead of `cadwyn`, and the errors from `cadwyn_core.exceptions`:
+
+```python
+{! ./docs_src/how_to/migrate_data_outside_of_routes/block004.py !}
+```
+
+`cadwyn` installs `cadwyn-core` in the same version and exports the same objects, so version changes that import from `cadwyn_core` work in a FastAPI app too. `migrate_response_body()` is only in `cadwyn`: use `migrate_response()` instead.
+
+Headers need Starlette. Without it, the results have `headers=None`, and `migrate_request()` and `migrate_response()` raise `CadwynError` if you pass headers or a migration uses them.

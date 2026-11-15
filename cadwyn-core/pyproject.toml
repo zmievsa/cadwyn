@@ -32,3 +32,13 @@ Documentation = "https://docs.cadwyn.dev"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+# The tests of a standalone install, which the `standalone` tox environment runs. They must import the installed
+# package, not its source next to them.
+addopts = "--import-mode=importlib"
+filterwarnings = ["error"]
+
+[tool.uv]
+# Rebuild the package from its directory when its code changes, e.g. for the `standalone` tox environment
+cache-keys = [{ file = "pyproject.toml" }, { file = "cadwyn_core/**/*.py" }]
