@@ -22,15 +22,7 @@ from cadwyn_core import _utils
 from cadwyn_core._utils import present_private_submodules_as_package
 from cadwyn_core.schema_generation import _annotation_transformer, _callables, _versioned_models
 from cadwyn_core.structure import data, endpoints
-from cadwyn_core.structure.versions import (
-    _aliases,
-    _bundle,
-    _core_schema,
-    _enums,
-    _json,
-    _migration_targets,
-    _migrations,
-)
+from cadwyn_core.structure.versions import _aliases, _bundle, _enums, _json, _migration_targets, _migrations
 
 exceptions.APIRoute = APIRoute
 exceptions.APIWebSocketRoute = APIWebSocketRoute
@@ -48,7 +40,6 @@ _utils.same_method_definition_as_in(Response.set_cookie)(data.ResponseInfo.set_c
 _utils.same_method_definition_as_in(Response.delete_cookie)(data.ResponseInfo.delete_cookie)
 
 _aliases.ModelField = ModelField
-_core_schema.ModelField = ModelField
 _bundle.APIRoute = APIRoute
 _enums.ModelField = ModelField
 _enums.Dependant = Dependant
