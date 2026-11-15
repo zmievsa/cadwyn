@@ -46,3 +46,24 @@ def test__modules_of_cadwyn__with_fastapi_integration__should_have_no_stand_ins(
     ]
 
     assert stand_ins == []
+
+
+@pytest.mark.parametrize("fastapi_first", [True, False])
+def test__type_hints_of_cadwyn_core__with_fastapi_but_without_cadwyn__should_accept_objects_of_fastapi(
+    fastapi_first: bool,
+):
+    imports = ["fastapi.params", "cadwyn_core"] if fastapi_first else ["cadwyn_core", "fastapi.params"]
+    code = f"""
+import {imports[0]}, {imports[1]}, sys, typing
+from cadwyn_core import endpoint
+
+(depends,) = typing.get_args(typing.get_type_hints(endpoint("/", ["GET"]).had)["dependencies"])
+assert "cadwyn" not in sys.modules
+assert isinstance(fastapi.params.Depends(), depends)
+assert issubclass(fastapi.params.Depends, depends)
+# FastAPI's own class if it's imported first, otherwise a stand-in that checks objects against it
+assert (depends is fastapi.params.Depends) is {fastapi_first}
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr

@@ -6,11 +6,15 @@ modules get these instead:
 
 * Starlette's classes, if Starlette is installed. Without it, the classes of the objects that Cadwyn gives instead of
   Starlette's, or stand-ins for the classes whose objects Cadwyn can't get without it.
-* Stand-ins for FastAPI's classes, which cadwyn-core doesn't import. Cadwyn only gets FastAPI's objects through the
-  FastAPI integration, which replaces the stand-ins with FastAPI's classes everywhere when it's imported.
+* FastAPI's classes if something has imported them, e.g. a FastAPI app, as cadwyn-core doesn't import FastAPI.
+  Otherwise stand-ins for them, which check objects against FastAPI's classes once those are imported. The FastAPI
+  integration replaces the stand-ins with FastAPI's classes everywhere when it's imported.
 """
 
+import sys
 from typing import Any, NoReturn
+
+from typing_extensions import override
 
 from cadwyn_core.exceptions import CadwynError
 
@@ -18,13 +22,36 @@ from cadwyn_core.exceptions import CadwynError
 _STOOD_FOR: dict[type, tuple[str, str]] = {}
 
 
+def _get_loaded_class(module_name: str, class_name: str) -> Any:
+    """Return the class if its module has been imported, without importing it"""
+    return getattr(sys.modules.get(module_name), class_name, None)
+
+
+class _StandInMeta(type):
+    """Checks objects against the class that a stand-in stands for, once something has imported that class"""
+
+    @override
+    def __instancecheck__(cls, instance: object) -> bool:
+        stood_for = _get_loaded_class(*_STOOD_FOR[cls])
+        return stood_for is not None and isinstance(instance, stood_for)
+
+    @override
+    def __subclasscheck__(cls, subclass: type) -> bool:
+        stood_for = _get_loaded_class(*_STOOD_FOR[cls])
+        return stood_for is not None and issubclass(subclass, stood_for)
+
+
 def _make_stand_in(module_name: str, class_name: str) -> Any:
-    stand_in = type(
+    """Return the class if it's already imported, e.g. by a FastAPI app, or a stand-in for it"""
+    loaded = _get_loaded_class(module_name, class_name)
+    if loaded is not None:
+        return loaded
+    stand_in = _StandInMeta(
         class_name,
         (),
         {
             "__module__": __name__,
-            "__doc__": f"Stands for `{module_name}.{class_name}` in annotations, which can't be resolved without it",
+            "__doc__": f"Stands for `{module_name}.{class_name}` in annotations until it's imported",
             "__slots__": (),
         },
     )
@@ -34,7 +61,7 @@ def _make_stand_in(module_name: str, class_name: str) -> Any:
 
 def get_class_stood_for(value: object) -> "tuple[str, str] | None":
     """Return the module and name of the class that a stand-in stands for, or None if it's not a stand-in"""
-    return _STOOD_FOR.get(value) if isinstance(value, type) else None
+    return _STOOD_FOR.get(value) if isinstance(value, _StandInMeta) else None
 
 
 class _HeadersWithoutStarlette:
