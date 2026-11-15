@@ -1,5 +1,17 @@
 import importlib.metadata
 
+try:
+    # It checks that it has the version of cadwyn
+    import cadwyn_core  # noqa: F401
+except ModuleNotFoundError as exc:
+    if exc.name != "cadwyn_core":  # pragma: no cover # A module that cadwyn-core needs is missing
+        raise
+    _version = importlib.metadata.version("cadwyn")
+    raise ImportError(
+        f"cadwyn {_version} needs cadwyn-core {_version}, which isn't installed. Install it, e.g. with "
+        f"`pip install cadwyn-core=={_version}`."
+    ) from exc
+
 from .applications import Cadwyn
 from .dependencies import current_dependency_solver
 from .route_generation import VersionedAPIRouter, generate_versioned_routers

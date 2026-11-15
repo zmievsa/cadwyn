@@ -11,6 +11,11 @@
 3. Run `make hooks` to install the [prek](https://prek.j178.dev/) git hooks
 4. Run `make check` to verify that the local CI-equivalent checks pass
 
+The repository has two packages that are released together in the same
+version: `cadwyn` at its root and `cadwyn-core` in `cadwyn-core/`, which holds
+Cadwyn's versioning without FastAPI. They form a uv workspace, so `make install`
+installs both from the repository.
+
 `make install` uses uv to create the project environment with every development
 and optional dependency. It also installs prek and tox with the `tox-uv` plugin
 as standalone tools so repeated checks start quickly.

@@ -18,5 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-uv
-      - run: uv build
-      - run: uv publish
+      - run: uv build --all-packages
+      # cadwyn needs the same version of cadwyn-core, so cadwyn-core goes first
+      - run: uv publish dist/cadwyn_core-*
+      - run: uv publish dist/cadwyn-[0-9]*
