@@ -261,7 +261,7 @@ Both give the migrations empty HTTP details for the ones that you don't pass. `c
 
 A migration by schema for a model that no route uses, e.g. a message that only these functions migrate, makes a Cadwyn app that uses the same versions fail at startup. Pass `check_usage=False` to its decorator, as described in [how to change a schema that is not used in any endpoint](../how_to/change_openapi_schemas/change_schema_without_endpoint.md).
 
-`migrate_response_body()` is the older way to migrate responses outside of routes, and it works as before. Its migrations get `latest_body` as you pass it, without turning models into data, and a response with the status code 200 whose headers and cookies it throws away, and it returns only the body. See [how to migrate data outside of routes](../how_to/migrate_data_outside_of_routes.md) to move to `migrate_response()`.
+`migrate_response_body()` is the older way to migrate responses outside of routes, and it works as before. Its migrations get `latest_body` as you pass it, without turning models into data, and a response with the status code 200 whose headers and cookies it throws away, and it returns only the body. So pass it plain data, such as the result of `model_dump(by_alias=True)`: objects of the HEAD models, also inside dicts and lists, fail with a `ValidationError` or in the migrations that expect data ([#651](https://github.com/zmievsa/cadwyn/issues/651)). `migrate_response()` takes them. See [how to migrate data outside of routes](../how_to/migrate_data_outside_of_routes.md) to move to `migrate_response()`.
 
 #### StreamingResponse and FileResponse migrations
 
