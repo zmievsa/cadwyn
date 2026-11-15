@@ -25,7 +25,9 @@ from pydantic_core import (
 from ._core_schema import (
     _CORE_SCHEMA_DEFINITIONS,
     _CORE_SCHEMA_ERRORS,
+    _BodyType,
     _do_compiled_aliases_match,
+    _get_body_core_schema,
     _get_dumped_key,
     _get_unchanging_model_core_schema,
     _get_validation_paths,
@@ -190,7 +192,7 @@ _JSON_CHILD_SCHEMA_KEYS = {
     "dict": ("values_schema", "values"),
 }
 # What the head validates the body with: the body field of a route, or the model of `migrate_request()`
-_JsonPlanSource: TypeAlias = "Union[ModelField, type[BaseModel]]"
+_JsonPlanSource: TypeAlias = "Union[ModelField, _BodyType, type[BaseModel]]"
 # The descriptions of the body fields, and the plans for the pairs of a head body field and a body field of a version
 _BODY_FIELD_JSON_PLANS: dict[int, tuple[_JsonPlanSource, Union[_JsonValuesPlan, None]]] = {}
 _NORMALIZED_CORE_SCHEMAS: dict[int, tuple[_JsonPlanSource, Any]] = {}
@@ -272,7 +274,7 @@ def _get_json_values_plan(
 def _get_core_schema(source: _JsonPlanSource) -> Any:
     if isinstance(source, type) and issubclass(source, BaseModel):
         return source.__pydantic_core_schema__
-    return source._type_adapter.core_schema
+    return _get_body_core_schema(source)
 
 
 def _get_body_field_json_plan(body_field: _JsonPlanSource) -> Union[_JsonValuesPlan, None]:

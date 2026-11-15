@@ -1,22 +1,47 @@
+import dataclasses
 from collections.abc import (
     Callable,
     Iterator,
     Mapping,
 )
 from typing import (
+    TYPE_CHECKING,
     Any,
     TypeAlias,
     Union,
     cast,
 )
 
-from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
+from pydantic import AliasChoices, AliasPath, BaseModel, RootModel, TypeAdapter
 from pydantic.fields import FieldInfo
 from pydantic_core import (
     PydanticCustomError,
 )
 
+if TYPE_CHECKING:
+    from fastapi._compat import ModelField
+
 _UNION_SCHEMA_TYPES = frozenset(("union", "tagged-union"))
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class _BodyType:
+    """What a body is validated with outside of routes, where there's no `ModelField` of a body or a response."""
+
+    annotation: Any
+    type_adapter: "TypeAdapter[Any]"
+
+
+def _get_body_annotation(body_field: "Union[ModelField, _BodyType]") -> Any:
+    if isinstance(body_field, _BodyType):
+        return body_field.annotation
+    return body_field.field_info.annotation
+
+
+def _get_body_core_schema(body_field: "Union[ModelField, _BodyType]") -> Any:
+    if isinstance(body_field, _BodyType):
+        return body_field.type_adapter.core_schema
+    return body_field._type_adapter.core_schema
 
 
 def _get_schema_shape(schema: dict[str, Any]) -> object:
