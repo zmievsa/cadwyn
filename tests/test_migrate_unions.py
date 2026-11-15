@@ -73,7 +73,6 @@ _UNIONS = [
     pytest.param(Union[_User, _Group], id="union"),
     pytest.param(_User | _Group, id="union_type"),
     pytest.param(Annotated[Union[_User, _Group], Field(discriminator="kind")], id="discriminated"),
-    pytest.param(Annotated[Union[_User, _Group], {"description": "Unhashable"}], id="unhashable"),
 ]
 
 
@@ -242,6 +241,82 @@ def test__migrate_response__of_union__should_give_what_a_route_responds_with(
     migrated = migrate_response(app.versions, Union[_User, _Group], body=body, version="2000-01-01").body
 
     assert migrated.model_dump(mode="json") == route_result.json()
+
+
+class _First(BaseModel):
+    x: int
+
+
+class _Second(BaseModel):
+    x: int
+
+
+@convert_request_to_next_version_for(_First)
+def _add_one(request: RequestInfo):
+    request.body["x"] += 1
+
+
+@convert_request_to_next_version_for(_Second)
+def _add_hundred(request: RequestInfo):
+    request.body["x"] += 100
+
+
+@convert_response_to_previous_version_for(_First)
+def _subtract_one(response: ResponseInfo):
+    response.body["x"] -= 1
+
+
+@convert_response_to_previous_version_for(_Second)
+def _subtract_hundred(response: ResponseInfo):
+    response.body["x"] -= 100
+
+
+def _get_versions_of_members_that_accept_the_same_body() -> VersionBundle:
+    return VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(
+                add_one=_add_one,
+                add_hundred=_add_hundred,
+                subtract_one=_subtract_one,
+                subtract_hundred=_subtract_hundred,
+            ),
+        ),
+        Version("2000-01-01"),
+    )
+
+
+def test__migrate_request__of_unions_with_members_in_other_order__should_validate_into_their_own_first_member():
+    # Both members accept the body, so validation gives the first one, and each union has its own first member
+    versions = _get_versions_of_members_that_accept_the_same_body()
+
+    first = migrate_request(versions, _First | _Second, body={"x": 1}, version="2000-01-01").body
+    second = migrate_request(versions, _Second | _First, body={"x": 1}, version="2000-01-01").body
+
+    assert (first, second) == (_First(x=2), _Second(x=101))
+
+
+def test__migrate_response__of_unions_with_members_in_other_order__should_validate_into_their_own_first_member():
+    versions = _get_versions_of_members_that_accept_the_same_body()
+
+    first = migrate_response(versions, _First | _Second, body=_First(x=2), version="2000-01-01").body
+    second = migrate_response(versions, _Second | _First, body=_Second(x=101), version="2000-01-01").body
+
+    assert (type(first).__cadwyn_original_model__, first.x) == (_First, 1)
+    assert (type(second).__cadwyn_original_model__, second.x) == (_Second, 1)
+
+
+@pytest.mark.parametrize("migrate", [migrate_request, migrate_response])
+def test__migrate_request_and_response__of_unhashable_annotation__should_raise_cadwyn_error(migrate: Any):
+    annotation = Annotated[Union[_User, _Group], {"description": "Unhashable"}]
+
+    with pytest.raises(CadwynError, match=r"can only migrate hashable annotations outside of routes"):
+        migrate(_get_versions(), annotation, body={"kind": "group", "size": 1}, version="2000-01-01")
+
+
+def test__migrate_response__of_union__with_object_of_other_model__should_raise_cadwyn_error():
+    with pytest.raises(CadwynError, match=r"the body is because it's a _Unchanged object"):
+        migrate_response(_get_versions(), Union[_User, _Group], body=_Unchanged(), version="2000-01-01")
 
 
 @pytest.mark.parametrize("migrate", [migrate_request, migrate_response])

@@ -10,6 +10,8 @@ from typing import (
     Any,
     TypeAlias,
     Union,
+    get_args,
+    get_origin,
     overload,
 )
 
@@ -239,7 +241,7 @@ def migrate_request(
 
 # The version of a model, or what the version of a union is validated with
 _VersionedSchema: TypeAlias = Union[type[BaseModel], _BodyType]
-# The body types of the versions of unions, by the generator of the version (None for head) and the union
+# The body types of the versions of unions, by the generator of the version (None for head) and the union's key
 _BODY_TYPES: "dict[tuple[Union[SchemaGenerator, None], object], _BodyType]" = {}
 
 
@@ -247,19 +249,32 @@ def _get_versioned_schema(generator: Union[SchemaGenerator, None], schema: Any) 
     """Return the version of a model or of a union of models that the generator gives, or the head's without one"""
     if lenient_issubclass(schema, BaseModel):
         return schema if generator is None else generator[schema]
-    key = (generator, schema)
+    key = (generator, _get_cache_key(schema))
     try:
-        return _BODY_TYPES[key]
-    except KeyError:
-        pass
-    # Unhashable annotations, e.g. `Annotated[Union[A, B], {"description": "..."}]`, get new ones every time
+        body_type = _BODY_TYPES.get(key)
     except TypeError:
-        key = None
-    annotation = schema if generator is None else generator.annotation_transformer.change_version_of_annotation(schema)
-    body_type = _BodyType(annotation, pydantic.TypeAdapter(annotation))
-    if key is not None:
-        _BODY_TYPES[key] = body_type
+        # We'd build what validates it on every call and keep it forever in the caches of the plans of bodies
+        raise CadwynError(
+            f"Cadwyn can only migrate hashable annotations outside of routes, but {schema!r} isn't hashable, e.g. "
+            "because it has a dict in `Annotated`. Use hashable metadata instead, such as `Field(description=...)`."
+        ) from None
+    if body_type is None:
+        annotation = (
+            schema if generator is None else generator.annotation_transformer.change_version_of_annotation(schema)
+        )
+        body_type = _BODY_TYPES[key] = _BodyType(annotation, pydantic.TypeAdapter(annotation))
     return body_type
+
+
+def _get_cache_key(annotation: object) -> object:
+    """Return a key of the annotation that keeps the order of the args, e.g. of the members of a union.
+
+    `Union[A, B] == Union[B, A]`, but validation can give another member for each, if both members accept a body.
+    """
+    args = get_args(annotation)
+    if not args:
+        return annotation
+    return get_origin(annotation), tuple(_get_cache_key(arg) for arg in args)
 
 
 def _validate(schema: _VersionedSchema, body: Any, *, from_attributes: Union[bool, None]) -> Any:
