@@ -373,7 +373,8 @@ def migrate_response_body(
     and wrap the result in the correct version of latest_response_model.
 
     Unlike routes and `migrate_response()`, the migrations get latest_body as it is, and an HTTP response with
-    the status code 200 whose headers and cookies Cadwyn throws away.
+    the status code 200 whose headers and cookies Cadwyn throws away. So latest_body should be plain data: objects of
+    the head models can fail (https://github.com/zmievsa/cadwyn/issues/651), and `migrate_response()` takes them.
     """
     from fastapi import Response
 
