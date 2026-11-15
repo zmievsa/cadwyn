@@ -59,8 +59,9 @@ Keep tests atomic. Separate distinct positive and negative scenarios, and use
 parametrization when the same behavior needs to be checked with several inputs.
 
 `make check` runs the local CI-equivalent suite with tox's default automatic
-parallelism. It runs the supported Python test matrix, tutorial tests, the tests of
-`cadwyn-core` installed on its own (`tox -e standalone`), coverage, prek linting, documentation build, link validation, and package build checks.
+parallelism. It runs the supported Python test matrix, tutorial tests, the tests
+of `cadwyn-core` installed on its own (`tox -e standalone`), coverage, prek
+linting, documentation build, link validation, and package build checks.
 Each supported Python test environment runs ty before its tests.
 
 If `prek`, `tox`, or the `tox-uv` plugin is missing, the Makefile will stop

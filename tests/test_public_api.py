@@ -7,11 +7,12 @@ import pytest
 
 import cadwyn
 import cadwyn.structure
+import cadwyn_core
 from cadwyn.schema_generation import SchemaGenerator
 
 
 def _public_annotation_targets() -> Iterator[Any]:
-    for module in (cadwyn, cadwyn.structure):
+    for module in (cadwyn, cadwyn.structure, cadwyn_core):
         for name in module.__all__:
             obj = getattr(module, name)
             yield pytest.param(obj, id=f"{module.__name__}.{name}")
