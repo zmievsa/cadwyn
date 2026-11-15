@@ -18,6 +18,7 @@ import pytest
 from packaging.requirements import Requirement
 
 import cadwyn
+import cadwyn_core
 
 
 def _get_import_names_of_pydantic_and_its_requirements() -> set[str]:
@@ -46,7 +47,8 @@ _BLOCK_OTHER_INSTALLED_PACKAGES = textwrap.dedent(
     import types
 
     cadwyn_dir, allowed_packages, modules_of_fastapi_integration = sys.argv[1:]
-    allowed = {"cadwyn", *allowed_packages.split(",")}
+    cadwyns_packages = {"cadwyn", "cadwyn_core"}
+    allowed = {*cadwyns_packages, *allowed_packages.split(",")}
     fastapi_integration = set(modules_of_fastapi_integration.split(","))
     installed_package_dirs = tuple({sysconfig.get_path("purelib"), sysconfig.get_path("platlib")})
 
@@ -72,7 +74,7 @@ _BLOCK_OTHER_INSTALLED_PACKAGES = textwrap.dedent(
         module = original_import(name, globals, locals, fromlist, level)
         top_level_name = name.partition(".")[0]
         importer = (globals or {}).get("__name__") or ""
-        if level == 0 and importer.partition(".")[0] == "cadwyn" and top_level_name not in allowed:
+        if level == 0 and importer.partition(".")[0] in cadwyns_packages and top_level_name not in allowed:
             if (getattr(sys.modules.get(top_level_name), "__file__", None) or "").startswith(installed_package_dirs):
                 raise ModuleNotFoundError(f"No module named {name!r}", name=name)
         return module
@@ -124,27 +126,39 @@ _MODULES_OF_FASTAPI_INTEGRATION = frozenset(
     )
 )
 _CADWYN_DIR = Path(cadwyn.__file__).parent
-_MODULES_OF_STANDALONE_USE = sorted(
-    name
-    for path in (
-        _CADWYN_DIR / "_utils.py",
-        _CADWYN_DIR / "_asts.py",
-        _CADWYN_DIR / "exceptions.py",
-        *(_CADWYN_DIR / "structure").rglob("*.py"),
-        *(_CADWYN_DIR / "schema_generation").rglob("*.py"),
+_CORE_DIR = Path(cadwyn_core.__file__).parent
+
+
+def _get_module_name(path: Path, root: Path) -> str:
+    return ".".join(path.relative_to(root).with_suffix("").parts).removesuffix(".__init__")
+
+
+_PATHS_OF_MODULES_OF_STANDALONE_USE = {
+    name: path
+    for root, paths in (
+        (_CORE_DIR.parent, _CORE_DIR.rglob("*.py")),
+        (
+            _CADWYN_DIR.parent,
+            (
+                # The old names of the modules that moved to cadwyn-core
+                _CADWYN_DIR / "_utils.py",
+                _CADWYN_DIR / "_asts.py",
+                *(_CADWYN_DIR / "structure").rglob("*.py"),
+                *(_CADWYN_DIR / "schema_generation").rglob("*.py"),
+            ),
+        ),
     )
-    if (name := ".".join(path.relative_to(_CADWYN_DIR.parent).with_suffix("").parts).removesuffix(".__init__"))
-    not in _MODULES_OF_FASTAPI_INTEGRATION
-)
+    for path in paths
+    if (name := _get_module_name(path, root)) not in _MODULES_OF_FASTAPI_INTEGRATION
+}
 
 
-@pytest.mark.parametrize("module_name", _MODULES_OF_STANDALONE_USE)
+@pytest.mark.parametrize("module_name", sorted(_PATHS_OF_MODULES_OF_STANDALONE_USE))
 def test__module_of_standalone_use__should_not_import_the_fastapi_integration_even_for_type_checking(module_name: str):
-    path = _CADWYN_DIR.parent.joinpath(*module_name.split("."))
-    path = path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
+    path = _PATHS_OF_MODULES_OF_STANDALONE_USE[module_name]
     package = module_name if path.name == "__init__.py" else module_name.rpartition(".")[0]
 
-    imported = set()
+    imported: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
@@ -152,12 +166,16 @@ def test__module_of_standalone_use__should_not_import_the_fastapi_integration_ev
             base = (
                 importlib.util.resolve_name("." * node.level + (node.module or ""), package)
                 if node.level
-                else node.module
+                # Only relative imports, such as `from . import name`, have no module
+                else str(node.module)
             )
             imported.add(base)
             imported.update(f"{base}.{alias.name}" for alias in node.names)
 
     assert not imported & _MODULES_OF_FASTAPI_INTEGRATION
+    # cadwyn-core is installed without cadwyn
+    if module_name.partition(".")[0] == "cadwyn_core":
+        assert not {name for name in imported if name.partition(".")[0] == "cadwyn"}
 
 
 def _run_without_fastapi(code: str) -> subprocess.CompletedProcess[str]:
@@ -177,7 +195,18 @@ def _run_without_fastapi(code: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.parametrize(
-    "module_name", ["cadwyn._utils", "cadwyn.exceptions", "cadwyn.schema_generation", "cadwyn.structure"]
+    "module_name",
+    [
+        "cadwyn_core",
+        "cadwyn_core._asts",
+        "cadwyn_core._utils",
+        "cadwyn_core.exceptions",
+        "cadwyn._asts",
+        "cadwyn._utils",
+        "cadwyn.exceptions",
+        "cadwyn.schema_generation",
+        "cadwyn.structure",
+    ],
 )
 def test__import__without_fastapi_and_its_dependencies__should_succeed(module_name: str):
     result = _run_without_fastapi(f"import {module_name}")

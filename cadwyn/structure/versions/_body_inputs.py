@@ -14,7 +14,7 @@ from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, RootModel
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     is_same_value,
 )
 

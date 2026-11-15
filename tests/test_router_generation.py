@@ -81,7 +81,6 @@ from starlette.routing import Route
 from typing_extensions import TypeAliasType, TypeVarTuple, Unpack, override
 
 from cadwyn import VersionBundle, VersionedAPIRouter
-from cadwyn._utils import _callable_name
 from cadwyn.applications import Cadwyn
 from cadwyn.dependencies import current_dependency_solver
 from cadwyn.exceptions import (
@@ -98,6 +97,7 @@ from cadwyn.structure import Version, convert_request_to_next_version_for, endpo
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
 from cadwyn.structure.versions import HeadVersion, VersionChange
+from cadwyn_core._utils import _callable_name
 from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, MappedModel, ModelFields
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1

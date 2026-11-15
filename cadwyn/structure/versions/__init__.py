@@ -1,5 +1,5 @@
-from cadwyn._utils import present_private_submodules_as_package
 from cadwyn.structure.common import VersionType as VersionType
+from cadwyn_core._utils import present_private_submodules_as_package
 
 # Only the submodules that work without FastAPI. The FastAPI integration (`cadwyn._internal.fastapi_bindings`) imports
 # the ones that migrate requests and responses in routes.

@@ -12,13 +12,13 @@ from typing import (
 
 from pydantic import BaseModel  # noqa: TC002 # Needed by runtime annotation introspection.
 
-from cadwyn._utils import is_enum_looked_up_by_value
-from cadwyn.exceptions import (
+from cadwyn.structure.common import VersionedModel, VersionType
+from cadwyn.structure.data import ResponseInfo
+from cadwyn_core._utils import is_enum_looked_up_by_value
+from cadwyn_core.exceptions import (
     CadwynError,
     CadwynStructureError,
 )
-from cadwyn.structure.common import VersionedModel, VersionType
-from cadwyn.structure.data import ResponseInfo
 
 from ._changes import HeadVersion, IdentifierPythonPath, Version, VersionChange, get_cls_pythonpath
 from ._migration_targets import (

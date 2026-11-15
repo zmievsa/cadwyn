@@ -4,8 +4,8 @@ from typing import TypeAlias
 from pydantic import BaseModel
 from typing_extensions import ParamSpec, TypeVar
 
-from cadwyn._utils import is_sqlalchemy_model
-from cadwyn.exceptions import CadwynStructureError
+from cadwyn_core._utils import is_sqlalchemy_model
+from cadwyn_core.exceptions import CadwynStructureError
 
 VersionedModel = BaseModel
 VersionType: TypeAlias = str

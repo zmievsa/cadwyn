@@ -16,8 +16,6 @@ import pydantic
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
-from cadwyn._utils import lenient_issubclass
-from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import (
     MigratedRequest,
@@ -51,6 +49,8 @@ from cadwyn.structure.versions._migrations import (
     _prepare_response_content,
     _run_request_migrations,
 )
+from cadwyn_core._utils import lenient_issubclass
+from cadwyn_core.exceptions import CadwynError, CadwynHeadRequestValidationError
 
 from ._annotation_transformer import (
     _ReferencedModelCollector,

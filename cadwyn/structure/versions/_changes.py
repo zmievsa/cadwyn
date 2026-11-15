@@ -16,14 +16,6 @@ from typing import (
 from pydantic import BaseModel
 from typing_extensions import override
 
-from cadwyn._utils import (
-    Sentinel,
-    classproperty,
-)
-from cadwyn.exceptions import (
-    CadwynError,
-    CadwynStructureError,
-)
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import (
     _AlterRequestByPathInstruction,
@@ -34,6 +26,14 @@ from cadwyn.structure.data import (
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
 from cadwyn.structure.schemas import AlterSchemaSubInstruction, SchemaHadInstruction
+from cadwyn_core._utils import (
+    Sentinel,
+    classproperty,
+)
+from cadwyn_core.exceptions import (
+    CadwynError,
+    CadwynStructureError,
+)
 
 if TYPE_CHECKING:
     from ._bundle import VersionBundle

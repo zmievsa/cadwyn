@@ -14,8 +14,7 @@ from fastapi.routing import APIRoute, APIWebSocketRoute
 from starlette.datastructures import MutableHeaders, UploadFile
 from starlette.routing import BaseRoute
 
-from cadwyn import _utils, exceptions
-from cadwyn._utils import present_private_submodules_as_package
+from cadwyn import exceptions
 from cadwyn.schema_generation import _annotation_transformer, _callables, _versioned_models
 from cadwyn.structure import data, endpoints
 from cadwyn.structure.versions import (
@@ -29,6 +28,8 @@ from cadwyn.structure.versions import (
     _responses,
     _versioned_endpoints,
 )
+from cadwyn_core import _utils
+from cadwyn_core._utils import present_private_submodules_as_package
 
 exceptions.APIRoute = APIRoute
 exceptions.APIWebSocketRoute = APIWebSocketRoute

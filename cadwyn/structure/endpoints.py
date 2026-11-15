@@ -9,9 +9,8 @@ if TYPE_CHECKING:
     from fastapi.routing import APIRoute
     from starlette.routing import BaseRoute
 
-from cadwyn.exceptions import LintingError
-
-from .._utils import DATACLASS_SLOTS, Sentinel
+from cadwyn_core._utils import DATACLASS_SLOTS, Sentinel
+from cadwyn_core.exceptions import LintingError
 
 HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 

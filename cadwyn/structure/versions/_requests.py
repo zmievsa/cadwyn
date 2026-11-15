@@ -19,12 +19,12 @@ from pydantic import BaseModel
 from starlette.datastructures import FormData
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn.exceptions import (
-    CadwynHeadRequestValidationError,
-)
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import (
     RequestInfo,
+)
+from cadwyn_core.exceptions import (
+    CadwynHeadRequestValidationError,
 )
 
 from ._aliases import _rescue_body

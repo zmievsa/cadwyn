@@ -8,7 +8,7 @@ from pydantic.errors import PydanticUserError
 from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
 from typing_extensions import override
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     get_member_with_same_value,
     is_enum_looked_up_by_value,
 )

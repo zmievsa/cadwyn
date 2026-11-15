@@ -17,7 +17,7 @@ from pydantic_core import (
     PydanticUndefined,
 )
 
-from cadwyn.exceptions import (
+from cadwyn_core.exceptions import (
     CadwynError,
 )
 

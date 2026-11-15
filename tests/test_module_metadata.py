@@ -14,7 +14,7 @@ from typing import Any, ParamSpec, TypeVar, Union
 
 import pytest
 
-from cadwyn._utils import classproperty
+from cadwyn_core._utils import classproperty
 
 _SPLIT_MODULES = ("cadwyn.schema_generation", "cadwyn.structure.versions")
 _PRIVATE_SUBMODULE_OF_SPLIT_MODULE = re.compile(r"^cadwyn\.(schema_generation|structure\.versions)\._")

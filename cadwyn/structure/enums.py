@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Union
 
-from cadwyn._utils import DATACLASS_SLOTS
+from cadwyn_core._utils import DATACLASS_SLOTS
 
 
 @dataclass(**DATACLASS_SLOTS)

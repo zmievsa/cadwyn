@@ -1,4 +1,4 @@
-from cadwyn._utils import present_private_submodules_as_package
+from cadwyn_core._utils import present_private_submodules_as_package
 
 from . import (
     _annotation_evaluation as _annotation_evaluation,

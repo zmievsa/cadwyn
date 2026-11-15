@@ -29,8 +29,8 @@ from typing_extensions import (
     _AnnotatedAlias,
 )
 
-from cadwyn._asts import GenericAliasUnionArgs
-from cadwyn._utils import (
+from cadwyn_core._asts import GenericAliasUnionArgs
+from cadwyn_core._utils import (
     UnionType,
     _get_type_alias_value,
     lenient_issubclass,

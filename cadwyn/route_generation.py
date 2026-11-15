@@ -21,7 +21,6 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute, compile_path
 from typing_extensions import TypeVar
 
-from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, is_same_value, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -50,6 +49,7 @@ from cadwyn.structure.versions._background import (
 from cadwyn.structure.versions._common import _DELETED_ROUTE_TAG
 from cadwyn.structure.versions._migration_targets import _get_request_body_target, _get_schema_migration_target
 from cadwyn.structure.versions._versioned_endpoints import _versioned
+from cadwyn_core._utils import DATACLASS_SLOTS, Sentinel, _callable_name, is_same_value, lenient_issubclass
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant

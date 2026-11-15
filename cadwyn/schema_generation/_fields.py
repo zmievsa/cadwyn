@@ -35,18 +35,18 @@ from typing_extensions import (
     _AnnotatedAlias,
 )
 
-from cadwyn._utils import (
+from cadwyn.structure.schemas import (
+    FieldDidntHaveInstruction,
+    FieldHadInstruction,
+)
+from cadwyn_core._utils import (
     DATACLASS_KW_ONLY,
     DATACLASS_SLOTS,
     Sentinel,
     fully_unwrap_decorator,
     is_same_value,
 )
-from cadwyn.exceptions import InvalidGenerationInstructionError
-from cadwyn.structure.schemas import (
-    FieldDidntHaveInstruction,
-    FieldHadInstruction,
-)
+from cadwyn_core.exceptions import InvalidGenerationInstructionError
 
 from ._annotation_evaluation import (
     _copy_field_info,

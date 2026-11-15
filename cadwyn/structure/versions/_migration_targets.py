@@ -17,12 +17,12 @@ from pydantic import BaseModel
 from typing_extensions import TypeVar
 from typing_inspection.typing_objects import is_typealiastype
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     UnionType,
     _get_type_alias_value,
     lenient_issubclass,
 )
-from cadwyn.exceptions import (
+from cadwyn_core.exceptions import (
     CadwynError,
 )
 

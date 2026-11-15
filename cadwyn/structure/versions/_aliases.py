@@ -24,7 +24,7 @@ from pydantic_core import (
     PydanticUndefined,
 )
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     UnionType,
     lenient_issubclass,
 )

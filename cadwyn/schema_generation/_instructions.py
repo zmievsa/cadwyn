@@ -17,13 +17,6 @@ from pydantic._internal._config import ConfigWrapper
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from cadwyn._utils import (
-    Sentinel,
-    get_name_of_function_wrapped_in_pydantic_validator,
-    is_same_value,
-    lenient_issubclass,
-)
-from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.schemas import (
     AlterSchemaSubInstruction,
     FieldDidntExistInstruction,
@@ -34,6 +27,13 @@ from cadwyn.structure.schemas import (
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
 )
+from cadwyn_core._utils import (
+    Sentinel,
+    get_name_of_function_wrapped_in_pydantic_validator,
+    is_same_value,
+    lenient_issubclass,
+)
+from cadwyn_core.exceptions import InvalidGenerationInstructionError
 
 from ._annotation_evaluation import (
     _get_annotations_without_evaluating,
