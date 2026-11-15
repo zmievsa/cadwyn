@@ -30,21 +30,21 @@ from typing_extensions import (
     _AnnotatedAlias,
 )
 
-from cadwyn.structure.schemas import (
+from cadwyn_core._utils import (
+    DATACLASS_SLOTS,
+    Sentinel,
+    lenient_issubclass,
+)
+from cadwyn_core.structure.schemas import (
     FieldDidntExistInstruction,
     FieldDidntHaveInstruction,
     FieldExistedAsInstruction,
     FieldHadInstruction,
     _get_model_decorators,
 )
-from cadwyn.structure.versions._core_schema import (
+from cadwyn_core.structure.versions._core_schema import (
     _KEYS_RENAMED_BY_ALIAS,
     _reject_keys_renamed_by_alias,
-)
-from cadwyn_core._utils import (
-    DATACLASS_SLOTS,
-    Sentinel,
-    lenient_issubclass,
 )
 
 from ._annotation_evaluation import (

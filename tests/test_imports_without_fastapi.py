@@ -143,6 +143,7 @@ _PATHS_OF_MODULES_OF_STANDALONE_USE = {
                 # The old names of the modules that moved to cadwyn-core
                 _CADWYN_DIR / "_utils.py",
                 _CADWYN_DIR / "_asts.py",
+                _CADWYN_DIR / "_internal" / "old_names.py",
                 *(_CADWYN_DIR / "structure").rglob("*.py"),
                 *(_CADWYN_DIR / "schema_generation").rglob("*.py"),
             ),
@@ -206,6 +207,9 @@ def _run_without_fastapi(code: str) -> subprocess.CompletedProcess[str]:
         "cadwyn.exceptions",
         "cadwyn.schema_generation",
         "cadwyn.structure",
+        "cadwyn.structure.versions",
+        "cadwyn_core.structure",
+        "cadwyn_core.structure.versions",
     ],
 )
 def test__import__without_fastapi_and_its_dependencies__should_succeed(module_name: str):
@@ -219,7 +223,7 @@ _VERSIONS_OF_USERS = """
 
     from cadwyn.exceptions import CadwynError
     from cadwyn.schema_generation import generate_versioned_models, migrate_request, migrate_response
-    from cadwyn.structure import (
+    from cadwyn_core.structure import (
         MigratedRequest,
         MigratedResponse,
         RequestInfo,

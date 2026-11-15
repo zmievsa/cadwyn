@@ -3,9 +3,9 @@ from pydantic import Field, conbytes
 from cadwyn import Version, VersionBundle
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.structure import VersionChange
-from cadwyn.structure.enums import enum
-from cadwyn.structure.schemas import schema
+from cadwyn_core.structure import VersionChange
+from cadwyn_core.structure.enums import enum
+from cadwyn_core.structure.schemas import schema
 
 from .classes import A, AlmostEmptyEnum, ModelWithWeirdFields, MyEnum
 

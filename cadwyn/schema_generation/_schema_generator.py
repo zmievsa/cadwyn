@@ -23,13 +23,16 @@ from typing import (
 from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata, replace_types
 
-from cadwyn.structure.versions import HeadVersion, Version  # noqa: TC001 # Needed by runtime annotation introspection.
 from cadwyn_core._utils import (
     DATACLASS_KW_ONLY,
     DATACLASS_SLOTS,
     lenient_issubclass,
 )
 from cadwyn_core.exceptions import CadwynError, InvalidGenerationInstructionError, SchemaGenerationError
+from cadwyn_core.structure.versions import (  # noqa: TC001 # Needed by runtime annotation introspection.
+    HeadVersion,
+    Version,
+)
 
 from ._annotation_evaluation import (
     _contains_forward_refs,

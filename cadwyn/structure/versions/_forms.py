@@ -36,6 +36,7 @@ from cadwyn_core._utils import (
 from cadwyn_core.exceptions import (
     CadwynError,
 )
+from cadwyn_core.structure.versions._migrations import _dump_request_body
 
 from ._compat import (
     _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
@@ -52,7 +53,6 @@ from ._compat import (
     _should_embed_body_fields,
 )
 from ._dependencies import _iter_dependants_that_fastapi_solves
-from ._migrations import _dump_request_body
 from ._uploads import _get_uploads_to_close
 
 

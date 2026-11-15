@@ -19,25 +19,39 @@ from pydantic import BaseModel
 from starlette.datastructures import FormData
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn.structure.common import VersionType
-from cadwyn.structure.data import (
-    RequestInfo,
-)
 from cadwyn_core.exceptions import (
     CadwynHeadRequestValidationError,
 )
-
-from ._aliases import _rescue_body
-from ._body_inputs import _to_head_input
-from ._common import _CADWYN_REQUEST_PARAM_NAME
-from ._compat import _OMITTED_BODY
-from ._dependencies import _has_other_body_readers, _has_several_body_readers
-from ._enums import (
+from cadwyn_core.structure.common import VersionType
+from cadwyn_core.structure.data import (
+    RequestInfo,
+)
+from cadwyn_core.structure.versions._aliases import _rescue_body
+from cadwyn_core.structure.versions._common import _CADWYN_REQUEST_PARAM_NAME
+from cadwyn_core.structure.versions._enums import (
     _can_body_have_lazy_iterators,
     _can_lazy_items_be_plain_enum_copies,
     _get_lazy_item_walker,
     _to_head_values,
 )
+from cadwyn_core.structure.versions._json import (
+    _ClientJsonStrings,
+    _copy_decoded_json_strings,
+    _encode_planned_json_values,
+    _get_route_json_values_plan,
+)
+from cadwyn_core.structure.versions._migration_targets import (
+    _UNKNOWN_BODY,
+    _get_union_member_of_body,
+    _no_union_member,
+    _raise_unknown_union_member_of_body,
+    _SchemaMigrationTarget,
+)
+from cadwyn_core.structure.versions._migrations import _dump_request_body, _run_request_migrations
+
+from ._body_inputs import _to_head_input
+from ._compat import _OMITTED_BODY
+from ._dependencies import _has_other_body_readers, _has_several_body_readers
 from ._forms import (
     _body_is_in_kwargs,
     _embed_form_model,
@@ -51,20 +65,6 @@ from ._forms import (
     _migrated_body_supplies_omitted_form_model,
     _unembed_form_model_errors,
 )
-from ._json import (
-    _ClientJsonStrings,
-    _copy_decoded_json_strings,
-    _encode_planned_json_values,
-    _get_route_json_values_plan,
-)
-from ._migration_targets import (
-    _UNKNOWN_BODY,
-    _get_union_member_of_body,
-    _no_union_member,
-    _raise_unknown_union_member_of_body,
-    _SchemaMigrationTarget,
-)
-from ._migrations import _dump_request_body, _run_request_migrations
 from ._request_body import _get_body, _get_strict_content_type
 from ._uploads import (
     _get_uploads_read_by_fastapi,
@@ -74,7 +74,7 @@ from ._uploads import (
 )
 
 if TYPE_CHECKING:
-    from ._bundle import VersionBundle
+    from cadwyn_core.structure.versions._bundle import VersionBundle
 
 
 async def _migrate_request(

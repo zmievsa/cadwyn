@@ -26,12 +26,12 @@ from cadwyn.schema_generation._models import (
     _PydanticModelWrapper,
 )
 from cadwyn.schema_generation._references import _BareGenericCopier, _CycleCopier
-from cadwyn.structure import Version, VersionChange
-from cadwyn.structure.endpoints import AlterEndpointSubInstruction
-from cadwyn.structure.enums import AlterEnumSubInstruction
-from cadwyn.structure.schemas import AlterSchemaSubInstruction, SchemaHadInstruction
-from cadwyn.structure.versions import HeadVersion
 from cadwyn_core._utils import same_method_definition_as_in
+from cadwyn_core.structure import Version, VersionChange
+from cadwyn_core.structure.endpoints import AlterEndpointSubInstruction
+from cadwyn_core.structure.enums import AlterEnumSubInstruction
+from cadwyn_core.structure.schemas import AlterSchemaSubInstruction, SchemaHadInstruction
+from cadwyn_core.structure.versions import HeadVersion
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()

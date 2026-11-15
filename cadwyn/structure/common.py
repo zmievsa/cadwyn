@@ -1,22 +1,12 @@
-from collections.abc import Callable
-from typing import TypeAlias
+"""`cadwyn_core.structure.common` under its old name, as the same module object."""
 
-from pydantic import BaseModel
-from typing_extensions import ParamSpec, TypeVar
+import sys
+from typing import TYPE_CHECKING
 
-from cadwyn_core._utils import is_sqlalchemy_model
-from cadwyn_core.exceptions import CadwynStructureError
+from cadwyn_core.structure import common
 
-VersionedModel = BaseModel
-VersionType: TypeAlias = str
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
-Endpoint: TypeAlias = Callable[_P, _R]
+if TYPE_CHECKING:
+    # Type checkers don't see the module that replaces this one in `sys.modules`
+    from cadwyn_core.structure.common import *  # noqa: F403
 
-
-def _validate_schema_is_versionable(model: object) -> None:
-    if isinstance(model, type) and is_sqlalchemy_model(model):
-        raise CadwynStructureError(
-            f"SQLAlchemy class '{model.__name__}' cannot be migrated. "
-            "Use a separate Pydantic model for versioned request and response schemas."
-        )
+sys.modules[__name__] = common

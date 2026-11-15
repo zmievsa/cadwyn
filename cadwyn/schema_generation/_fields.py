@@ -35,10 +35,6 @@ from typing_extensions import (
     _AnnotatedAlias,
 )
 
-from cadwyn.structure.schemas import (
-    FieldDidntHaveInstruction,
-    FieldHadInstruction,
-)
 from cadwyn_core._utils import (
     DATACLASS_KW_ONLY,
     DATACLASS_SLOTS,
@@ -47,6 +43,10 @@ from cadwyn_core._utils import (
     is_same_value,
 )
 from cadwyn_core.exceptions import InvalidGenerationInstructionError
+from cadwyn_core.structure.schemas import (
+    FieldDidntHaveInstruction,
+    FieldHadInstruction,
+)
 
 from ._annotation_evaluation import (
     _copy_field_info,

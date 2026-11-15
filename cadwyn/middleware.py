@@ -18,7 +18,7 @@ from typing_extensions import override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn.exceptions import CadwynError
-from cadwyn.structure.common import VersionType
+from cadwyn_core.structure.common import VersionType
 
 
 class VersionManager(Protocol):

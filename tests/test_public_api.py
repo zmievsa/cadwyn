@@ -33,7 +33,7 @@ def _public_method_annotation_targets(cls: type, prefix: str) -> Iterator[Any]:
         if isinstance(method, functools.cached_property):
             method = method.func
         # Inherited FastAPI/Starlette methods retain their upstream annotations.
-        if inspect.isfunction(method) and method.__module__.startswith("cadwyn."):
+        if inspect.isfunction(method) and method.__module__.startswith(("cadwyn.", "cadwyn_core.")):
             yield pytest.param(method, id=f"{prefix}.{name}")
 
 

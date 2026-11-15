@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 from cadwyn import current_dependency_solver
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.structure.schemas import schema
-from cadwyn.structure.versions import Version, VersionBundle, VersionChange
+from cadwyn_core.structure.schemas import schema
+from cadwyn_core.structure.versions import Version, VersionBundle, VersionChange
 from tests._resources.utils import PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY
 
 

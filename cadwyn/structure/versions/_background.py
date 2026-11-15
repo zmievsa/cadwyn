@@ -13,7 +13,7 @@ from typing import (
 from fastapi import Request as FastapiRequest
 from fastapi.concurrency import run_in_threadpool
 
-from ._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, _logger
+from cadwyn_core.structure.versions._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, _logger
 
 _CADWYN_BACKGROUND_TASKS_PARAM_NAME = "cadwyn_background_tasks_param"
 _RUN_BACKGROUND_TASKS_FLAG = "run_background_tasks_of_latest_version_dependencies"

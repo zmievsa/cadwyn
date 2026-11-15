@@ -17,11 +17,11 @@ from typing_extensions import (
     override,
 )
 
-from cadwyn.structure.versions._common import (
+from cadwyn_core._utils import iscoroutinefunction
+from cadwyn_core.structure.versions._common import (
     _CADWYN_REQUEST_PARAM_NAME,
     _CADWYN_RESPONSE_PARAM_NAME,
 )
-from cadwyn_core._utils import iscoroutinefunction
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute

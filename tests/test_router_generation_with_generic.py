@@ -62,9 +62,9 @@ from cadwyn.schema_generation._annotation_evaluation import (
     _get_rebuilt_model_fields,
 )
 from cadwyn.schema_generation._models import _get_head_model_references
-from cadwyn.structure.enums import enum
-from cadwyn.structure.schemas import schema
-from cadwyn.structure.versions import VersionChange
+from cadwyn_core.structure.enums import enum
+from cadwyn_core.structure.schemas import schema
+from cadwyn_core.structure.versions import VersionChange
 from tests.conftest import CreateVersionedApp, version_change
 
 BoolT = TypeVar("BoolT", bound=Union[bool, int])

@@ -62,8 +62,8 @@ from cadwyn.exceptions import (
     SchemaGenerationError,
 )
 from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
-from cadwyn.structure import enum, schema
-from cadwyn.structure.schemas import PossibleFieldAttributes
+from cadwyn_core.structure import enum, schema
+from cadwyn_core.structure.schemas import PossibleFieldAttributes
 from tests.conftest import (
     CreateRuntimeSchemas,
     CreateVersionedApp,

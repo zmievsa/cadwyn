@@ -21,13 +21,17 @@ from typing_extensions import (
     TypeVar,
 )
 
-from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from cadwyn_core._utils import (
     get_member_with_same_value,
     is_enum_looked_up_by_value,
     is_same_value,
 )
 from cadwyn_core.exceptions import InvalidGenerationInstructionError, SchemaGenerationError
+from cadwyn_core.structure.enums import (
+    AlterEnumSubInstruction,
+    EnumDidntHaveMembersInstruction,
+    EnumHadMembersInstruction,
+)
 
 from ._common import (
     _unwrap_model,

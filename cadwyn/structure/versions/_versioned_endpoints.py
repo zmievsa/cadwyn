@@ -19,18 +19,22 @@ from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
 from typing_extensions import ParamSpec, TypeVar
 
-from cadwyn.structure.common import Endpoint  # noqa: TC001 # Needed by runtime annotation introspection.
 from cadwyn_core._utils import Sentinel
 from cadwyn_core.exceptions import CadwynError
+from cadwyn_core.structure.common import Endpoint  # noqa: TC001 # Needed by runtime annotation introspection.
+from cadwyn_core.structure.versions._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME
+from cadwyn_core.structure.versions._migration_targets import (
+    _get_request_body_target,
+    _get_schema_migration_target,
+    _has_union_member_migrations,
+)
 
 from ._background import _add_keyword_only_parameter, _DroppedBackgroundTasksWarning
-from ._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME
-from ._migration_targets import _get_request_body_target, _get_schema_migration_target, _has_union_member_migrations
 from ._requests import _convert_endpoint_kwargs_to_version
 from ._responses import _convert_endpoint_response_to_version
 
 if TYPE_CHECKING:
-    from ._bundle import VersionBundle
+    from cadwyn_core.structure.versions._bundle import VersionBundle
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")

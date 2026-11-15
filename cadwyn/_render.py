@@ -15,9 +15,9 @@ from cadwyn.exceptions import CadwynRenderError
 from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.schema_generation._enums import _EnumWrapper
 from cadwyn.schema_generation._models import _PydanticModelWrapper
-from cadwyn.structure.versions import VersionBundle, get_cls_pythonpath
 from cadwyn_core._asts import _ReprContext, get_fancy_repr, pop_docstring_from_cls_body
 from cadwyn_core._utils import lenient_issubclass
+from cadwyn_core.structure.versions import VersionBundle, get_cls_pythonpath
 
 from ._importer import import_attribute_from_string, import_module_from_string
 

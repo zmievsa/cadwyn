@@ -111,7 +111,7 @@ from cadwyn.exceptions import (
     RouterGenerationError,
 )
 from cadwyn.schema_generation import SchemaGenerator, migrate_request, migrate_response, migrate_response_body
-from cadwyn.structure import (
+from cadwyn_core.structure import (
     MigratedRequest,
     MigratedResponse,
     VersionChange,
@@ -120,10 +120,10 @@ from cadwyn.structure import (
     convert_response_to_previous_version_for,
     enum,
 )
-from cadwyn.structure.data import RequestInfo, ResponseInfo
-from cadwyn.structure.endpoints import endpoint as cadwyn_endpoint
-from cadwyn.structure.schemas import schema
-from cadwyn.structure.versions import Version, VersionBundle
+from cadwyn_core.structure.data import RequestInfo, ResponseInfo
+from cadwyn_core.structure.endpoints import endpoint as cadwyn_endpoint
+from cadwyn_core.structure.schemas import schema
+from cadwyn_core.structure.versions import Version, VersionBundle
 from tests._resources.utils import (
     FASTAPI_DISTINGUISHES_NULL_BODIES,
     FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES,
@@ -15644,7 +15644,7 @@ def test__request_body_migration__with_lazy_field_that_cannot_have_versioned_pla
     annotation: Any,
     payload: Any,
 ):
-    from cadwyn.structure.versions import _enums
+    from cadwyn_core.structure.versions import _enums
 
     class Payload(BaseModel):
         values: annotation
@@ -15679,7 +15679,7 @@ def test__request_body_migration__with_lazy_field_that_can_have_versioned_plain_
     annotation: Any,
     payload: Any,
 ):
-    from cadwyn.structure.versions import _enums
+    from cadwyn_core.structure.versions import _enums
 
     class Payload(BaseModel):
         values: annotation

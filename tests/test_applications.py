@@ -29,9 +29,9 @@ from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import VersionPickingMiddleware
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.routing import _RootCadwynAPIRouter
-from cadwyn.structure.endpoints import endpoint
-from cadwyn.structure.schemas import schema
-from cadwyn.structure.versions import HeadVersion, Version, VersionBundle, VersionChange
+from cadwyn_core.structure.endpoints import endpoint
+from cadwyn_core.structure.schemas import schema
+from cadwyn_core.structure.versions import HeadVersion, Version, VersionBundle, VersionChange
 from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
 from tests._resources.versioned_app.app import (
     client_without_headers,

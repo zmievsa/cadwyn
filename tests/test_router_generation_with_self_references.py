@@ -17,8 +17,8 @@ from cadwyn import (
     generate_versioned_models,
     migrate_response_body,
 )
-from cadwyn.structure.enums import enum
-from cadwyn.structure.schemas import schema
+from cadwyn_core.structure.enums import enum
+from cadwyn_core.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
 
 ValueT = TypeVar("ValueT")

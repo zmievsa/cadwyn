@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.applications import Cadwyn
-from cadwyn.structure import (
+from cadwyn_core.structure import (
     RequestInfo,
     ResponseInfo,
     Version,
@@ -16,7 +16,7 @@ from cadwyn.structure import (
     endpoint,
     schema,
 )
-from cadwyn.structure.versions import HeadVersion
+from cadwyn_core.structure.versions import HeadVersion
 
 
 class BaseUser(BaseModel):

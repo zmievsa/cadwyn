@@ -13,7 +13,7 @@ from pydantic import (
 )
 
 from cadwyn.exceptions import CadwynStructureError, InvalidGenerationInstructionError
-from cadwyn.structure import schema
+from cadwyn_core.structure import schema
 from tests.conftest import (
     CreateRuntimeSchemas,
     assert_models_are_equal,
