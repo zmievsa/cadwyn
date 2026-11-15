@@ -97,14 +97,16 @@ def test__old_name_of_moved_package__should_keep_its_public_names():
     assert cadwyn.structure.__all__ == cadwyn_core.structure.__all__
 
 
+@pytest.mark.parametrize("first_package", ["cadwyn", "cadwyn_core"])
 @pytest.mark.parametrize("name", _MOVED_MODULES)
-def test__old_name_of_moved_module__in_a_new_process__should_be_the_same_module(name: str):
+def test__old_name_of_moved_module__in_a_new_process__should_be_the_same_module(name: str, first_package: str):
+    second_package = "cadwyn_core" if first_package == "cadwyn" else "cadwyn"
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             (
-                f"import cadwyn.{name}, cadwyn_core.{name}, sys; "
+                f"import {first_package}.{name}, {second_package}.{name}, sys; "
                 f"assert sys.modules['cadwyn.{name}'] is cadwyn.{name} is cadwyn_core.{name}"
             ),
         ],
