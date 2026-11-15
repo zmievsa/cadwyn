@@ -1964,12 +1964,13 @@
 </ol>
 <p>Cadwyn doesn't aim for "pay only for what you use". Prefer one behavior and one code path for every app over special paths that only some apps take, so bugs show up for everyone and get fixed once.</p>
 <h2 id="supported-api">Supported API<a class="headerlink" href="#supported-api" title="Permanent link">&para;</a></h2>
-<p>Everything importable from <code>cadwyn</code> is supported. So are these internals, which Airflow's Task SDK builds on. Changing them is a breaking change:</p>
+<p>Everything importable from <code>cadwyn</code>, <code>cadwyn_core</code>, and <code>cadwyn_core.exceptions</code> is supported. So are these internals, which Airflow's Task SDK builds on. Changing them is a breaking change:</p>
 <ul>
 <li><code>VersionBundle.versions</code> and <code>VersionBundle.reversed_versions</code></li>
+<li><code>Version.value</code> and <code>Version.changes</code></li>
 <li>the <code>alter_*_instructions</code> attributes of <code>VersionChange</code></li>
-<li>calling the instructions in them (<code>_AlterDataInstruction.__call__</code>) with any object that has a <code>body</code> attribute</li>
-<li><code>generate_versioned_models()</code>, and indexing its result (<code>SchemaGenerator.__getitem__</code> from <code>cadwyn.schema_generation</code>)</li>
+<li>calling the instructions in them (<code>_AlterDataInstruction.__call__</code>) with any object that has a <code>body</code> attribute. <code>migrate_request()</code> and <code>migrate_response()</code> do it for you, and do what routes do around it, so prefer them.</li>
+<li><code>generate_versioned_models()</code>, and indexing its result (<code>SchemaGenerator.__getitem__</code>, from <code>cadwyn_core</code> or <code>cadwyn.schema_generation</code>)</li>
 </ul>
 <h2 id="costs-of-the-architecture">Costs of the architecture<a class="headerlink" href="#costs-of-the-architecture" title="Permanent link">&para;</a></h2>
 <p>These follow from how Cadwyn works (see <a href="../architecture/">Architecture</a>). They aren't bugs, and changes that try to remove them are almost always rejected.</p>

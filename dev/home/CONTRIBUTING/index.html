@@ -2127,8 +2127,9 @@ would be better covered through a public interface.</p>
 <p>Keep tests atomic. Separate distinct positive and negative scenarios, and use
 parametrization when the same behavior needs to be checked with several inputs.</p>
 <p><code>make check</code> runs the local CI-equivalent suite with tox's default automatic
-parallelism. It runs the supported Python test matrix, tutorial tests, coverage,
-prek linting, documentation build, link validation, and package build checks.
+parallelism. It runs the supported Python test matrix, tutorial tests, the tests
+of <code>cadwyn-core</code> installed on its own (<code>tox -e standalone</code>), coverage, prek
+linting, documentation build, link validation, and package build checks.
 Each supported Python test environment runs ty before its tests.</p>
 <p>If <code>prek</code>, <code>tox</code>, or the <code>tox-uv</code> plugin is missing, the Makefile will stop
 early and print the matching <code>uv tool install ...</code> command to install it.</p>

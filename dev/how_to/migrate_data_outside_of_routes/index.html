@@ -1936,7 +1936,49 @@
 <p>If you send the result as JSON, e.g. in a message, dump it as routes do: <code>migrate_response(...).body.model_dump(mode="json", by_alias=True)</code>.</p>
 <p>Your loop keeps working too: the attributes that it uses are part of the <a href="../../theory/design_decisions/#supported-api">supported API</a>.</p>
 <h2 id="without-fastapi">Without FastAPI<a class="headerlink" href="#without-fastapi" title="Permanent link">&para;</a></h2>
-<p>Cadwyn still installs FastAPI. A separate package that only needs Pydantic is planned in <a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>. Until then, <code>migrate_request()</code> and <code>migrate_response()</code> already work in projects that don't use FastAPI otherwise. Headers need Starlette, which FastAPI installs.</p>
+<p>To use versions, version changes, data migrations, and versioned models without FastAPI and Starlette, install <code>cadwyn-core</code> instead of <code>cadwyn</code>. It only needs Pydantic:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span>cadwyn-core
+</code></pre></div>
+<p>Import everything from <code>cadwyn_core</code> instead of <code>cadwyn</code>, and the errors from <code>cadwyn_core.exceptions</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn_core</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">RequestInfo</span><span class="p">,</span>
+    <span class="n">Version</span><span class="p">,</span>
+    <span class="n">VersionBundle</span><span class="p">,</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
+    <span class="n">migrate_request</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">full_name</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RenameNameToFullName</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;&#39;name&#39; is now called &#39;full_name&#39;&quot;</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">User</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;full_name&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;name&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">User</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">rename_name_to_full_name</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;full_name&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">)</span>
+
+
+<span class="n">versions</span> <span class="o">=</span> <span class="n">VersionBundle</span><span class="p">(</span>
+    <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2001-01-01&quot;</span><span class="p">,</span> <span class="n">RenameNameToFullName</span><span class="p">),</span>
+    <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2000-01-01&quot;</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="n">user</span> <span class="o">=</span> <span class="n">migrate_request</span><span class="p">(</span>
+    <span class="n">versions</span><span class="p">,</span> <span class="n">User</span><span class="p">,</span> <span class="n">body</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;John&quot;</span><span class="p">},</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;2000-01-01&quot;</span>
+<span class="p">)</span><span class="o">.</span><span class="n">body</span>
+</code></pre></div>
+<p><code>cadwyn</code> installs <code>cadwyn-core</code> in the same version and exports the same objects, with <code>SchemaGenerator</code> in <code>cadwyn.schema_generation</code> and the errors in <code>cadwyn.exceptions</code>, so version changes that import from <code>cadwyn_core</code> work in a FastAPI app too. <code>migrate_response_body()</code> is only in <code>cadwyn</code>: use <code>migrate_response()</code> instead.</p>
+<p>Headers need Starlette. Without it, the results have <code>headers=None</code>, and <code>migrate_request()</code> and <code>migrate_response()</code> raise <code>CadwynError</code> if you pass headers or a migration uses them.</p>
 
 
 

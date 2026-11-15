@@ -2044,7 +2044,7 @@
 </tr>
 <tr>
 <td><code>cadwyn-core/</code></td>
-<td><code>cadwyn-core</code>, the package of Cadwyn's versioning without FastAPI, which <code>cadwyn</code> depends on in exactly the same version (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>). The modules that standalone use is built from move into it step by step. So far it has <code>structure/</code> and <code>schema_generation/</code> (above), <code>exceptions.py</code> with the errors that they raise, <code>_utils.py</code> with helpers, and <code>_asts.py</code>, which renders values as code and inspects annotations. It must not import <code>cadwyn</code>.</td>
+<td><code>cadwyn-core</code>, the package of Cadwyn's versioning without FastAPI, which <code>cadwyn</code> depends on in exactly the same version (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>). It has <code>structure/</code> and <code>schema_generation/</code> (above), <code>exceptions.py</code> with the errors that they raise, <code>_utils.py</code> with helpers, and <code>_asts.py</code>, which renders values as code and inspects annotations. <code>__init__.py</code> exports its public API. It must not import <code>cadwyn</code>, and <code>cadwyn-core/tests/</code>, which the <code>standalone</code> tox environment runs, check that it works when it's installed on its own.</td>
 </tr>
 <tr>
 <td><code>cadwyn/_utils.py</code>, <code>cadwyn/_asts.py</code>, <code>cadwyn/structure/</code>, <code>cadwyn/schema_generation/</code></td>
