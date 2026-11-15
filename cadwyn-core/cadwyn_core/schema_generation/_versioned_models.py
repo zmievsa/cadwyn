@@ -11,13 +11,11 @@ from typing import (
     TypeAlias,
     Union,
     get_args,
-    get_origin,
     overload,
 )
 
 import pydantic
 from pydantic import BaseModel
-from pydantic.fields import FieldInfo
 from typing_extensions import TypeVar
 
 from cadwyn_core._utils import UnionType, lenient_issubclass
@@ -54,6 +52,7 @@ from cadwyn_core.structure.versions._migration_targets import (
     _get_union_member_of_body,
     _no_union_member,
     _resolve_type_aliases,
+    _SchemaMigrationTarget,
 )
 from cadwyn_core.structure.versions._migrations import (
     _dump_request_body,
@@ -242,52 +241,26 @@ def migrate_request(
 
 # The version of a model, or what the version of a union is validated with
 _VersionedSchema: TypeAlias = Union[type[BaseModel], _BodyType]
-# The body types of the versions of unions, by the generator of the version (None for head) and the union's key
-_BODY_TYPES: "dict[tuple[Union[SchemaGenerator, None], object], _BodyType]" = {}
+# The body types of the versions of unions, by the generator of the version (None for head) and the id of the union.
+# We key unions by their objects rather than by equality: `Union[A, B] == Union[B, A]` and
+# `Literal[1] == Literal[True]`, but they can validate into other values, and `Field()` objects are only equal to
+# themselves anyway. We keep the union, so that its id isn't reused by another object
+_BODY_TYPES: "dict[tuple[Union[SchemaGenerator, None], int], tuple[object, _BodyType]]" = {}
 
 
 def _get_versioned_schema(generator: Union[SchemaGenerator, None], schema: Any) -> _VersionedSchema:
     """Return the version of a model or of a union of models that the generator gives, or the head's without one"""
     if lenient_issubclass(schema, BaseModel):
         return schema if generator is None else generator[schema]
-    key = (generator, _get_cache_key(schema))
-    try:
-        body_type = _BODY_TYPES.get(key)
-    except TypeError:
-        # We'd build what validates it on every call and keep it forever in the caches of the plans of bodies
-        raise CadwynError(
-            f"Cadwyn can only migrate hashable annotations outside of routes, but {schema!r} has an unhashable "
-            "object in it. Use hashable objects in it instead."
-        ) from None
-    if body_type is None:
-        annotation = (
-            schema if generator is None else generator.annotation_transformer.change_version_of_annotation(schema)
-        )
-        body_type = _BODY_TYPES[key] = _BodyType(annotation, pydantic.TypeAdapter(annotation))
+    key = (generator, id(schema))
+    cached = _BODY_TYPES.get(key)
+    if cached is not None and cached[0] is schema:
+        return cached[1]
+    transformer = None if generator is None else generator.annotation_transformer
+    annotation = schema if transformer is None else transformer.change_version_of_annotation(schema)
+    body_type = _BodyType(annotation, pydantic.TypeAdapter(annotation))
+    _BODY_TYPES[key] = (schema, body_type)
     return body_type
-
-
-def _get_cache_key(value: object) -> object:
-    """Return a key that is equal only for the annotations that validate alike, and keeps them apart otherwise.
-
-    `Union[A, B] == Union[B, A]`, but validation can give another member for each if both accept a body, and
-    `Literal[1] == Literal[True]`, so the key keeps the order of the args and the types of the values. Pydantic's
-    `FieldInfo` (`Field(...)`) is equal only to itself, so we key it by its attributes, which keeps the key of
-    `Annotated[Union[A, B], Field(discriminator="kind")]` the same when the annotation is written in every call.
-    """
-    if isinstance(value, FieldInfo):
-        attributes = (name for name in value.__slots__ if not name.startswith("_"))
-        return FieldInfo, tuple((name, _get_cache_key(getattr(value, name))) for name in attributes)
-    args = get_args(value)
-    if args:
-        return get_origin(value), _get_cache_key(args)
-    if isinstance(value, list | tuple):
-        return type(value), tuple(_get_cache_key(item) for item in value)
-    if isinstance(value, dict):
-        return dict, tuple((_get_cache_key(key), _get_cache_key(item)) for key, item in value.items())
-    if isinstance(value, set | frozenset):
-        return type(value), frozenset(_get_cache_key(item) for item in value)
-    return type(value), value
 
 
 def _validate(schema: _VersionedSchema, body: Any, *, from_attributes: Union[bool, None]) -> Any:
@@ -350,7 +323,7 @@ def migrate_response(
         response_target = _get_schema_migration_target(latest_response_model)
         migrated_body = _run_response_migrations(
             versions,
-            latest_response_model,
+            response_target,
             response_info,
             version,
             from_version=from_version,
@@ -408,7 +381,7 @@ def migrate_response_body(
     version = _get_version_to_migrate(versions, version)
     migrated_body = _run_response_migrations(
         versions,
-        latest_response_model,
+        _get_schema_migration_target(latest_response_model),
         # The migrations are written for routes, so they get a response. It's successful, as the body is, and
         # it's only there for them: we return only the body.
         ResponseInfo(Response(status_code=200), body=latest_body),
@@ -423,7 +396,7 @@ def migrate_response_body(
 
 def _run_response_migrations(
     versions: "VersionBundle",
-    latest_response_model: Any,
+    response_target: "_SchemaMigrationTarget",
     response_info: ResponseInfo,
     version: VersionType,
     *,
@@ -436,7 +409,7 @@ def _run_response_migrations(
         response_info,
         current_version=version,
         head_route=None,
-        response_target=_get_schema_migration_target(latest_response_model),
+        response_target=response_target,
         get_response_union_member=get_response_union_member,
         from_version=from_version,
     ).body
@@ -449,8 +422,31 @@ def _is_newer(versions: "VersionBundle", version: VersionType, than: VersionType
 def _check_that_it_is_a_schema(schema: object, function_name: str) -> None:
     """Fail for the schemas that migrations aren't for, such as `list[A]`, instead of running none of them"""
     resolved = _resolve_type_aliases(schema)
-    if not lenient_issubclass(resolved, BaseModel) and not isinstance(resolved, UnionType):
+    if lenient_issubclass(resolved, BaseModel):
+        return
+    if not isinstance(resolved, UnionType):
         raise CadwynError(f"`{function_name}()` takes a Pydantic model or a union of them, not {schema!r}.")
+    for member in _get_flat_union_members(resolved):
+        if not lenient_issubclass(member, BaseModel) and _has_models(member):
+            raise CadwynError(
+                f"`{function_name}()` takes a Pydantic model or a union of them, not {schema!r}, because migrations "
+                f"by schema don't run for the models in its member {member!r}."
+            )
+
+
+def _get_flat_union_members(union: object) -> "collections.abc.Iterator[object]":
+    for arg in get_args(union):
+        member = _resolve_type_aliases(arg)
+        if isinstance(member, UnionType):
+            yield from _get_flat_union_members(member)
+        else:
+            yield member
+
+
+def _has_models(annotation: object) -> bool:
+    """Whether the annotation has models in it, e.g. in `list[A]` or `dict[str, A]`"""
+    annotation = _resolve_type_aliases(annotation)
+    return lenient_issubclass(annotation, BaseModel) or any(_has_models(arg) for arg in get_args(annotation))
 
 
 def _get_union_member_of_response_body(

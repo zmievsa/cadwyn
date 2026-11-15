@@ -308,18 +308,6 @@ def test__migrate_response__of_unions_with_members_in_other_order__should_valida
     assert (type(second).__cadwyn_original_model__, second.x) == (_Second, 1)
 
 
-class _Unhashable:
-    __hash__ = None
-
-
-@pytest.mark.parametrize("migrate", [migrate_request, migrate_response])
-def test__migrate_request_and_response__of_unhashable_annotation__should_raise_cadwyn_error(migrate: Any):
-    annotation = Annotated[Union[_User, _Group], _Unhashable()]
-
-    with pytest.raises(CadwynError, match=r"can only migrate hashable annotations outside of routes"):
-        migrate(_get_versions(), annotation, body={"kind": "group", "size": 1}, version="2000-01-01")
-
-
 def test__migrate_request__of_union_with_dict_in_annotated__should_migrate_it():
     annotation = Annotated[Union[_User, _Group], {"description": "Dicts aren't hashable"}]
 
@@ -328,13 +316,15 @@ def test__migrate_request__of_union_with_dict_in_annotated__should_migrate_it():
     assert migrated.body == _Group(size=12)
 
 
-def test__migrate_request__of_union_written_in_every_call__should_build_what_validates_it_once():
+# Written once, e.g. as a module-level alias, as the docs say
+_UNION_WITH_FIELD = Annotated[Union[_User, _Group], Field(discriminator="kind")]
+
+
+def test__migrate_request__of_same_union__should_build_what_validates_it_once():
     versions = _get_versions()
 
     def migrate():
-        # `Field()` objects are only equal to themselves
-        annotation = Annotated[Union[_User, _Group], Field(discriminator="kind")]
-        return migrate_request(versions, annotation, body={"kind": "group", "size": 1}, version="2000-01-01").body
+        return migrate_request(versions, _UNION_WITH_FIELD, body={"kind": "group", "size": 1}, version="2000-01-01")
 
     migrate()
     body_types = len(_BODY_TYPES)
@@ -365,6 +355,22 @@ def test__migrate_request__of_union_with_callable__should_migrate_it():
 def test__migrate_response__of_union__with_object_of_other_model__should_raise_cadwyn_error():
     with pytest.raises(CadwynError, match=r"the body is because it's a _Unchanged object"):
         migrate_response(_get_versions(), Union[_User, _Group], body=_Unchanged(), version="2000-01-01")
+
+
+@pytest.mark.parametrize("migrate", [migrate_request, migrate_response])
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        pytest.param(Optional[list[_Group]], id="optional_list"),
+        pytest.param(Union[_User, list[_Group]], id="list"),
+        pytest.param(Union[_User, dict[str, _Group]], id="dict"),
+    ],
+)
+def test__migrate_request_and_response__of_union_with_models_in_member__should_raise_cadwyn_error(
+    migrate: Any, annotation: Any
+):
+    with pytest.raises(CadwynError, match=r"because migrations by schema don't run for the models in its member"):
+        migrate(_get_versions(), annotation, body=None, version="2000-01-01")
 
 
 @pytest.mark.parametrize("migrate", [migrate_request, migrate_response])
