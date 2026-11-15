@@ -2019,7 +2019,7 @@
 <td><code>RequestInfo</code>, <code>ResponseInfo</code>, and the <code>convert_request_to_next_version_for()</code> and <code>convert_response_to_previous_version_for()</code> migrations.</td>
 </tr>
 <tr>
-<td><code>cadwyn/schema_generation/</code></td>
+<td><code>cadwyn-core/cadwyn_core/schema_generation/</code></td>
 <td>Copies of models and enums for every version. <code>_versioned_models.py</code> has <code>generate_versioned_models()</code>, <code>migrate_request()</code>, <code>migrate_response()</code>, and <code>migrate_response_body()</code>, and <code>_schema_generator.py</code> has <code>SchemaGenerator</code>. <code>_models.py</code>, <code>_fields.py</code>, and <code>_enums.py</code> describe models, fields, and enums, and <code>_instructions.py</code> applies schema instructions to them. <code>_annotation_transformer.py</code> replaces models in annotations with their copies, <code>_annotation_evaluation.py</code> evaluates annotations, <code>_callables.py</code> copies endpoints and dependencies, and <code>_generics.py</code> and <code>_references.py</code> handle generics and models that refer to each other.</td>
 </tr>
 <tr>
@@ -2044,11 +2044,11 @@
 </tr>
 <tr>
 <td><code>cadwyn-core/</code></td>
-<td><code>cadwyn-core</code>, the package of Cadwyn's versioning without FastAPI, which <code>cadwyn</code> depends on in exactly the same version (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>). The modules that standalone use is built from move into it step by step. So far it has <code>structure/</code> (above), <code>exceptions.py</code> with the errors that they raise, <code>_utils.py</code> with helpers, and <code>_asts.py</code>, which renders values as code and inspects annotations. It must not import <code>cadwyn</code>.</td>
+<td><code>cadwyn-core</code>, the package of Cadwyn's versioning without FastAPI, which <code>cadwyn</code> depends on in exactly the same version (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>). The modules that standalone use is built from move into it step by step. So far it has <code>structure/</code> and <code>schema_generation/</code> (above), <code>exceptions.py</code> with the errors that they raise, <code>_utils.py</code> with helpers, and <code>_asts.py</code>, which renders values as code and inspects annotations. It must not import <code>cadwyn</code>.</td>
 </tr>
 <tr>
-<td><code>cadwyn/_utils.py</code>, <code>cadwyn/_asts.py</code>, <code>cadwyn/structure/</code></td>
-<td>The old names of what moved to <code>cadwyn-core</code>. Each moved module puts itself into <code>sys.modules</code> under its old name, so both names are the same module object. <code>cadwyn.structure</code> and <code>cadwyn.structure.versions</code> stay packages of their own, as the second one still has the submodules that need FastAPI. <code>keep_names_of_moved_package()</code> in <code>cadwyn/_internal/old_names.py</code> gives them every name of the moved packages.</td>
+<td><code>cadwyn/_utils.py</code>, <code>cadwyn/_asts.py</code>, <code>cadwyn/structure/</code>, <code>cadwyn/schema_generation/</code></td>
+<td>The old names of what moved to <code>cadwyn-core</code>. Each moved module puts itself into <code>sys.modules</code> under its old name, so both names are the same module object. <code>cadwyn.structure</code>, <code>cadwyn.structure.versions</code>, and <code>cadwyn.schema_generation</code> stay packages of their own, as <code>cadwyn.structure.versions</code> still has the submodules that need FastAPI. <code>keep_names_of_moved_package()</code> in <code>cadwyn/_internal/old_names.py</code> gives them every name of the moved packages.</td>
 </tr>
 <tr>
 <td><code>cadwyn/exceptions.py</code></td>
@@ -2056,7 +2056,7 @@
 </tr>
 <tr>
 <td><code>cadwyn/_internal/fastapi_bindings.py</code></td>
-<td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: <code>cadwyn.schema_generation</code> and the modules of <code>cadwyn_core</code>. It binds the FastAPI names in their annotations, registers FastAPI's classes that they recognize in annotations and attributes, and imports the submodules of <code>cadwyn.structure.versions</code> that migrate requests and responses in routes. <code>tests/test_imports_without_fastapi.py</code> checks that the others work without FastAPI.</td>
+<td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: the modules of <code>cadwyn_core</code>. It binds the FastAPI names in their annotations, registers FastAPI's classes that they recognize in annotations and attributes, and imports the submodules of <code>cadwyn.structure.versions</code> that migrate requests and responses in routes. <code>tests/test_imports_without_fastapi.py</code> checks that the others work without FastAPI.</td>
 </tr>
 <tr>
 <td><code>cadwyn/__main__.py</code>, <code>_render.py</code></td>
@@ -2064,7 +2064,7 @@
 </tr>
 </tbody>
 </table>
-<p><code>cadwyn.structure.versions</code> and <code>cadwyn.schema_generation</code> used to be single modules. <code>present_private_submodules_as_package()</code> gives every object in their private submodules the package as its <code>__module__</code>: <code>cadwyn_core.structure.versions</code> for the objects that moved to <code>cadwyn-core</code>, and the old module for the others. Their <code>__init__.py</code> files export only the public names, so Cadwyn's own code imports private names from the submodules.</p>
+<p><code>cadwyn.structure.versions</code> and <code>cadwyn.schema_generation</code> used to be single modules. <code>present_private_submodules_as_package()</code> gives every object in their private submodules the package as its <code>__module__</code>: <code>cadwyn_core.schema_generation</code>, <code>cadwyn_core.structure.versions</code> for the objects that moved there, and <code>cadwyn.structure.versions</code> for the others. Their <code>__init__.py</code> files export only the public names, so Cadwyn's own code imports private names from the submodules.</p>
 <h2 id="versions-and-version-changes">Versions and version changes<a class="headerlink" href="#versions-and-version-changes" title="Permanent link">&para;</a></h2>
 <p>A <code>VersionBundle</code> lists the versions from newest to oldest, optionally after a <code>HeadVersion</code>. <code>VersionBundle.versions</code> keeps that order, and <code>VersionBundle.reversed_versions</code> goes from oldest to newest. The oldest version can't have version changes, and each version change belongs to exactly one version.</p>
 <p>The changes of a version describe how to turn that version into the previous, older one. When a <code>VersionChange</code> subclass is created, <code>VersionChange.__init_subclass__()</code> checks it and sorts its instructions by kind:</p>
