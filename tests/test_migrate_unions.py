@@ -1,5 +1,6 @@
 """`migrate_request()` and `migrate_response()` migrate unions of models as routes do."""
 
+from collections.abc import Callable
 from typing import Annotated, Any, Literal, Optional, Union
 
 import pytest
@@ -18,6 +19,7 @@ from cadwyn import (
     schema,
 )
 from cadwyn.exceptions import CadwynError
+from cadwyn_core.schema_generation._versioned_models import _BODY_TYPES
 from tests.conftest import CadwynTestClient, CreateVersionedApp, version_change
 
 
@@ -306,12 +308,58 @@ def test__migrate_response__of_unions_with_members_in_other_order__should_valida
     assert (type(second).__cadwyn_original_model__, second.x) == (_Second, 1)
 
 
+class _Unhashable:
+    __hash__ = None
+
+
 @pytest.mark.parametrize("migrate", [migrate_request, migrate_response])
 def test__migrate_request_and_response__of_unhashable_annotation__should_raise_cadwyn_error(migrate: Any):
-    annotation = Annotated[Union[_User, _Group], {"description": "Unhashable"}]
+    annotation = Annotated[Union[_User, _Group], _Unhashable()]
 
     with pytest.raises(CadwynError, match=r"can only migrate hashable annotations outside of routes"):
         migrate(_get_versions(), annotation, body={"kind": "group", "size": 1}, version="2000-01-01")
+
+
+def test__migrate_request__of_union_with_dict_in_annotated__should_migrate_it():
+    annotation = Annotated[Union[_User, _Group], {"description": "Dicts aren't hashable"}]
+
+    migrated = migrate_request(_get_versions(), annotation, body={"kind": "group", "size": 1}, version="2000-01-01")
+
+    assert migrated.body == _Group(size=12)
+
+
+def test__migrate_request__of_union_written_in_every_call__should_build_what_validates_it_once():
+    versions = _get_versions()
+
+    def migrate():
+        # `Field()` objects are only equal to themselves
+        annotation = Annotated[Union[_User, _Group], Field(discriminator="kind")]
+        return migrate_request(versions, annotation, body={"kind": "group", "size": 1}, version="2000-01-01").body
+
+    migrate()
+    body_types = len(_BODY_TYPES)
+    migrate()
+
+    assert len(_BODY_TYPES) == body_types
+
+
+@pytest.mark.parametrize("migrate", [migrate_request, migrate_response])
+def test__migrate_request_and_response__of_unions_with_equal_literals_of_other_types__should_keep_the_types(
+    migrate: Any,
+):
+    # `Literal[1] == Literal[True]`, but they validate `True` into other values
+    migrate(_get_versions(), Union[_Unchanged, Literal[1]], body=1, version="2000-01-01")
+    migrated = migrate(_get_versions(), Union[_Unchanged, Literal[True]], body=True, version="2000-01-01").body
+
+    assert migrated is True
+
+
+def test__migrate_request__of_union_with_callable__should_migrate_it():
+    migrated = migrate_request(
+        _get_versions(), Union[_Group, Callable[[int], int]], body={"kind": "group", "size": 1}, version="2000-01-01"
+    )
+
+    assert migrated.body == _Group(size=12)
 
 
 def test__migrate_response__of_union__with_object_of_other_model__should_raise_cadwyn_error():

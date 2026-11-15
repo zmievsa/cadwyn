@@ -17,6 +17,7 @@ from typing import (
 
 import pydantic
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 from typing_extensions import TypeVar
 
 from cadwyn_core._utils import UnionType, lenient_issubclass
@@ -255,8 +256,8 @@ def _get_versioned_schema(generator: Union[SchemaGenerator, None], schema: Any) 
     except TypeError:
         # We'd build what validates it on every call and keep it forever in the caches of the plans of bodies
         raise CadwynError(
-            f"Cadwyn can only migrate hashable annotations outside of routes, but {schema!r} isn't hashable, e.g. "
-            "because it has a dict in `Annotated`. Use hashable metadata instead, such as `Field(description=...)`."
+            f"Cadwyn can only migrate hashable annotations outside of routes, but {schema!r} has an unhashable "
+            "object in it. Use hashable objects in it instead."
         ) from None
     if body_type is None:
         annotation = (
@@ -266,15 +267,27 @@ def _get_versioned_schema(generator: Union[SchemaGenerator, None], schema: Any) 
     return body_type
 
 
-def _get_cache_key(annotation: object) -> object:
-    """Return a key of the annotation that keeps the order of the args, e.g. of the members of a union.
+def _get_cache_key(value: object) -> object:
+    """Return a key that is equal only for the annotations that validate alike, and keeps them apart otherwise.
 
-    `Union[A, B] == Union[B, A]`, but validation can give another member for each, if both members accept a body.
+    `Union[A, B] == Union[B, A]`, but validation can give another member for each if both accept a body, and
+    `Literal[1] == Literal[True]`, so the key keeps the order of the args and the types of the values. Pydantic's
+    `FieldInfo` (`Field(...)`) is equal only to itself, so we key it by its attributes, which keeps the key of
+    `Annotated[Union[A, B], Field(discriminator="kind")]` the same when the annotation is written in every call.
     """
-    args = get_args(annotation)
-    if not args:
-        return annotation
-    return get_origin(annotation), tuple(_get_cache_key(arg) for arg in args)
+    if isinstance(value, FieldInfo):
+        attributes = (name for name in value.__slots__ if not name.startswith("_"))
+        return FieldInfo, tuple((name, _get_cache_key(getattr(value, name))) for name in attributes)
+    args = get_args(value)
+    if args:
+        return get_origin(value), _get_cache_key(args)
+    if isinstance(value, list | tuple):
+        return type(value), tuple(_get_cache_key(item) for item in value)
+    if isinstance(value, dict):
+        return dict, tuple((_get_cache_key(key), _get_cache_key(item)) for key, item in value.items())
+    if isinstance(value, set | frozenset):
+        return type(value), frozenset(_get_cache_key(item) for item in value)
+    return type(value), value
 
 
 def _validate(schema: _VersionedSchema, body: Any, *, from_attributes: Union[bool, None]) -> Any:
