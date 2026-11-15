@@ -3,11 +3,12 @@ import inspect
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, NoReturn, TypeAlias, Union, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, Union, cast, overload
 
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
+from cadwyn_core._stand_ins import _HeadersWithoutStarlette, _ResponseWithoutStarlette
 from cadwyn_core._utils import UnionType, _callable_name
 from cadwyn_core.exceptions import CadwynError
 from cadwyn_core.structure.common import _validate_schema_is_versionable
@@ -20,6 +21,13 @@ if TYPE_CHECKING:
     from starlette.datastructures import MutableHeaders, UploadFile
 
     from cadwyn_core._utils import same_method_definition_as_in
+else:
+    from cadwyn_core._stand_ins import (  # For runtime annotation introspection
+        MutableHeaders,
+        Request,
+        Response,
+        UploadFile,
+    )
 
 
 class RequestInfo:
@@ -171,41 +179,6 @@ def _get_standalone_response_info(body: Any, status_code: int, headers: _Headers
     for key, value in starlette_headers.items():
         response.headers.append(key, value)
     return ResponseInfo(response, body)
-
-
-class _HeadersWithoutStarlette:
-    """What migrations get for headers without Starlette: whatever they do with them fails, naming Starlette"""
-
-    __slots__ = ()
-
-    def _fail(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise CadwynError(
-            "A migration has used headers, which need Starlette, and so do the cookies of responses. Install it, "
-            "e.g. with `pip install starlette`."
-        )
-
-    __getitem__ = __setitem__ = __delitem__ = __contains__ = __iter__ = __len__ = __bool__ = _fail
-
-    def __getattr__(self, name: str) -> NoReturn:
-        # Copying and pickling look up special methods, e.g. when a migration copies the request
-        if name.startswith("__"):
-            raise AttributeError(name)
-        self._fail()
-
-
-class _ResponseWithoutStarlette:
-    __slots__ = ("headers", "status_code")
-
-    def __init__(self, status_code: int) -> None:
-        super().__init__()
-        self.status_code = status_code
-        self.headers = _HeadersWithoutStarlette()
-
-    def set_cookie(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self.headers._fail()
-
-    def delete_cookie(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self.headers._fail()
 
 
 def _get_items_of_headers(headers: "MutableHeaders") -> Union[list[tuple[str, str]], None]:

@@ -7,7 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-- `cadwyn` now installs `cadwyn-core` in the same version, a new package with Cadwyn's versioning that only needs Pydantic. Install it on its own to use versions, version changes, data migrations, and versioned models without FastAPI and Starlette, importing them from `cadwyn_core`; see [Without FastAPI](https://github.com/zmievsa/cadwyn/blob/main/docs/how_to/migrate_data_outside_of_routes.md#without-fastapi). `cadwyn` and `cadwyn_core` fail at import, naming both versions, if their versions differ or `cadwyn-core` is missing ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
+- `cadwyn` now installs `cadwyn-core` in the same version, a new package with Cadwyn's versioning that only needs Pydantic. Install it on its own to use versions, version changes, data migrations, and versioned models without FastAPI and Starlette, importing them from `cadwyn_core`; see [Without FastAPI](https://github.com/zmievsa/cadwyn/blob/main/docs/how_to/migrate_data_outside_of_routes.md#without-fastapi). `cadwyn` and `cadwyn_core` fail at import, naming both versions, if their versions differ or `cadwyn-core` is missing. Runtime annotation introspection, such as `typing.get_type_hints()`, works on everything in `cadwyn_core` with or without FastAPI and Starlette: its annotations name Starlette's classes when Starlette is installed, the classes of the objects that Cadwyn gives instead of them without it, and stand-ins for FastAPI's classes until `cadwyn` is imported ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 - `migrate_request()` and `migrate_response()` migrate requests and responses outside of routes, e.g. for webhooks, messages in queues, or APIs that aren't built with FastAPI. They run the same migrations by schema as routes and do what routes do around them, take and return the body, the headers, the cookies, and the query params or the status code, and return them in the new `MigratedRequest` and `MigratedResponse`. They also migrate between two older versions with `to_version` and `from_version`. They run the migrations in the client's version, as routes do, and raise a `CadwynError` for model objects of other versions instead of migrating their data again. The new "Migrate data outside of routes" how-to guide shows how to move from `migrate_response_body()`, which works as before ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 
 ### Changed
@@ -21,6 +21,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
+- `typing.get_type_hints()` works on `schema(...).field(...).had()` and `FieldChanges` instead of raising a `NameError`.
 - `CadwynHeadRequestValidationError` can be unpickled, e.g. when a worker process raises it, instead of failing with a `TypeError`.
 - The docs now say that `migrate_response_body()` takes plain data, because objects of the HEAD models can fail in it ([#651](https://github.com/zmievsa/cadwyn/issues/651)).
 - The docs no longer claim that `migrate_response_body()` runs migrations by path. It runs only the migrations by schema of the model you pass.

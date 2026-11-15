@@ -29,6 +29,8 @@ from ._migrations import _migrate_response
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
+else:
+    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001 # For runtime annotation introspection
 
 
 class VersionBundle:

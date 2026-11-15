@@ -10,21 +10,26 @@ from collections.abc import Callable
 from decimal import Decimal
 from enum import Enum, Flag
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeAlias, TypeVar, Union
 
 import annotated_types
 import pydantic
-from pydantic._internal._decorators import DecoratedType, unwrap_wrapped_function
-from typing_extensions import ParamSpec, override
+from pydantic._internal._decorators import unwrap_wrapped_function
+from typing_extensions import ParamSpec, TypeIs, override
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
-    from typing_extensions import TypeIs
 
 Sentinel: Any = object()
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+# Pydantic's `DecoratedType`, which is only a string at runtime
+if TYPE_CHECKING:
+    DecoratedType: TypeAlias = Union[classmethod[Any, Any, _R], staticmethod[Any, _R], Callable[..., _R], property]
+else:
+    # Before Python 3.14, `classmethod` and `staticmethod` can't be subscripted at runtime
+    DecoratedType = Union[classmethod, staticmethod, Callable[..., _R], property]
 _SourceSelf = TypeVar("_SourceSelf")
 
 

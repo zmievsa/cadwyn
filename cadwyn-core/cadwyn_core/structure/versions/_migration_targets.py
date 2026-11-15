@@ -28,6 +28,8 @@ from cadwyn_core.exceptions import (
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
+else:
+    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001 # For runtime annotation introspection
 
 
 def _get_schema_migration_key(annotation: object) -> object:

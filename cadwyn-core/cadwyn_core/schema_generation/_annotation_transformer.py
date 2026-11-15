@@ -95,9 +95,9 @@ from ._generics import (
 )
 
 if TYPE_CHECKING:
-    import fastapi.params
-    import fastapi.routing
-    import fastapi.security.base
+    from fastapi.params import Depends
+    from fastapi.routing import APIRoute, APIRouter
+    from fastapi.security.base import SecurityBase
 
     from ._references import (
         _BareGenericCopier,
@@ -106,6 +106,13 @@ if TYPE_CHECKING:
     from ._schema_generator import (
         SchemaGenerator,
     )
+else:
+    from cadwyn_core._stand_ins import (  # noqa: TC001 # For runtime annotation introspection
+        APIRoute,
+        APIRouter,
+        Depends,
+        SecurityBase,
+    )
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 
@@ -113,12 +120,12 @@ _Call = TypeVar("_Call", bound=Callable[..., Any])
 # Versioning works without FastAPI, so we only look for FastAPI's classes in annotations once FastAPI has imported
 # them. Their objects can't exist before that.
 # A module that is still being imported might not have defined the class yet.
-def _get_fastapi_depends_classes() -> "tuple[type[fastapi.params.Depends], ...]":
+def _get_fastapi_depends_classes() -> "tuple[type[Depends], ...]":
     depends = getattr(sys.modules.get("fastapi.params"), "Depends", None)
     return () if depends is None else (depends,)
 
 
-def _get_fastapi_security_base_classes() -> "tuple[type[fastapi.security.base.SecurityBase], ...]":
+def _get_fastapi_security_base_classes() -> "tuple[type[SecurityBase], ...]":
     security_base = getattr(sys.modules.get("fastapi.security.base"), "SecurityBase", None)
     return () if security_base is None else (security_base,)
 
@@ -299,7 +306,7 @@ class _AnnotationTransformer:
         finally:
             self._locations.pop()
 
-    def migrate_router_to_version(self, router: "fastapi.routing.APIRouter"):
+    def migrate_router_to_version(self, router: "APIRouter"):
         # Only route generation versions routes, so FastAPI is there
         import fastapi.routing
 
@@ -308,7 +315,7 @@ class _AnnotationTransformer:
                 continue
             self.migrate_route_to_version(route)
 
-    def migrate_route_to_version(self, route: "fastapi.routing.APIRoute", *, ignore_response_model: bool = False):
+    def migrate_route_to_version(self, route: "APIRoute", *, ignore_response_model: bool = False):
         import fastapi.routing
         import fastapi.utils
 
@@ -329,7 +336,7 @@ class _AnnotationTransformer:
             self.migrate_route_to_version(callback, ignore_response_model=ignore_response_model)
         self._remake_endpoint_dependencies(route)
 
-    def record_route(self, route: "fastapi.routing.APIRoute") -> None:
+    def record_route(self, route: "APIRoute") -> None:
         """Request the models that migrate_route_to_version requests without changing the route (record-only)"""
         records_routes = self._records_routes
         self._records_routes = True
@@ -347,7 +354,7 @@ class _AnnotationTransformer:
         finally:
             self._records_routes = records_routes
 
-    def _record_route(self, route: "fastapi.routing.APIRoute") -> None:
+    def _record_route(self, route: "APIRoute") -> None:
         import fastapi.routing
 
         if route.response_model is not None:
@@ -893,7 +900,7 @@ class _AnnotationTransformer:
         return bool(set(parameters).intersection(annotation.__pydantic_generic_metadata__["parameters"]))
 
     @classmethod
-    def _remake_endpoint_dependencies(cls, route: "fastapi.routing.APIRoute") -> None:
+    def _remake_endpoint_dependencies(cls, route: "APIRoute") -> None:
         import fastapi.routing
 
         # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
