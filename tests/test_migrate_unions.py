@@ -357,21 +357,13 @@ def test__migrate_response__of_union__with_object_of_other_model__should_raise_c
         migrate_response(_get_versions(), Union[_User, _Group], body=_Unchanged(), version="2000-01-01")
 
 
-@pytest.mark.parametrize("migrate", [migrate_request, migrate_response])
-@pytest.mark.parametrize(
-    "annotation",
-    [
-        pytest.param(Optional[list[_Group]], id="optional_list"),
-        pytest.param(Union[_User, list[_Group]], id="list"),
-        pytest.param(Union[_User, dict[str, _Group]], id="dict"),
-        pytest.param(Union[_User, Annotated[Union[_Group, list[_Group]], "Nested"]], id="nested_union"),
-    ],
-)
-def test__migrate_request_and_response__of_union_with_models_in_member__should_raise_cadwyn_error(
-    migrate: Any, annotation: Any
-):
-    with pytest.raises(CadwynError, match=r"because migrations by schema don't run for the models in its member"):
-        migrate(_get_versions(), annotation, body=None, version="2000-01-01")
+def test__migrate_request__of_union_with_list_of_models__should_not_migrate_the_models_in_it_as_routes_do():
+    # Migrations by schema don't run for models nested in other annotations, such as a list member of a union
+    migrated = migrate_request(
+        _get_versions(), Union[_User, list[_Group]], body=[{"kind": "group", "size": 1}], version="2000-01-01"
+    )
+
+    assert migrated.body == [_Group(size=1)]
 
 
 @pytest.mark.parametrize("migrate", [migrate_request, migrate_response])

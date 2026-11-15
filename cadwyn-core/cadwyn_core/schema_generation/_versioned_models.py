@@ -10,7 +10,6 @@ from typing import (
     Any,
     TypeAlias,
     Union,
-    get_args,
     overload,
 )
 
@@ -420,33 +419,10 @@ def _is_newer(versions: "VersionBundle", version: VersionType, than: VersionType
 
 
 def _check_that_it_is_a_schema(schema: object, function_name: str) -> None:
-    """Fail for the schemas that migrations aren't for, such as `list[A]`, instead of running none of them"""
+    """Fail for the schemas that no migration is for, such as `list[A]`, instead of running none of them"""
     resolved = _resolve_type_aliases(schema)
-    if lenient_issubclass(resolved, BaseModel):
-        return
-    if not isinstance(resolved, UnionType):
+    if not lenient_issubclass(resolved, BaseModel) and not isinstance(resolved, UnionType):
         raise CadwynError(f"`{function_name}()` takes a Pydantic model or a union of them, not {schema!r}.")
-    for member in _get_flat_union_members(resolved):
-        if not lenient_issubclass(member, BaseModel) and _has_models(member):
-            raise CadwynError(
-                f"`{function_name}()` takes a Pydantic model or a union of them, not {schema!r}, because migrations "
-                f"by schema don't run for the models in its member {member!r}."
-            )
-
-
-def _get_flat_union_members(union: object) -> "collections.abc.Iterator[object]":
-    for arg in get_args(union):
-        member = _resolve_type_aliases(arg)
-        if isinstance(member, UnionType):
-            yield from _get_flat_union_members(member)
-        else:
-            yield member
-
-
-def _has_models(annotation: object) -> bool:
-    """Whether the annotation has models in it, e.g. in `list[A]` or `dict[str, A]`"""
-    annotation = _resolve_type_aliases(annotation)
-    return lenient_issubclass(annotation, BaseModel) or any(_has_models(arg) for arg in get_args(annotation))
 
 
 def _get_union_member_of_response_body(
