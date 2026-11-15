@@ -4,4 +4,4 @@ The parts of [Cadwyn](https://github.com/zmievsa/cadwyn) that work without FastA
 
 It only needs Pydantic. Import everything from `cadwyn_core`, and the errors from `cadwyn_core.exceptions`. [Without FastAPI](https://docs.cadwyn.dev/how_to/migrate_data_outside_of_routes/#without-fastapi) shows how to use it.
 
-Install `cadwyn` to version a FastAPI app. It installs the same version of `cadwyn-core` and exports the same objects.
+Install `cadwyn` to version a FastAPI app. It installs the same version of `cadwyn-core` and exports the same objects, with `SchemaGenerator` in `cadwyn.schema_generation` and the errors in `cadwyn.exceptions`.

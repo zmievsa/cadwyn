@@ -59,6 +59,6 @@ Import everything from `cadwyn_core` instead of `cadwyn`, and the errors from `c
 {! ./docs_src/how_to/migrate_data_outside_of_routes/block004.py !}
 ```
 
-`cadwyn` installs `cadwyn-core` in the same version and exports the same objects, so version changes that import from `cadwyn_core` work in a FastAPI app too. `migrate_response_body()` is only in `cadwyn`: use `migrate_response()` instead.
+`cadwyn` installs `cadwyn-core` in the same version and exports the same objects, with `SchemaGenerator` in `cadwyn.schema_generation` and the errors in `cadwyn.exceptions`, so version changes that import from `cadwyn_core` work in a FastAPI app too. `migrate_response_body()` is only in `cadwyn`: use `migrate_response()` instead.
 
 Headers need Starlette. Without it, the results have `headers=None`, and `migrate_request()` and `migrate_response()` raise `CadwynError` if you pass headers or a migration uses them.

@@ -1,6 +1,7 @@
 """Cadwyn's versioning without FastAPI: versions, version changes, data migrations, and versioned models.
 
-Everything importable from here and from `cadwyn_core.exceptions` is public. `cadwyn` exports the same objects.
+Everything importable from here and from `cadwyn_core.exceptions` is public. `cadwyn` exports the same objects, with
+`SchemaGenerator` in `cadwyn.schema_generation` and the errors in `cadwyn.exceptions`.
 """
 
 import importlib.metadata
