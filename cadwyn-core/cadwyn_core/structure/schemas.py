@@ -1,4 +1,5 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MethodType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union, cast
@@ -19,6 +20,16 @@ from .common import _validate_schema_is_versionable
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
+else:
+    # What they are in Pydantic 1, which had them
+    AbstractSetIntStr = AbstractSet[Union[int, str]]
+    MappingIntStrAny = Mapping[Union[int, str], Any]
+
+# Before Python 3.14, `classmethod` can't be subscripted at runtime
+if TYPE_CHECKING:
+    _AnyClassMethod: TypeAlias = classmethod[Any, Any, Any]
+else:
+    _AnyClassMethod = classmethod
 
 
 PossibleFieldAttributes = Literal[
@@ -417,7 +428,7 @@ class AlterSchemaInstructionFactory:
 
     def validator(
         self,
-        func: "Union[str, Callable[..., Any], classmethod[Any, Any, Any], PydanticDescriptorProxy[_ValidatorReturnT]]",
+        func: "Union[str, Callable[..., Any], _AnyClassMethod, PydanticDescriptorProxy[_ValidatorReturnT]]",
         /,
     ) -> AlterValidatorInstructionFactory:
         if isinstance(func, str):

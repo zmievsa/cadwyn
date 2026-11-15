@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 
     from ._bundle import VersionBundle
+else:
+    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001 # For runtime annotation introspection
 
 
 class _Uploads(Protocol):

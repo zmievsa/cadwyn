@@ -80,7 +80,9 @@ from ._schema_generator import (
 )
 
 if TYPE_CHECKING:
-    import fastapi.routing
+    from fastapi.routing import APIRouter
+else:
+    from cadwyn_core._stand_ins import APIRouter  # noqa: TC001 # For runtime annotation introspection
 
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -454,7 +456,7 @@ def _get_version_to_migrate(versions: "VersionBundle", version: Union[VersionTyp
     return version
 
 
-def get_models_that_routes_request(routers: "collections.abc.Iterable[fastapi.routing.APIRouter]") -> set[type[Any]]:
+def get_models_that_routes_request(routers: "collections.abc.Iterable[APIRouter]") -> set[type[Any]]:
     """Return the models that versioning the routes of the routers requests from a generator directly"""
     # Only route generation versions routes, so FastAPI is there
     import fastapi.routing

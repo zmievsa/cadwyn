@@ -19,6 +19,12 @@ if TYPE_CHECKING:
     from fastapi._compat import ModelField
     from fastapi.dependencies.models import Dependant
     from fastapi.routing import APIRoute
+else:
+    from cadwyn_core._stand_ins import (  # noqa: TC001 # For runtime annotation introspection
+        APIRoute,
+        Dependant,
+        ModelField,
+    )
 
 
 def _can_lazy_items_be_plain_enum_copies(route: "APIRoute") -> bool:

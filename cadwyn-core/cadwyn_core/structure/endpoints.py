@@ -8,6 +8,13 @@ if TYPE_CHECKING:
     from fastapi.params import Depends
     from fastapi.routing import APIRoute
     from starlette.routing import BaseRoute
+else:
+    from cadwyn_core._stand_ins import (  # noqa: TC001 # For runtime annotation introspection
+        APIRoute,
+        BaseRoute,
+        Depends,
+        Response,
+    )
 
 from cadwyn_core._utils import DATACLASS_SLOTS, Sentinel
 from cadwyn_core.exceptions import LintingError

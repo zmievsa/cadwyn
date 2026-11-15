@@ -25,6 +25,8 @@ from cadwyn_core.structure.versions._common import (
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
+else:
+    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001 # For runtime annotation introspection
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:

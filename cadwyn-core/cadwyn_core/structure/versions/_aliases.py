@@ -44,6 +44,8 @@ from ._migration_targets import _get_schema_migration_key
 
 if TYPE_CHECKING:
     from fastapi._compat import ModelField
+else:
+    from cadwyn_core._stand_ins import ModelField  # noqa: TC001 # For runtime annotation introspection
 
 # Whether the last restoration renamed a key without which the data surely fails validation
 _RESTORATION = threading.local()
