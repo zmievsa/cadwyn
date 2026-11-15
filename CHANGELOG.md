@@ -5,6 +5,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [9.1.0rc1]
+
 ### Added
 
 - `cadwyn` now installs `cadwyn-core` in the same version, a new package with Cadwyn's versioning that only needs Pydantic. Install it on its own to use versions, version changes, data migrations, and versioned models without FastAPI and Starlette, importing them from `cadwyn_core`; see [Without FastAPI](https://github.com/zmievsa/cadwyn/blob/main/docs/how_to/migrate_data_outside_of_routes.md#without-fastapi). `cadwyn` and `cadwyn_core` fail at import, naming both versions, if their versions differ or `cadwyn-core` is missing. Runtime annotation introspection, such as `typing.get_type_hints()`, works on everything in `cadwyn_core` with or without FastAPI and Starlette: its annotations name Starlette's classes when Starlette is installed, the classes of the objects that Cadwyn gives instead of them without it, and stand-ins for FastAPI's classes until `cadwyn` is imported ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
