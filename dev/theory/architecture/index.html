@@ -2044,7 +2044,7 @@
 </tr>
 <tr>
 <td><code>cadwyn-core/</code></td>
-<td><code>cadwyn-core</code>, the package of Cadwyn's versioning without FastAPI, which <code>cadwyn</code> depends on in exactly the same version (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>). It has <code>structure/</code> and <code>schema_generation/</code> (above), <code>exceptions.py</code> with the errors that they raise, <code>_utils.py</code> with helpers, and <code>_asts.py</code>, which renders values as code and inspects annotations. <code>__init__.py</code> exports its public API. It must not import <code>cadwyn</code>, and <code>cadwyn-core/tests/</code>, which the <code>standalone</code> tox environment runs, check that it works when it's installed on its own.</td>
+<td><code>cadwyn-core</code>, the package of Cadwyn's versioning without FastAPI, which <code>cadwyn</code> depends on in exactly the same version (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>). It has <code>structure/</code> and <code>schema_generation/</code> (above), <code>exceptions.py</code> with the errors that they raise, <code>_utils.py</code> with helpers, <code>_asts.py</code>, which renders values as code and inspects annotations, and <code>_stand_ins.py</code>, which gives its modules the classes of Starlette and FastAPI that their annotations name, so that <code>typing.get_type_hints()</code> can resolve them: Starlette's classes if it's installed, the classes of what Cadwyn gives instead of their objects or stand-ins without it, and stand-ins for FastAPI's. <code>__init__.py</code> exports its public API. It must not import <code>cadwyn</code>, and <code>cadwyn-core/tests/</code>, which the <code>standalone</code> tox environment runs, check that it works when it's installed on its own.</td>
 </tr>
 <tr>
 <td><code>cadwyn/_utils.py</code>, <code>cadwyn/_asts.py</code>, <code>cadwyn/structure/</code>, <code>cadwyn/schema_generation/</code></td>
@@ -2056,7 +2056,7 @@
 </tr>
 <tr>
 <td><code>cadwyn/_internal/fastapi_bindings.py</code></td>
-<td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: the modules of <code>cadwyn_core</code>. It binds the FastAPI names in their annotations, registers FastAPI's classes that they recognize in annotations and attributes, and imports the submodules of <code>cadwyn.structure.versions</code> that migrate requests and responses in routes. <code>tests/test_imports_without_fastapi.py</code> checks that the others work without FastAPI.</td>
+<td>What the FastAPI integration gives the modules that standalone use will be built from (<a href="https://github.com/zmievsa/cadwyn/issues/203">#203</a>), which don't import FastAPI: the modules of <code>cadwyn_core</code>. It replaces the stand-ins for FastAPI's classes in their annotations with FastAPI's classes, gives <code>ResponseInfo.set_cookie()</code> and <code>delete_cookie()</code> the signatures of Starlette's, and imports the submodules of <code>cadwyn.structure.versions</code> that migrate requests and responses in routes. <code>tests/test_imports_without_fastapi.py</code> checks that the others work without FastAPI.</td>
 </tr>
 <tr>
 <td><code>cadwyn/__main__.py</code>, <code>_render.py</code></td>
