@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from cadwyn import VersionedAPIRouter, schema
 from cadwyn.exceptions import InvalidGenerationInstructionError
-from cadwyn.structure.schemas import PossibleFieldAttributes
+from cadwyn_core.structure.schemas import PossibleFieldAttributes
 from tests.conftest import (
     CreateRuntimeSchemas,
     CreateVersionedClients,

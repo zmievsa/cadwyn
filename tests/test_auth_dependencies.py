@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Security
 from fastapi.testclient import TestClient
 
 from cadwyn.applications import Cadwyn
-from cadwyn.structure.versions import Version, VersionBundle
+from cadwyn_core.structure.versions import Version, VersionBundle
 
 
 class ScarySecurity:

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from cadwyn import Cadwyn, ResponseInfo, VersionChange, convert_response_to_previous_version_for, schema
-from cadwyn.structure.versions import Version, VersionBundle, VersionType
+from cadwyn_core.structure.versions import Version, VersionBundle, VersionType
 from tests._resources.versioned_app.webhooks import router as unversioned_router
 
 versioned_router = APIRouter(prefix="/v1")

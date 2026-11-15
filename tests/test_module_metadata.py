@@ -1,6 +1,7 @@
 """`cadwyn/structure/versions.py` and `cadwyn/schema_generation.py` were split into packages of private submodules.
 
-Their objects must still report the old modules in error messages, reprs, pickles, and documentation tools.
+Their objects must still report the old modules in error messages, reprs, pickles, and documentation tools, except the
+ones that moved to cadwyn-core, which report the same module there.
 """
 
 import enum
@@ -14,10 +15,13 @@ from typing import Any, ParamSpec, TypeVar, Union
 
 import pytest
 
+import cadwyn_core.structure.versions
 from cadwyn_core._utils import classproperty
 
-_SPLIT_MODULES = ("cadwyn.schema_generation", "cadwyn.structure.versions")
-_PRIVATE_SUBMODULE_OF_SPLIT_MODULE = re.compile(r"^cadwyn\.(schema_generation|structure\.versions)\._")
+_SPLIT_MODULES = ("cadwyn.schema_generation", "cadwyn.structure.versions", "cadwyn_core.structure.versions")
+_PRIVATE_SUBMODULE_OF_SPLIT_MODULE = re.compile(r"^cadwyn(_core)?\.(schema_generation|structure\.versions)\._")
+# They moved to cadwyn-core whole. Of `cadwyn.structure.versions`, only the objects that work without FastAPI moved.
+_MOVED_MODULES = {f"cadwyn.structure.{name}" for name in ("common", "data", "endpoints", "enums", "schemas")}
 
 # `__module__` and `__qualname__` of the objects defined in the split modules, and of everything that
 # `cadwyn` and `cadwyn.structure` exported, generated from commit 63e8609^, the last one before the splits.
@@ -471,6 +475,17 @@ def _module_and_qualname(value: Any) -> tuple[str, Union[str, None]]:
     return value.__module__, getattr(value, "__qualname__", None)
 
 
+def _get_metadata_after_move_to_cadwyn_core(
+    name: str, metadata: tuple[str, Union[str, None]]
+) -> tuple[str, Union[str, None]]:
+    module, qualname = metadata
+    if module in _MOVED_MODULES or (
+        module == "cadwyn.structure.versions" and hasattr(cadwyn_core.structure.versions, name)
+    ):
+        return module.replace("cadwyn.", "cadwyn_core.", 1), qualname
+    return metadata
+
+
 def _is_definition(value: object) -> bool:
     return isinstance(value, type | FunctionType | TypeVar | ParamSpec) or isinstance(
         getattr(value, "__wrapped__", None), FunctionType
@@ -479,7 +494,11 @@ def _is_definition(value: object) -> bool:
 
 def _cadwyn_definitions(module: ModuleType) -> Iterator[tuple[str, Any]]:
     for name, value in vars(module).items():
-        if not name.startswith("__") and _is_definition(value) and (value.__module__ or "").startswith("cadwyn."):
+        if (
+            not name.startswith("__")
+            and _is_definition(value)
+            and (value.__module__ or "").startswith(("cadwyn.", "cadwyn_core."))
+        ):
             yield name, value
 
 
@@ -498,7 +517,10 @@ def _methods(cls: type) -> Iterator[Any]:
 @pytest.mark.parametrize("module_name", list(_PRE_SPLIT_METADATA))
 def test__module_and_qualname__of_names_importable_before_split__should_stay_the_same(module_name: str):
     module = importlib.import_module(module_name)
-    expected = _PRE_SPLIT_METADATA[module_name]
+    expected = {
+        name: _get_metadata_after_move_to_cadwyn_core(name, metadata)
+        for name, metadata in _PRE_SPLIT_METADATA[module_name].items()
+    }
 
     actual = {name: _module_and_qualname(getattr(module, name)) for name in expected if hasattr(module, name)}
 
@@ -517,7 +539,10 @@ def test__module_and_qualname__of_every_importable_definition__should_point_to_t
 
 @pytest.mark.parametrize(
     ("module_name", "moved_method"),
-    [("cadwyn.schema_generation", "SchemaGenerator.__init__"), ("cadwyn.structure.versions", "VersionBundle.__init__")],
+    [
+        ("cadwyn.schema_generation", "SchemaGenerator.__init__"),
+        ("cadwyn_core.structure.versions", "VersionBundle.__init__"),
+    ],
 )
 def test__module__of_methods_of_classes_in_split_modules__should_not_name_private_submodules(
     module_name: str, moved_method: str

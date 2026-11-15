@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 from cadwyn import Cadwyn, VersionChange, endpoint
 from cadwyn.exceptions import CadwynError
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
+from cadwyn_core.structure.versions import HeadVersion, Version, VersionBundle
 from tests._resources.app_for_testing_routing import mixed_hosts_app
 
 if TYPE_CHECKING:

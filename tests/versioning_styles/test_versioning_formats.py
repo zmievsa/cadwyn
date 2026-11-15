@@ -5,9 +5,9 @@ from pydantic import Field
 
 from cadwyn.exceptions import CadwynError
 from cadwyn.schema_generation import migrate_response_body
-from cadwyn.structure.data import ResponseInfo, convert_response_to_previous_version_for
-from cadwyn.structure.schemas import schema
-from cadwyn.structure.versions import Version, VersionBundle
+from cadwyn_core.structure.data import ResponseInfo, convert_response_to_previous_version_for
+from cadwyn_core.structure.schemas import schema
+from cadwyn_core.structure.versions import Version, VersionBundle
 from tests.conftest import version_change
 from tests.test_data_migrations import EmptySchema
 

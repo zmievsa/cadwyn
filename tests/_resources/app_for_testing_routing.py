@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse, Response
 
 from cadwyn import Cadwyn
-from cadwyn.structure.versions import Version, VersionBundle
+from cadwyn_core.structure.versions import Version, VersionBundle
 
 router = APIRouter(prefix="/v1")
 

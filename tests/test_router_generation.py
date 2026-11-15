@@ -93,11 +93,11 @@ from cadwyn.exceptions import (
 from cadwyn.route_generation import copy_route, generate_versioned_routers
 from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.schema_generation._annotation_evaluation import _UNRESOLVED, _get_value_of_type_alias_with_args
-from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
-from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
-from cadwyn.structure.enums import enum
-from cadwyn.structure.versions import HeadVersion, VersionChange
 from cadwyn_core._utils import _callable_name
+from cadwyn_core.structure import Version, convert_request_to_next_version_for, endpoint, schema
+from cadwyn_core.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
+from cadwyn_core.structure.enums import enum
+from cadwyn_core.structure.versions import HeadVersion, VersionChange
 from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, MappedModel, ModelFields
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1

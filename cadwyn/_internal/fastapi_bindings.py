@@ -14,22 +14,15 @@ from fastapi.routing import APIRoute, APIWebSocketRoute
 from starlette.datastructures import MutableHeaders, UploadFile
 from starlette.routing import BaseRoute
 
+import cadwyn_core.structure.versions
 from cadwyn import exceptions
+from cadwyn._internal.old_names import keep_names_of_moved_package
 from cadwyn.schema_generation import _annotation_transformer, _callables, _versioned_models
-from cadwyn.structure import data, endpoints
-from cadwyn.structure.versions import (
-    _aliases,
-    _bundle,
-    _enums,
-    _json,
-    _migration_targets,
-    _migrations,
-    _requests,
-    _responses,
-    _versioned_endpoints,
-)
+from cadwyn.structure.versions import _requests, _responses, _versioned_endpoints
 from cadwyn_core import _utils
 from cadwyn_core._utils import present_private_submodules_as_package
+from cadwyn_core.structure import data, endpoints
+from cadwyn_core.structure.versions import _aliases, _bundle, _enums, _json, _migration_targets, _migrations
 
 exceptions.APIRoute = APIRoute
 exceptions.APIWebSocketRoute = APIWebSocketRoute
@@ -67,5 +60,9 @@ _versioned_models.fastapi = fastapi  # ty: ignore[invalid-assignment]
 _requests.VersionBundle = _bundle.VersionBundle
 _responses.VersionBundle = _bundle.VersionBundle
 _versioned_endpoints.VersionBundle = _bundle.VersionBundle
+# The FastAPI names that are bound above are in the namespaces of the packages too, where
+# `typing.get_type_hints()` looks for the objects that report the package as their module
+present_private_submodules_as_package("cadwyn_core.structure.versions")
+keep_names_of_moved_package("cadwyn.structure.versions", cadwyn_core.structure.versions)
 # `cadwyn.structure.versions` used to be a single module, which had their objects too
 present_private_submodules_as_package("cadwyn.structure.versions")

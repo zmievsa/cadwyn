@@ -26,7 +26,8 @@ from fastapi.dependencies.utils import get_validation_alias
 from fastapi.routing import APIRoute
 from starlette.datastructures import FormData, UploadFile
 
-from ._common import _logger
+from cadwyn_core.structure.versions._common import _logger
+
 from ._dependencies import _get_dependency_overrides, _iter_dependencies
 
 

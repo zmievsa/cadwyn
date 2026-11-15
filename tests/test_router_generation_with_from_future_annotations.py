@@ -32,10 +32,10 @@ from typing_extensions import override
 
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.structure.data import RequestInfo, convert_request_to_next_version_for
-from cadwyn.structure.enums import enum
-from cadwyn.structure.schemas import schema
-from cadwyn.structure.versions import Version, VersionBundle, VersionChange
+from cadwyn_core.structure.data import RequestInfo, convert_request_to_next_version_for
+from cadwyn_core.structure.enums import enum
+from cadwyn_core.structure.schemas import schema
+from cadwyn_core.structure.versions import Version, VersionBundle, VersionChange
 from tests._data import postponed_annotations_dependencies as other_module
 from tests.conftest import version_change
 

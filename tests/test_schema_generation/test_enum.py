@@ -34,7 +34,7 @@ from cadwyn.exceptions import (
     SchemaGenerationError,
 )
 from cadwyn.schema_generation import generate_versioned_models
-from cadwyn.structure import enum
+from cadwyn_core.structure import enum
 from tests.conftest import CreateRuntimeSchemas, serialize_enum, version_change
 
 

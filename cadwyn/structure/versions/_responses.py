@@ -19,23 +19,22 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette._utils import is_async_callable
 
-from cadwyn.structure.common import Endpoint
-from cadwyn.structure.data import (
+from cadwyn_core.exceptions import CadwynError
+from cadwyn_core.structure.common import Endpoint
+from cadwyn_core.structure.data import (
     ResponseInfo,
 )
-from cadwyn_core.exceptions import CadwynError
-
-from ._aliases import _rescue_body
-from ._common import _CADWYN_RESPONSE_PARAM_NAME
-from ._migration_targets import (
+from cadwyn_core.structure.versions._aliases import _rescue_body
+from cadwyn_core.structure.versions._common import _CADWYN_RESPONSE_PARAM_NAME
+from cadwyn_core.structure.versions._migration_targets import (
     _get_closest_union_member,
     _no_union_member,
     _SchemaMigrationTarget,
 )
-from ._migrations import _keep_restored_dumps_of_head_models, _prepare_response_content
+from cadwyn_core.structure.versions._migrations import _keep_restored_dumps_of_head_models, _prepare_response_content
 
 if TYPE_CHECKING:
-    from ._bundle import VersionBundle
+    from cadwyn_core.structure.versions._bundle import VersionBundle
 
 
 def _rescue_response(response_field: ModelField, head_response_model: object, content: Any, data: Any) -> Any:

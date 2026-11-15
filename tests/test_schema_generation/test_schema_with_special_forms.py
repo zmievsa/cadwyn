@@ -8,7 +8,7 @@ import typing_extensions
 from pydantic import BaseModel, create_model
 
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.structure.schemas import schema
+from cadwyn_core.structure.schemas import schema
 from tests.conftest import CreateRuntimeSchemas, CreateVersionedClients, version_change
 
 # Pydantic treats `Final` with a default as a class variable, and warns that it will become a field in pydantic v3

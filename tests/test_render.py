@@ -18,7 +18,7 @@ from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
 from cadwyn.exceptions import CadwynRenderError, ImportFromStringError
 from cadwyn.schema_generation import generate_versioned_models
-from cadwyn.structure.versions import Version, VersionBundle
+from cadwyn_core.structure.versions import Version, VersionBundle
 from tests._resources.render.config_helpers import add_legacy_marker
 from tests.conftest import version_change
 from tests.test_cli import code

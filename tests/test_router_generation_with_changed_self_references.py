@@ -41,8 +41,8 @@ from cadwyn import (
     migrate_response_body,
 )
 from cadwyn.exceptions import CadwynError, SchemaGenerationError
-from cadwyn.structure.enums import enum
-from cadwyn.structure.schemas import schema
+from cadwyn_core.structure.enums import enum
+from cadwyn_core.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
 
 if TYPE_CHECKING:

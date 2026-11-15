@@ -30,9 +30,9 @@ from cadwyn.middleware import (
     URLVersionManager,
     _match_key,
 )
-from cadwyn.structure.common import VersionType
 from cadwyn.structure.versions._uploads import _UPLOAD_CLOSE_TIMEOUT_SECONDS
 from cadwyn_core._utils import same_method_definition_as_in
+from cadwyn_core.structure.common import VersionType
 
 _logger = getLogger(__name__)
 _DATE_ADAPTER = TypeAdapter(date)

@@ -12,7 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 from cadwyn import Cadwyn, Version, VersionBundle, VersionedAPIRouter, endpoint
 from cadwyn.exceptions import LintingError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
-from cadwyn.structure.data import convert_request_to_next_version_for, convert_response_to_previous_version_for
+from cadwyn_core.structure.data import convert_request_to_next_version_for, convert_response_to_previous_version_for
 from tests.conftest import version_change
 
 

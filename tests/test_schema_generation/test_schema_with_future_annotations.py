@@ -10,7 +10,7 @@ from pydantic import BaseModel, WithJsonSchema
 from pydantic.warnings import PydanticDeprecatedSince211
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
-from cadwyn.structure.schemas import schema
+from cadwyn_core.structure.schemas import schema
 from tests.conftest import CreateRuntimeSchemas, assert_models_are_equal, version_change
 
 Foo: TypeAlias = int

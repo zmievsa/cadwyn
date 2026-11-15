@@ -16,8 +16,10 @@ import pydantic
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
-from cadwyn.structure.common import VersionType
-from cadwyn.structure.data import (
+from cadwyn_core._utils import lenient_issubclass
+from cadwyn_core.exceptions import CadwynError, CadwynHeadRequestValidationError
+from cadwyn_core.structure.common import VersionType
+from cadwyn_core.structure.data import (
     MigratedRequest,
     MigratedResponse,
     ResponseInfo,
@@ -25,32 +27,30 @@ from cadwyn.structure.data import (
     _get_standalone_request_info,
     _get_standalone_response_info,
 )
-from cadwyn.structure.schemas import (
+from cadwyn_core.structure.schemas import (
     SchemaHadInstruction,
 )
-from cadwyn.structure.versions import (  # noqa: TC001 # Needed by runtime annotation introspection.
+from cadwyn_core.structure.versions import (  # noqa: TC001 # Needed by runtime annotation introspection.
     HeadVersion,
     Version,
     VersionBundle,
 )
-from cadwyn.structure.versions._aliases import _rescue_model_data
-from cadwyn.structure.versions._enums import _get_lazy_item_walker, _to_head_values
-from cadwyn.structure.versions._json import (
+from cadwyn_core.structure.versions._aliases import _rescue_model_data
+from cadwyn_core.structure.versions._enums import _get_lazy_item_walker, _to_head_values
+from cadwyn_core.structure.versions._json import (
     _ClientJsonStrings,
     _copy_decoded_json_strings,
     _encode_planned_json_values,
     _get_json_values_plan,
 )
-from cadwyn.structure.versions._migration_targets import _get_schema_migration_target, _no_union_member
-from cadwyn.structure.versions._migrations import (
+from cadwyn_core.structure.versions._migration_targets import _get_schema_migration_target, _no_union_member
+from cadwyn_core.structure.versions._migrations import (
     _dump_request_body,
     _keep_restored_dumps_of_head_models,
     _migrate_response,
     _prepare_response_content,
     _run_request_migrations,
 )
-from cadwyn_core._utils import lenient_issubclass
-from cadwyn_core.exceptions import CadwynError, CadwynHeadRequestValidationError
 
 from ._annotation_transformer import (
     _ReferencedModelCollector,

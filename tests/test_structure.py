@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from cadwyn.applications import Cadwyn
 from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
-from cadwyn.structure import (
+from cadwyn_core.structure import (
     Version,
     VersionBundle,
     VersionChange,
@@ -17,8 +17,8 @@ from cadwyn.structure import (
     endpoint,
     schema,
 )
-from cadwyn.structure.schemas import FieldChanges, PossibleFieldAttributes
-from cadwyn.structure.versions import HeadVersion
+from cadwyn_core.structure.schemas import FieldChanges, PossibleFieldAttributes
+from cadwyn_core.structure.versions import HeadVersion
 from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, MappedModel, ModelFields
 
 
@@ -157,7 +157,7 @@ class TestVersionChange:
                 extra = Version("2025-01-01")
 
         assert str(exc_info.value) == (
-            "Found: 'extra' attribute of type '<class 'cadwyn.structure.versions.Version'>' in 'BadChange'. "
+            "Found: 'extra' attribute of type '<class 'cadwyn_core.structure.versions.Version'>' in 'BadChange'. "
             "Only migration instructions and schema properties are allowed in version change class body."
         )
 

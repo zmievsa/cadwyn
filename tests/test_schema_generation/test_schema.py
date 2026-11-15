@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel, RootModel
 
 from cadwyn.exceptions import CadwynStructureError, InvalidGenerationInstructionError
-from cadwyn.structure.schemas import schema
+from cadwyn_core.structure.schemas import schema
 from tests._data.sqlalchemy_models import MappedChild, MappedModel, ModelFields
 from tests.conftest import CreateRuntimeSchemas, assert_models_are_equal, version_change
 
