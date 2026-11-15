@@ -13,7 +13,7 @@ from typing import (
 from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata, replace_types
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     _get_type_alias_value,
     lenient_issubclass,
 )

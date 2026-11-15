@@ -7,13 +7,13 @@ from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
 from pydantic._internal._decorators import Decorator, PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     DATACLASS_SLOTS,
     Sentinel,
     fully_unwrap_decorator,
     get_name_of_function_wrapped_in_pydantic_validator,
 )
-from cadwyn.exceptions import CadwynStructureError
+from cadwyn_core.exceptions import CadwynStructureError
 
 from .common import _validate_schema_is_versionable
 

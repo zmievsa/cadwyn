@@ -15,7 +15,6 @@ from pytest_fixture_classes import fixture_class
 from typing_extensions import override
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
-from cadwyn._utils import same_method_definition_as_in
 from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.schema_generation._annotation_evaluation import _get_model_annotations, _get_model_field_names
 from cadwyn.schema_generation._annotation_transformer import _AnnotationTransformer, _ReferencedModelCollector
@@ -32,6 +31,7 @@ from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
 from cadwyn.structure.schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 from cadwyn.structure.versions import HeadVersion
+from cadwyn_core._utils import same_method_definition_as_in
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()

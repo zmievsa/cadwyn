@@ -21,10 +21,10 @@ from typing_extensions import (
     TypeVar,
 )
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     lenient_issubclass,
 )
-from cadwyn.exceptions import CadwynError, SchemaGenerationError
+from cadwyn_core.exceptions import CadwynError, SchemaGenerationError
 
 from ._annotation_evaluation import (
     _NO_REDEFINED_FIELDS,

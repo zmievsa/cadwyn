@@ -19,11 +19,11 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette._utils import is_async_callable
 
-from cadwyn.exceptions import CadwynError
 from cadwyn.structure.common import Endpoint
 from cadwyn.structure.data import (
     ResponseInfo,
 )
+from cadwyn_core.exceptions import CadwynError
 
 from ._aliases import _rescue_body
 from ._common import _CADWYN_RESPONSE_PARAM_NAME

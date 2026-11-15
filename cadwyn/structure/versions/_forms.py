@@ -30,10 +30,10 @@ from pydantic_core import (
 )
 from starlette.datastructures import FormData
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     lenient_issubclass,
 )
-from cadwyn.exceptions import (
+from cadwyn_core.exceptions import (
     CadwynError,
 )
 

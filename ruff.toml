@@ -309,6 +309,10 @@ ignore = [
     "ERA001", # Found commented-out code (We want it commented-out and I cannot ignore it per-line)
 ]
 
+[lint.isort]
+# It lives in its own directory
+known-first-party = ["cadwyn_core"]
+
 [lint.mccabe]
 max-complexity = 15
 

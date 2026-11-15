@@ -19,9 +19,9 @@ from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
 from typing_extensions import ParamSpec, TypeVar
 
-from cadwyn._utils import Sentinel
-from cadwyn.exceptions import CadwynError
 from cadwyn.structure.common import Endpoint  # noqa: TC001 # Needed by runtime annotation introspection.
+from cadwyn_core._utils import Sentinel
+from cadwyn_core.exceptions import CadwynError
 
 from ._background import _add_keyword_only_parameter, _DroppedBackgroundTasksWarning
 from ._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME

@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, NoReturn, TypeAlias, U
 from pydantic import BaseModel
 from typing_extensions import TypeVar
 
-from cadwyn._utils import UnionType, _callable_name
-from cadwyn.exceptions import CadwynError
 from cadwyn.structure.common import _validate_schema_is_versionable
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
+from cadwyn_core._utils import UnionType, _callable_name
+from cadwyn_core.exceptions import CadwynError
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from fastapi import Request, Response
     from starlette.datastructures import MutableHeaders, UploadFile
 
-    from cadwyn._utils import same_method_definition_as_in
+    from cadwyn_core._utils import same_method_definition_as_in
 
 
 class RequestInfo:

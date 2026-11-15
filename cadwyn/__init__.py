@@ -12,6 +12,9 @@ except ModuleNotFoundError as exc:
         f"`pip install cadwyn-core=={_version}`."
     ) from exc
 
+# They moved to cadwyn-core, and `import cadwyn` still makes them its attributes under their old names
+from . import _asts as _asts
+from . import _utils as _utils
 from .applications import Cadwyn
 from .dependencies import current_dependency_solver
 from .route_generation import VersionedAPIRouter, generate_versioned_routers

@@ -7,11 +7,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-- `cadwyn` now installs `cadwyn-core` in the same version, a new package for Cadwyn's versioning without FastAPI, which is empty for now. `cadwyn` and `cadwyn_core` fail at import, naming both versions, if their versions differ or `cadwyn-core` is missing ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
+- `cadwyn` now installs `cadwyn-core` in the same version, a new package for Cadwyn's versioning without FastAPI, which Cadwyn's modules move into step by step. `cadwyn` and `cadwyn_core` fail at import, naming both versions, if their versions differ or `cadwyn-core` is missing ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 - `migrate_request()` and `migrate_response()` migrate requests and responses outside of routes, e.g. for webhooks, messages in queues, or APIs that aren't built with FastAPI. They run the same migrations by schema as routes and do what routes do around them, take and return the body, the headers, the cookies, and the query params or the status code, and return them in the new `MigratedRequest` and `MigratedResponse`. They also migrate between two older versions with `to_version` and `from_version`. They run the migrations in the client's version, as routes do, and raise a `CadwynError` for model objects of other versions instead of migrating their data again. The new "Migrate data outside of routes" how-to guide shows how to move from `migrate_response_body()`, which works as before ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 
 ### Changed
 
+- The errors that Cadwyn's versioning raises, such as `CadwynError`, `CadwynStructureError`, `SchemaGenerationError`, and `CadwynHeadRequestValidationError`, are now defined in `cadwyn_core.exceptions`. `cadwyn.exceptions` imports them, so they're the same classes, and `except` clauses keep working. Their `__module__` is now `cadwyn_core.exceptions`, which tracebacks show, and Cadwyn 9.0 can't unpickle the pickles of them that this version makes, e.g. during a rolling deploy. Cadwyn's private modules `cadwyn._utils` and `cadwyn._asts` moved to `cadwyn_core` too and keep working under their old names ([#203](https://github.com/zmievsa/cadwyn/issues/203)).
 - The docs now call request and response converters "data migrations", and name them "migrations by schema" and "migrations by path" everywhere.
 - The docs now say HEAD where they meant the HEAD version rather than the latest version that clients see.
 - The introduction to version changes no longer calls HEAD your latest version. Cadwyn generates every other version, including the latest, from HEAD.

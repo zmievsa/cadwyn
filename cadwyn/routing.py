@@ -21,7 +21,6 @@ from starlette.websockets import WebSocket
 from typing_extensions import override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
-from cadwyn._utils import same_method_definition_as_in
 from cadwyn.exceptions import CadwynError
 from cadwyn.middleware import (
     _PATH_VERSION_MATCH_SCOPE_KEY,
@@ -33,6 +32,7 @@ from cadwyn.middleware import (
 )
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.versions._uploads import _UPLOAD_CLOSE_TIMEOUT_SECONDS
+from cadwyn_core._utils import same_method_definition_as_in
 
 _logger = getLogger(__name__)
 _DATE_ADAPTER = TypeAdapter(date)

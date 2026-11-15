@@ -6,10 +6,10 @@ import textwrap
 import tomllib
 from pathlib import Path
 
-import cadwyn_core
 import pytest
 
 import cadwyn
+import cadwyn_core
 
 _ROOT = Path(__file__).parent.parent
 

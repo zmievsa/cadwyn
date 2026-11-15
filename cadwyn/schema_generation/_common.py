@@ -11,11 +11,11 @@ from typing_extensions import (
     TypeVar,
 )
 
-from cadwyn._utils import (
+from cadwyn_core._utils import (
     is_sqlalchemy_model,
     lenient_issubclass,
 )
-from cadwyn.exceptions import SchemaGenerationError
+from cadwyn_core.exceptions import SchemaGenerationError
 
 _T_ANY_MODEL = TypeVar("_T_ANY_MODEL", bound=Union[BaseModel, Enum])
 _PYDANTIC_ALL_EXPORTED_NAMES = set(pydantic.__all__)

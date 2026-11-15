@@ -1,7 +1,7 @@
 """Cadwyn's versioning without FastAPI: versions, version changes, data migrations, and versioned models.
 
-It's empty for now: the modules of `cadwyn` that work without FastAPI move here next
-(https://github.com/zmievsa/cadwyn/issues/203).
+The modules of `cadwyn` that work without FastAPI move here step by step
+(https://github.com/zmievsa/cadwyn/issues/203). Nothing here is public yet, besides `__version__`.
 """
 
 import importlib.metadata

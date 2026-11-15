@@ -32,15 +32,15 @@ from typing_extensions import (
     _AnnotatedAlias,
 )
 
-from cadwyn._asts import GenericAliasUnionArgs
-from cadwyn._utils import (
+from cadwyn.structure.versions._common import _DELETED_ROUTE_TAG
+from cadwyn_core._asts import GenericAliasUnionArgs
+from cadwyn_core._utils import (
     UnionType,
     _callable_name,
     _get_type_alias_value,
     lenient_issubclass,
 )
-from cadwyn.exceptions import SchemaGenerationError
-from cadwyn.structure.versions._common import _DELETED_ROUTE_TAG
+from cadwyn_core.exceptions import SchemaGenerationError
 
 from ._annotation_evaluation import (
     _UNRESOLVED,
