@@ -14,6 +14,15 @@ import cadwyn.structure
 import cadwyn_core.exceptions
 import cadwyn_core.structure
 import cadwyn_core.structure.versions
+from cadwyn._asts import get_fancy_repr
+from cadwyn._utils import lenient_issubclass
+from cadwyn.structure.common import VersionType
+from cadwyn.structure.data import RequestInfo
+from cadwyn.structure.endpoints import endpoint
+from cadwyn.structure.enums import enum
+from cadwyn.structure.schemas import schema
+from cadwyn.structure.versions._bundle import VersionBundle
+from cadwyn.structure.versions._changes import VersionChange
 
 # The moved packages stay packages in `cadwyn`, because `cadwyn.structure.versions` still has the submodules that
 # need FastAPI. The other moved modules are the same module objects under their old names.
@@ -159,3 +168,26 @@ def test__pickle_of_cadwyn_9_0__with_moved_definition__should_unpickle(definitio
 
     assert f"c{old_module}\n".encode() in pickled
     assert pickle.loads(pickled) is definition  # It's our own pickle
+
+
+def test__names_imported_from_old_names_of_moved_modules__should_be_the_moved_ones():
+    # The imports above are type checked too, which needs the names to be visible under the old names statically
+    import cadwyn_core._asts
+    import cadwyn_core._utils
+    import cadwyn_core.structure.common
+    import cadwyn_core.structure.data
+    import cadwyn_core.structure.endpoints
+    import cadwyn_core.structure.enums
+    import cadwyn_core.structure.schemas
+    import cadwyn_core.structure.versions._bundle
+    import cadwyn_core.structure.versions._changes
+
+    assert get_fancy_repr is cadwyn_core._asts.get_fancy_repr
+    assert lenient_issubclass is cadwyn_core._utils.lenient_issubclass
+    assert VersionType is cadwyn_core.structure.common.VersionType
+    assert RequestInfo is cadwyn_core.structure.data.RequestInfo
+    assert endpoint is cadwyn_core.structure.endpoints.endpoint
+    assert enum is cadwyn_core.structure.enums.enum
+    assert schema is cadwyn_core.structure.schemas.schema
+    assert VersionBundle is cadwyn_core.structure.versions._bundle.VersionBundle
+    assert VersionChange is cadwyn_core.structure.versions._changes.VersionChange
