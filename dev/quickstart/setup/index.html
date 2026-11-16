@@ -1905,7 +1905,7 @@
 <p>and run it using:</p>
 <div class="highlight"><pre><span></span><code>fastapi<span class="w"> </span>dev<span class="w"> </span>main.py
 </code></pre></div>
-<p>That's it. That's the main difference between setting up FastAPI and Cadwyn: with Cadwyn you have to specify your API versions. Everything you specify at app level (such as using <code>include_router</code> or <code>app.get(...)</code>) will end up unversioned and essentially function like a regular FastAPI route.</p>
+<p>This is the main difference between setting up FastAPI and Cadwyn: with Cadwyn you have to specify your API versions. Everything you specify at app level (such as using <code>include_router</code> or <code>app.get(...)</code>) stays unversioned and works like a regular FastAPI route.</p>
 <h2 id="docs">Docs<a class="headerlink" href="#docs" title="Permanent link">&para;</a></h2>
 <p>If you visit <code>/docs</code>, instead of the regular Swagger, you will see a version dashboard:</p>
 <p><img alt="Version dashboard" src="../../img/unversioned_dashboard.png" /></p>

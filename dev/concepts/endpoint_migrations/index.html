@@ -2017,8 +2017,8 @@
 </code></pre></div>
 <p>However, a migration is required only if it is a breaking change for your users.</p>
 <h3 id="warning-dependency-changes">Warning: dependency changes<a class="headerlink" href="#warning-dependency-changes" title="Permanent link">&para;</a></h3>
-<p>Note that changing FastAPI endpoint dependencies is only going to affect the initial validation. Cadwyn will run your altered dependencies for each request to the endpoint but ultimately your endpoint code is always going to use the HEAD version of your dependencies. So be careful.</p>
-<p>Also note that if some of your dependencies are added at app/router level, they <strong>are</strong> going to be overwritten by the instructions above. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.</p>
+<p>Changing FastAPI endpoint dependencies affects only the initial validation. Cadwyn runs your altered dependencies for each request to the endpoint, but your endpoint code always uses the HEAD version of your dependencies.</p>
+<p>Also note that if some of your dependencies are added at app/router level, they <strong>are</strong> going to be overwritten by the instructions above. This is usually safe because all the necessary dependencies still run on the HEAD version.</p>
 <h2 id="websocket-endpoint-migrations">WebSocket endpoint migrations<a class="headerlink" href="#websocket-endpoint-migrations" title="Permanent link">&para;</a></h2>
 <p>Use <code>["WEBSOCKET"]</code> to select a FastAPI WebSocket route defined with <code>@router.websocket()</code>. It supports <code>.didnt_exist</code>, <code>.existed</code>, and <code>.had(path=..., name=..., dependencies=...)</code>. Mark sockets that only exist in older versions with <code>@router.only_exists_in_older_versions</code>, just like HTTP endpoints.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>

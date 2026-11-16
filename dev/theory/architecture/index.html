@@ -1989,8 +1989,8 @@
 <h2 id="the-big-picture">The big picture<a class="headerlink" href="#the-big-picture" title="Permanent link">&para;</a></h2>
 <p>You write one version of the app, called HEAD. Each older version is described only by how it differs from the next newer one, in version changes. From these, Cadwyn builds two things:</p>
 <ol>
-<li><strong>Before the first request</strong>, it generates a copy of the models and the routes for every version.</li>
-<li><strong>On every request</strong>, it validates the request with the routes of the client's version, migrates it up to HEAD, calls your HEAD endpoint, and migrates the response back down to the client's version.</li>
+<li>Before the first request, it generates a copy of the models and the routes for every version.</li>
+<li>On every request, it validates the request with the routes of the client's version, migrates it up to HEAD, calls your HEAD endpoint, and migrates the response back down to the client's version.</li>
 </ol>
 <p>So your business logic only ever sees HEAD, and every version's OpenAPI comes from real FastAPI routes.</p>
 <h2 id="where-the-code-lives">Where the code lives<a class="headerlink" href="#where-the-code-lives" title="Permanent link">&para;</a></h2>

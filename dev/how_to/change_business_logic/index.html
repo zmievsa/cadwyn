@@ -1966,7 +1966,7 @@
 
 <h1 id="change-the-business-logic-in-a-new-version">Change the business logic in a new version<a class="headerlink" href="#change-the-business-logic-in-a-new-version" title="Permanent link">&para;</a></h1>
 <p>First, ask yourself: are you sure a behavioral change is really necessary? Are you sure it is not possible to keep the same logic for both versions? Or at least make the behavior depend on the received data? Behavioral changes (or <strong>side effects</strong>) are the least maintainable part of almost any versioning approach. They produce the largest footprint on your code. So if you are not careful, your logic will be littered with version checks.</p>
-<p>But if you are certain that you need to make a breaking behavioral change, Cadwyn has all the tools to minimize its impact as much as possible.</p>
+<p>If you are certain that you need a breaking behavioral change, Cadwyn has the tools to keep its impact small.</p>
 <h2 id="calling-endpoint-causes-unexpected-data-modifications">Calling endpoint causes unexpected data modifications<a class="headerlink" href="#calling-endpoint-causes-unexpected-data-modifications" title="Permanent link">&para;</a></h2>
 <p>Use an <code>if statement</code> with a <a href="../../concepts/version_changes/#version-changes-with-side-effects">side effect</a>.</p>
 <h2 id="calling-endpoint-doesnt-cause-expected-data-modifications">Calling endpoint doesn't cause expected data modifications<a class="headerlink" href="#calling-endpoint-doesnt-cause-expected-data-modifications" title="Permanent link">&para;</a></h2>
