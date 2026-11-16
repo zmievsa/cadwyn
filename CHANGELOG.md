@@ -39,6 +39,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - The docs now say that `migrate_response_body()` takes plain data, because objects of the HEAD models can fail in it ([#651](https://github.com/zmievsa/cadwyn/issues/651)).
 - The docs no longer claim that `migrate_response_body()` runs migrations by path. It runs only the migrations by schema of the model you pass.
 
+## [9.0.1]
+
+### Fixed
+
+- A plain `Response` whose content type is exactly `application/json` now reaches clients with the bytes that the endpoint returned, as it already did with parameters such as `application/json; charset=utf-8`. Cadwyn used to encode its body as a JSON string a second time, e.g. `"{\"a\": 1}"` instead of `{"a": 1}`, in every version, with or without migrations. Response migrations by path still get its body as text and can set it to text, which also reaches clients as it is ([#638](https://github.com/zmievsa/cadwyn/issues/638)). Thanks to @ununto for the first fix in [#650](https://github.com/zmievsa/cadwyn/pull/650), which this one builds on.
+
 ## [9.0.0]
 
 ### Breaking
@@ -112,6 +118,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Models with schema instructions no longer fail to copy annotations such as `Final[int]`, `TypeGuard`, `TypeIs`, or `ClassVar[Final[...]]` ([#576](https://github.com/zmievsa/cadwyn/issues/576)).
 - Versioned mixin enums now support `vars()` and `__dict__`, and enums declaring `__slots__` no longer fail to copy ([#555](https://github.com/zmievsa/cadwyn/issues/555)).
 - In supported request bodies with unchanged schemas, `Json[...]` fields accepting strings or string-enum members no longer fail with a 500 ([#538](https://github.com/zmievsa/cadwyn/issues/538)).
+
+## [8.2.1]
+
+### Fixed
+
+- A plain `Response` whose content type is exactly `application/json` now reaches clients with the bytes that the endpoint returned, as it already did with parameters such as `application/json; charset=utf-8`. Cadwyn used to encode its body as a JSON string a second time, e.g. `"{\"a\": 1}"` instead of `{"a": 1}`, in every version, with or without migrations. Response migrations by path still get its body as text and can set it to text, which also reaches clients as it is ([#638](https://github.com/zmievsa/cadwyn/issues/638)). Thanks to @ununto for the first fix in [#650](https://github.com/zmievsa/cadwyn/pull/650), which this one builds on.
 
 ## [8.2.0]
 
