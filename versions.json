@@ -12,14 +12,14 @@
   {
     "version": "9.0",
     "title": "9.0",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "8.2",
     "title": "8.2",
-    "aliases": []
+    "aliases": [
+      "latest"
+    ]
   },
   {
     "version": "8.1",
