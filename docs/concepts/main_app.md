@@ -11,13 +11,13 @@ After you have defined the main app, you can add versioned API routers to it usi
 {! ./docs_src/concepts/main_app/block001.py !}
 ```
 
-That's it. `generate_and_include_versioned_routers()` will generate all versions of your routers based on the `versions` argument.
+`generate_and_include_versioned_routers()` will generate all versions of your routers based on the `versions` argument.
 
 ## Routing
 
 Cadwyn is built on header-based routing. First, requests are routed to the appropriate API version based on the version header (`x-api-version` by default). Second, requests are routed by the appropriate url path and method. By default, Cadwyn uses ISO 8601 date-based versions (such as `2022-11-16`), but it also supports [arbitrary strings](./api_version_parameter.md#api-version-format) as versions. If a user provides a date that does not match any of the versions exactly, Cadwyn selects the closest earlier applicable version. For example, `2022-11-16` in a request can be matched by `2022-11-15` or `2000-01-01` but not by `2022-11-17`.
 
-However, header-based routing is the default way to use Cadwyn. Cadwyn can also take the version from a [URL path parameter](./api_version_parameter.md#api-version-location). If you want to use any other form of routing, you can use Cadwyn directly through `cadwyn.generate_versioned_routers()` or subclass `cadwyn.Cadwyn` with a different router and middleware. Remember to update the `VersionBundle.api_version_var` variable each time you route a request to a version. This variable allows Cadwyn to do [side effects](./version_changes.md#version-changes-with-side-effects) and [data migrations](./version_changes.md#data-migrations).
+Header-based routing is only the default. Cadwyn can also take the version from a [URL path parameter](./api_version_parameter.md#api-version-location). If you want to use any other form of routing, you can use Cadwyn directly through `cadwyn.generate_versioned_routers()` or subclass `cadwyn.Cadwyn` with a different router and middleware. Remember to update the `VersionBundle.api_version_var` variable each time you route a request to a version. This variable allows Cadwyn to do [side effects](./version_changes.md#version-changes-with-side-effects) and [data migrations](./version_changes.md#data-migrations).
 
 ### VersionedAPIRouter
 

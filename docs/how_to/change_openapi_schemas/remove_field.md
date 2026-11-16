@@ -46,7 +46,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     {!> ./docs_src/how_to/change_openapi_schemas/remove_field/optional_from_request_and_response/versions/__init__.py !}
     ```
 
-We added a new version with a breaking change but neither the HEAD schema that we use in business logic, neither has the business logic itself have changed one bit.
+We added a new version with a breaking change, but neither the HEAD schema that we use in business logic nor the business logic itself has changed.
 
 ### Required field
 
@@ -64,4 +64,4 @@ Let's say that you have company resources in your system. Let's also say that ea
 0. Talk to your users. In any API versioning problem, talking to your users is the best first step. See whether this is actually a breaking change for them. Maybe only a small subset of your users is using this field and you can migrate this subset manually without much investment, which will allow you to make the breaking changes without breaking anyone's API. Though this approach becomes impossible to use once you get a lot of clients.
 1. Issue a warning to your users that `tax_id` is going to become optional in all API versions in `N` months and then make it so. This will allow you to avoid data versioning and your users will have a grace period to fix their issues. Then you can simply follow the [approach above](#optional-field).
 2. Release a `V2` version of your API which users will have to migrate their **data** to. This is a drastic approach and you should only reserve it for extreme cases but it is a **correct** way to represent data versioning.
-3. Disallow the new version (2001-01-01) to be used alongside older versions and disallow users to migrate to older versions after they have migrated to 2001-01-01. Then you can simply follow the [approach above](#optional-field). This is a dirty hack and an inconvenience to your users but it solves the problem too, albeit I would never recommend to use this solition.
+3. Disallow the new version (2001-01-01) to be used alongside older versions and disallow users to migrate to older versions after they have migrated to 2001-01-01. Then you can simply follow the [approach above](#optional-field). This is a dirty hack and an inconvenience to your users but it solves the problem too, although I would never recommend this solution.

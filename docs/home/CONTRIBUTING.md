@@ -96,7 +96,7 @@ The documentation is located in the `/docs` directory and uses
 
 ### Docs theme and appearance
 
-We welcome contributions that improve the appearance and usability of the docs. We use [mkdocs-material](https://squidfunk.github.io/mkdocs-material/) If you wish to contribute to the docs style / setup, or static site generation, consult the theme docs as a first step.
+We welcome contributions that improve the appearance and usability of the docs. We use [mkdocs-material](https://squidfunk.github.io/mkdocs-material/). If you wish to contribute to the docs style, setup, or static site generation, consult the theme docs first.
 
 ### Running the docs locally
 

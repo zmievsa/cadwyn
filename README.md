@@ -31,11 +31,11 @@ This [approach](https://docs.cadwyn.dev/theory/how_we_got_here/#ii-migration-bas
 1. Support many API versions for a long time
 2. Have features and bugfixes automatically backported to older API versions
 
-Whether you are a newbie in API versioning, a pro looking for a sophisticated tool, an experimenter looking to build a similar framework, or even someone who just wants to learn about all approaches to API versioning -- Cadwyn has the functionality, theory, and documentation to cover all the mentioned use cases.
+Cadwyn has the functionality, theory, and documentation for newcomers to API versioning, for experienced developers looking for a sophisticated tool, for anyone who wants to build a similar framework, and for those who just want to learn about the approaches to API versioning.
 
 ## Get started
 
-The [documentation](https://docs.cadwyn.dev) has everything you need to succeed.
+Start with the [documentation](https://docs.cadwyn.dev).
 
 ## Author
 

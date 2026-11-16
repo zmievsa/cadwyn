@@ -36,9 +36,9 @@ However, a migration is required only if it is a breaking change for your users.
 
 ### Warning: dependency changes
 
-Note that changing FastAPI endpoint dependencies is only going to affect the initial validation. Cadwyn will run your altered dependencies for each request to the endpoint but ultimately your endpoint code is always going to use the HEAD version of your dependencies. So be careful.
+Changing FastAPI endpoint dependencies affects only the initial validation. Cadwyn runs your altered dependencies for each request to the endpoint, but your endpoint code always uses the HEAD version of your dependencies.
 
-Also note that if some of your dependencies are added at app/router level, they **are** going to be overwritten by the instructions above. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.
+Also note that if some of your dependencies are added at app/router level, they **are** going to be overwritten by the instructions above. This is usually safe because all the necessary dependencies still run on the HEAD version.
 
 ## WebSocket endpoint migrations
 

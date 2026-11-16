@@ -6,7 +6,7 @@ Let's say that we decided to expose the creation date of user's account with a `
 
 You just need to add `created_at` field into `users.UserResource`.
 
-Now you have everything you need at your disposal: field `created_at` is available in all versions and your users do not even need to do any extra actions. Just make sure that the data for it is available in all versions too. If it's not: make the field optional.
+The `created_at` field is now available in all versions, and your users don't need to do anything. Make sure that the data for it is available in all versions too. If it isn't, make the field optional.
 
 ## To both request and response schemas
 
@@ -35,11 +35,11 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
     {!> ./docs_src/how_to/change_openapi_schemas/add_field/required_with_compatible_default/versions/__init__.py !}
     ```
 
-That's it. Our old schemas will now contain a default but in HEAD country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](../../concepts/schema_migrations.md#change-a-field-in-the-older-version) from using defaults from old versions.
+Our old schemas now contain a default, but in HEAD `country` is required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](../../concepts/schema_migrations.md#change-a-field-in-the-older-version) from using defaults from old versions.
 
 #### With incompatible default value in older versions
 
-Let's say that we want to add a required field `phone` to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable (or nonexistent) in the old versions but required in the HEAD version. This also means that older versions contain a wider type (`str | None`) than the HEAD version (`str`). So when we try to migrate request bodies from the older versions to HEAD -- we might receive a `ValidationError` because `None` is not an acceptable value for `phone` field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we can simply define a wider type in our HEAD version and then narrow it in latest.
+Let's say that we want to add a required field `phone` to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable (or nonexistent) in the old versions but required in the HEAD version. This also means that older versions contain a wider type (`str | None`) than the HEAD version (`str`). So when we migrate request bodies from the older versions to HEAD, we might get a `ValidationError` because `None` is not an acceptable value for the `phone` field in the new version. Whenever an older version contains more data or a wider type, we can define a wider type in our HEAD version and then narrow it in latest.
 
 So we will make `phone` nullable in HEAD, then make it required in `latest`, and then make it nullable again in older versions, thus making it possible to convert all of our requests to HEAD.
 

@@ -23,7 +23,7 @@ and run it using:
 fastapi dev main.py
 ```
 
-That's it. That's the main difference between setting up FastAPI and Cadwyn: with Cadwyn you have to specify your API versions. Everything you specify at app level (such as using `include_router` or `app.get(...)`) will end up unversioned and essentially function like a regular FastAPI route.
+This is the main difference between setting up FastAPI and Cadwyn: with Cadwyn you have to specify your API versions. Everything you specify at app level (such as using `include_router` or `app.get(...)`) stays unversioned and works like a regular FastAPI route.
 
 ## Docs
 
