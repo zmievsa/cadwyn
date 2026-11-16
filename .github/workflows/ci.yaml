@@ -1,13 +1,13 @@
 name: CI
 on:
   push:
-    branches: [main, 3.x.x]
+    branches: [main, 3.x.x, 9.x.x]
     paths:
       - "**.py"
       - "**.toml"
       - "**.lock"
   pull_request:
-    branches: [main, 3.x.x]
+    branches: [main, 3.x.x, 9.x.x]
     paths:
       - ".github/workflows/ci.yaml" # self
       - ".github/actions/**"
