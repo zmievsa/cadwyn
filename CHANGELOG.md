@@ -5,6 +5,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [8.2.1]
+
 ### Fixed
 
 - A plain `Response` whose content type is exactly `application/json` now reaches clients with the bytes that the endpoint returned, as it already did with parameters such as `application/json; charset=utf-8`. Cadwyn used to encode its body as a JSON string a second time, e.g. `"{\"a\": 1}"` instead of `{"a": 1}`, in every version, with or without migrations. Response migrations by path still get its body as text and can set it to text, which also reaches clients as it is ([#638](https://github.com/zmievsa/cadwyn/issues/638)). Thanks to @ununto for the first fix in [#650](https://github.com/zmievsa/cadwyn/pull/650), which this one builds on.
