@@ -173,6 +173,9 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
     if api_version is None:
         return response_or_response_body
 
+    # Whether Cadwyn decoded the body of the returned response as JSON. Only such a body can be encoded back as JSON,
+    # so the body of any other response that stays text reaches the client as the bytes that the endpoint returned.
+    body_is_json = False
     if isinstance(response_or_response_body, FastapiResponse):
         # TODO (https://github.com/zmievsa/cadwyn/issues/125): Add support for migrating `StreamingResponse`
         # TODO (https://github.com/zmievsa/cadwyn/issues/126): Add support for migrating `FileResponse`
@@ -185,6 +188,7 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
                 response_or_response_body.body, str | bytes
             ):
                 body = json.loads(response_or_response_body.body)
+                body_is_json = True
             elif isinstance(response_or_response_body.body, bytes):
                 body = response_or_response_body.body.decode(response_or_response_body.charset)
             else:  # pragma: no cover # I don't see a good use case here yet
@@ -245,9 +249,8 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
         # that do not have it. We don't support it too.
         if response_info.body is not None and hasattr(response_info._response, "body"):
             # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
-            if (
-                isinstance(response_info.body, str)
-                and response_info._response.headers.get("content-type") != "application/json"
+            if isinstance(response_info.body, str) and (
+                not body_is_json or response_info._response.headers.get("content-type") != "application/json"
             ):
                 response_info._response.body = response_info.body.encode(response_info._response.charset)
             else:

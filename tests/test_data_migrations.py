@@ -49,7 +49,7 @@ from fastapi import (
     Security,
     UploadFile,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.routing import APIRoute
 from fastapi.security import SecurityScopes
 from fastapi.testclient import TestClient
@@ -13837,6 +13837,113 @@ def test__response_migrations__with_manual_string_json_response_and_migration(
     resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 200
     assert resp_2001.json() == "My content"
+
+
+def _raise_not_found() -> Response:
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+# One endpoint for every way of returning a response whose body Cadwyn decodes for migrations and encodes back
+_RESPONSE_KINDS = [
+    pytest.param(lambda: Response(b'{"a": 1}', media_type="application/json"), id="plain_json"),
+    pytest.param(
+        lambda: Response(b'{"a": 1}', headers={"content-type": "application/json; charset=utf-8"}),
+        id="plain_json_with_charset",
+    ),
+    pytest.param(lambda: Response(b'"abc"', media_type="application/json"), id="plain_json_string"),
+    pytest.param(
+        lambda: Response(b'"abc"', headers={"content-type": "application/json; charset=utf-8"}),
+        id="plain_json_string_with_charset",
+    ),
+    pytest.param(lambda: Response(b"not json", media_type="application/json"), id="plain_invalid_json"),
+    pytest.param(lambda: Response(media_type="application/json"), id="plain_empty"),
+    pytest.param(lambda: PlainTextResponse("id,name\n1,A\n"), id="plain_text"),
+    pytest.param(lambda: JSONResponse({"a": 1}), id="json_response"),
+    pytest.param(lambda: JSONResponse("abc"), id="json_response_string"),
+    pytest.param(_raise_not_found, id="http_exception"),
+]
+
+
+@pytest.mark.parametrize("endpoint", _RESPONSE_KINDS)
+def test__response_migrations__with_migration_that_leaves_response_as_is__should_return_what_fastapi_returns(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    endpoint: Callable[[], Response],
+):
+    fastapi_router = APIRouter()
+    fastapi_router.post("/test")(endpoint)
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(fastapi_router)
+    expected = TestClient(fastapi_app).post("/test")
+
+    @convert_response_to_previous_version_for("/test", ["POST"], migrate_http_errors=True)
+    def response_converter(response: ResponseInfo):
+        pass
+
+    router.post("/test")(endpoint)
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    for versioned_client in clients.values():
+        resp = versioned_client.post("/test")
+        assert resp.status_code == expected.status_code
+        assert resp.content == expected.content
+        assert resp.headers.get("content-type") == expected.headers.get("content-type")
+        assert resp.headers.get("content-length") == expected.headers.get("content-length")
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body", "expected_content"),
+    [
+        pytest.param("text/plain; charset=utf-8", "id,name\n1,A\n", b"id,name\n1,A\n", id="text"),
+        pytest.param("application/json", {"b": "é"}, '{"b":"é"}'.encode(), id="dict"),
+    ],
+)
+@pytest.mark.parametrize("endpoint", _RESPONSE_KINDS)
+def test__response_migrations__with_migration_that_replaces_body__should_return_the_new_body(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    endpoint: Callable[[], Response],
+    content_type: str,
+    body: object,
+    expected_content: bytes,
+):
+    router.post("/test")(endpoint)
+
+    @convert_response_to_previous_version_for("/test", ["POST"], migrate_http_errors=True)
+    def response_converter(response: ResponseInfo):
+        response.status_code = 200
+        response.headers["content-type"] = content_type
+        response.body = body
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    resp = clients["2000-01-01"].post("/test")
+    assert resp.status_code == 200
+    assert resp.content == expected_content
+    assert resp.headers["content-type"] == content_type
+    # Cadwyn leaves out the Content-Length of the responses of HTTP errors, so the server calculates it
+    assert resp.headers.get("content-length") in {None, str(len(expected_content))}
+
+
+def test__response_migrations__with_migration_that_edits_text_of_plain_json_response__should_return_the_edited_text(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test")
+    async def endpoint():
+        return Response(content=b'{"a": 1}', media_type="application/json")
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        response.body = json.dumps({"b": json.loads(response.body)["a"]})
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    resp_2000 = clients["2000-01-01"].post("/test")
+    assert resp_2000.content == b'{"b": 1}'
+    assert resp_2000.headers["content-length"] == "8"
+
+    assert clients["2001-01-01"].post("/test").content == b'{"a": 1}'
 
 
 @pytest.mark.parametrize(("path", "method"), [("/NOT_test", "POST"), ("/test", "PUT")])
