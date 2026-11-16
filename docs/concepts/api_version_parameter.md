@@ -50,7 +50,7 @@ You can also use an arbitrary string:
 {! ./docs_src/concepts/api_version_parameter/block007.py !}
 ```
 
-In the example above any arbitrary string is accepted as a valid version. Cadwyn does not sort them, Cadwyn assumes that their actual order matches the order of the versions in the `VersionBundle`.
+In the example above any arbitrary string is accepted as a valid version. Cadwyn does not sort them: it assumes that their actual order matches the order of the versions in the `VersionBundle`.
 
 ### API version waterfalling
 
@@ -60,7 +60,7 @@ If the app has two versions: 2022-01-02 and 2022-01-05, and the request date par
 
 An exact match is always preferred to a partial match and a request is never matched to the higher-versioned route.
 
-The routing is implemented like this because Cadwyn was born in a microservice architecture and it is extremely convenient to have waterfalling there. Assume that you have two Cadwyn services: Payables and Receivables, each defining its own API versions. Payables service might have ten versions while Receivables service might have only two versions because it did not need as many breaking changes. If a client requests a version that does not exist in Receivables, Cadwyn will waterfall to some earlier version, making Receivables behavior consistent even if API keeps getting new versions.
+Cadwyn routes like this because it was born in a microservice architecture, where waterfalling is very convenient. Assume that you have two Cadwyn services: Payables and Receivables, each defining its own API versions. Payables service might have ten versions while Receivables service might have only two versions because it did not need as many breaking changes. If a client requests a version that does not exist in Receivables, Cadwyn will waterfall to some earlier version, making Receivables behavior consistent even if API keeps getting new versions.
 
 ## Requests without an API version
 
@@ -110,6 +110,6 @@ You can pass a title and/or a description to the `Cadwyn()` constructor. It is e
 
 ## API version context variables
 
-Cadwyn automatically converts your data to the correct version and has "version checks" when dealing with side effects as described in [the section above](./version_changes.md#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
+Cadwyn automatically converts your data to the correct version and has "version checks" when dealing with side effects as described in [version changes with side effects](./version_changes.md#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
 
 You can also pass a different compatible `contextvar` to your `cadwyn.VersionBundle()` constructor.

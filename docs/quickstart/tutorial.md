@@ -12,9 +12,9 @@ This tutorial will show how to prepare an environment for working with Cadwyn ef
 
 ## Step 0: Setting up
 
-Here is an initial API setup where a User has a single address. The example implements two routes - one for creating a User and the other for retrieving User details. User ID is implemented as `uuid.UUID`. Please note that a `dict` is used in place of a database for simplicity but do not ever do it in real life.
+Here is an initial API setup where a User has a single address. The example implements two routes: one for creating a User and the other for retrieving User details. User ID is implemented as `uuid.UUID`. Please note that a `dict` is used in place of a database for simplicity but do not ever do it in real life.
 
-The first API one comes up with usually doesn't require more than one address -- why bother?
+The first version of an API usually doesn't need more than one address, so why bother?
 
 ```python
 {! ./docs_src/quickstart/tutorial/block001.py !}
@@ -34,7 +34,7 @@ Assume that during the development you realize that the initial API design is wr
 {! ./docs_src/quickstart/tutorial/block002.py !}
 ```
 
-Now your users will have their API integration broken. To prevent that, introduce API versioning. There aren't many methods of doing that. Most of them force you to either duplicate your schemas, your endpoints, or your entire app instance. And it makes sense, really: duplication is the only way to make sure that you will not break old versions with your new versions; the bigger the piece you are duplicating, the safer. Of course, the safest being duplicating the entire app instance and even having a separate database. But that is expensive and makes it either impossible to make breaking changes often or to support many versions. As a result, either you need infinite resources, very long development cycles, or your users need to migrate often from version to version.
+Now your users will have their API integration broken. To prevent that, introduce API versioning. There aren't many methods of doing that. Most of them force you to either duplicate your schemas, your endpoints, or your entire app instance. And it makes sense, really: duplication is the only way to make sure that you will not break old versions with your new versions; the bigger the piece you are duplicating, the safer. The safest option is to duplicate the entire app instance and even have a separate database. But that is expensive and makes it either impossible to make breaking changes often or to support many versions. As a result, either you need infinite resources, very long development cycles, or your users need to migrate often from version to version.
 
 Stripe has come up [with a solution](https://stripe.com/blog/api-versioning): to have one HEAD app version whose responses get migrated to older versions and to describe changes between these versions using migrations. This approach allows Stripe to keep versions for **years** without dropping them. Obviously, each breaking change still hurts and each version still makes the system more complex and expensive, but their approach gives you a chance to minimize this complexity. Additionally, it allows you to backport features and bugfixes to older versions. However, you will also be backporting bugs, which is a sad consequence of eliminating duplication.
 
@@ -69,4 +69,4 @@ Run the app and take a look at the generated dashboard and OpenAPI schemas:
 
 The endpoint above is from the `2000-01-01` version. As you see, your routes and business logic are for the HEAD version but your OpenAPI has all the information about all the API versions which is the main goal of Cadwyn: a large number of long-living API versions without placing any burden on your business logic.
 
-Obviously, this was just a simple example and Cadwyn has a lot more features so if you're interested -- take a look at the [how-to](../how_to/index.md) and [concepts](../concepts/index.md) sections.
+This was a simple example, and Cadwyn has many more features. To learn about them, see the [how-to](../how_to/index.md) and [concepts](../concepts/index.md) sections.

@@ -3,7 +3,7 @@
 
 First, ask yourself: are you sure a behavioral change is really necessary? Are you sure it is not possible to keep the same logic for both versions? Or at least make the behavior depend on the received data? Behavioral changes (or **side effects**) are the least maintainable part of almost any versioning approach. They produce the largest footprint on your code. So if you are not careful, your logic will be littered with version checks.
 
-But if you are certain that you need to make a breaking behavioral change, Cadwyn has all the tools to minimize its impact as much as possible.
+If you are certain that you need a breaking behavioral change, Cadwyn has the tools to keep its impact small.
 
 ## Calling endpoint causes unexpected data modifications
 

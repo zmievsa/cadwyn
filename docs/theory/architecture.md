@@ -6,8 +6,8 @@ This page describes how Cadwyn works inside, at the level you need to change it.
 
 You write one version of the app, called HEAD. Each older version is described only by how it differs from the next newer one, in version changes. From these, Cadwyn builds two things:
 
-1. **Before the first request**, it generates a copy of the models and the routes for every version.
-2. **On every request**, it validates the request with the routes of the client's version, migrates it up to HEAD, calls your HEAD endpoint, and migrates the response back down to the client's version.
+1. Before the first request, it generates a copy of the models and the routes for every version.
+2. On every request, it validates the request with the routes of the client's version, migrates it up to HEAD, calls your HEAD endpoint, and migrates the response back down to the client's version.
 
 So your business logic only ever sees HEAD, and every version's OpenAPI comes from real FastAPI routes.
 

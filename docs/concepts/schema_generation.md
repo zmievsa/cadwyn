@@ -1,12 +1,12 @@
 # Schema generation
 
-Cadwyn automatically generates versioned schemas and everything related to them from HEAD version at runtime — no code is actually generated. These versioned schemas will be automatically used in requests to and responses from [versioned API routes](./main_app.md#main-app).
+Cadwyn generates versioned schemas and everything related to them from the HEAD version at runtime, so no code is actually generated. These versioned schemas are automatically used in requests to and responses from [versioned API routes](./main_app.md#main-app).
 
 ## Rendering schemas
 
-If you have many versions and schemas, it is quite challenging to know what validators, fields, and other attributes are defined in each schema in a specific version. To address this issue, there is a way to **render** the generated Pydantic models and enums as code using the command-line interface.
+If you have many versions and schemas, it is hard to know what validators, fields, and other attributes each schema has in a specific version. To see them, you can **render** the generated Pydantic models and enums as code using the command-line interface.
 
-**NOTICE** that `cadwyn render` does not guarantee rendering correct schemas. It provides a close enough approximation for manual validation, but it is not yet ready for production code generation. For example, it doesn't handle schema renaming in a class's `__bases__` yet.
+Note that `cadwyn render` does not guarantee rendering correct schemas. It provides a close enough approximation for manual validation, but it is not yet ready for production code generation. For example, it doesn't handle schema renaming in a class's `__bases__` yet.
 
 ### Rendering a module
 

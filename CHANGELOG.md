@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- The documentation and the README were edited for clarity without changing what they say about Cadwyn.
+
 ## [9.1.0rc1]
 
 ### Added

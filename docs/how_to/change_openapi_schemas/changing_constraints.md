@@ -4,7 +4,7 @@
 
 Suppose you previously allowed users to have a name of arbitrary length but now you want to limit it to 250 characters because you are worried that some users may use inadequate lengths. You can't do this easily: if you simply add a `max_length` constraint to `User.name`, the existing data in your database might become incompatible with this field in `UserResource`. So as long as incompatible data is there or can get there from some version, you cannot add such a constraint to your responses. However, you **can** add it to your requests to prevent the creation of new user accounts with long names.
 
-1. Change `max_length` of `users.UserCreateRequest.name` to 250 in version 2001-01-01 by adding the following migration to `versions.v2001_01_01`. We do this instead of just adding the constraint to HEAD to make sure that old requests will get converted to HEAD successfully -- without facing the constraint:
+1. Change `max_length` of `users.UserCreateRequest.name` to 250 in version 2001-01-01 by adding the following migration to `versions.v2001_01_01`. We do this instead of adding the constraint to HEAD so that old requests get converted to HEAD without facing the constraint:
 
     ```python
     {!> ./docs_src/how_to/change_openapi_schemas/changing_constraints/add_or_narrow_constraints/versions/v2001_01_01.py [ln:2-13] !}

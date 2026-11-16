@@ -2,7 +2,7 @@
 
 ## Change the type incompatibly
 
-If your data had a type `int` and you want to change it to a `str` in a new version, then your data from the new version can easily break the responses of the old versions, thus making it [data versioning](../../concepts/beware_of_data_versioning.md), not API versioning -- as you are versioning the fundamental structures the user is operating on instead of just the API.
+If your data had a type `int` and you want to change it to a `str` in a new version, then your data from the new version can easily break the responses of the old versions, which makes it [data versioning](../../concepts/beware_of_data_versioning.md) rather than API versioning: you are versioning the fundamental structures the user operates on instead of just the API.
 
 ## Expand the type
 
@@ -67,8 +67,8 @@ The process above is a bit complex, so let us break it down:
     * When user creation requests are received from 2000, they are converted directly to HEAD. They have the same type for `date_of_birth`, so Cadwyn easily processes them
     * When user get requests are received from 2000, they are converted directly from HEAD to 2000. They have the same type for `date_of_birth`, so Cadwyn easily processes them
 
-All of these interactions are done internally by Cadwyn. As you see, the process is more than straightforward: requests are converted to HEAD, and responses are converted from HEAD.
+All of these interactions are done internally by Cadwyn. The process itself is straightforward: requests are converted to HEAD, and responses are converted from HEAD.
 
-Thus, you have kept the old behavior, added new constrained behavior, and minimized the impact on your business logic as business logic simply doesn't know that `date_of_birth` in requests is ever a date and that `date_of_birth` in responses is ever a date. All of this information is hidden in your migration.
+Thus, you have kept the old behavior, added new constrained behavior, and minimized the impact on your business logic because the business logic doesn't know that `date_of_birth` is ever a date in requests or responses. All of this information is hidden in your migration.
 
 Please note that unlike schemas, routes, and business logic, the migrations written above will likely never need to change because they describe the fundamental differences between the API versions, and these differences cannot be changed in the future because that would defeat the purpose of API versioning. This makes migrations effectively immutable and consequently very cheap to support.

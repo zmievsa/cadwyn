@@ -9,7 +9,7 @@ Cadwyn implements a methodology that is based on the following set of principles
 * Creating new versions is avoided at all costs
 * Any backward-compatible features must be backported to all compatible versions
 
-Following these rules enables you to have a large number of self-documenting versions while encapsulating their complexity in small version change classes, providing your users with a consistent and stable experience.
+Following these rules lets you keep many self-documenting versions while their complexity stays in small version change classes, and your users get a consistent and stable API.
 
 If a breaking change cannot be avoided, the general approach is to:
 

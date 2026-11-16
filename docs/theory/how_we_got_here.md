@@ -8,11 +8,11 @@ There are three main approaches to version an API, each one less safe than the l
 
 ### 1. Versioning a proxy, which routes requests to versioned apps
 
-This approach versions all three layers: separate data, separate business logic, separate representation. Actually a completely different app is created for each version. The versions are independent and cannot affect each other. Any changes can be made in future versions without worrying about breaking the old ones.
+This approach versions all three layers: separate data, separate business logic, separate representation. In effect, a completely different app is created for each version. The versions are independent and cannot affect each other. Any changes can be made in future versions without worrying about breaking the old ones.
 
 This approach is the most expensive to support but if breaking the old functionality is unacceptable and if a small number of versions (1-3) needs to be supported, then this option is relevant.
 
-Note that this approach is essentially **data** or **application** versioning, not **API** versioning. If it is impossible for your user to freely move between API versions (back and forth), then you are probably doing a bit of **data versioning** yourself. It can simplify your app's logic but will significantly inconvenience your users because they will not be able to easily switch API versions without waiting for your team to help. Additionally, a single client will never be able to use two versions at the same time. At least not easily.
+Note that this approach is essentially **data** or **application** versioning, not **API** versioning. If it is impossible for your user to freely move between API versions (back and forth), then you are probably doing a bit of **data versioning** yourself. It can simplify your app's logic but will significantly inconvenience your users because they will not be able to easily switch API versions without waiting for your team to help. A single client also can't easily use two versions at the same time.
 
 *Mostly used in older-style apps or in critical infrastructure where no mistakes are permitted*
 
@@ -28,7 +28,7 @@ This is also the approach the Cadwyn dev team have originally started with. It i
 
 ### 3. One router, shared controllers, which respond with versioned representations
 
-This approach versions only the API itself. The business logic and data structures are the same for all API versions (with rare exceptions) so API maintainers have the pleasure of maintaining only one API version while users have the added benefit that non-breaking featurees and bugfixes will automatically be ported to their version. This is the only approach that allows you to support a large number of versions because it has the least amount of duplication of all approaches. This is usually accomplished by adding a separate layer that builds responses out of the data that your service returns. It can be a separate service, a framework, or just a set of functions.
+This approach versions only the API itself. The business logic and data structures are the same for all API versions (with rare exceptions) so API maintainers have the pleasure of maintaining only one API version while users have the added benefit that non-breaking features and bugfixes will automatically be ported to their version. This is the only approach that allows you to support a large number of versions because it has the least amount of duplication of all approaches. This is usually accomplished by adding a separate layer that builds responses out of the data that your service returns. It can be a separate service, a framework, or just a set of functions.
 
 Note that in this approach, the usage of **data versioning** now becomes an inconvenience to **both** API users and maintainers. See, when you have a single business logic for all versions, you might need additional conditionals and checks for versions where data structure or data itself has changed. That is **in addition** to pre-existing inconveniences for the users. However, sometimes it might still happen so our goal is to minimize the frequency and impact of data versioning.
 
