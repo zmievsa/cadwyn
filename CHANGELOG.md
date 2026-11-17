@@ -12,6 +12,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Changed
 
 - The documentation and the README were edited for clarity without changing what they say about Cadwyn.
+- For contributors: `make check` no longer checks the links to external sites, which failed it at random, and no longer needs network access or Chrome for its link check. It still checks the links to files and headings in the docs. The new `make links` checks every link, including the external ones.
 
 ## [9.1.0rc1]
 
