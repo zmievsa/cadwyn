@@ -2131,6 +2131,12 @@ parallelism. It runs the supported Python test matrix, tutorial tests, the tests
 of <code>cadwyn-core</code> installed on its own (<code>tox -e standalone</code>), coverage, prek
 linting, documentation build, link validation, and package build checks.
 Each supported Python test environment runs ty before its tests.</p>
+<p>The link validation in <code>make check</code> covers only relative links to files and
+links to headings, so it needs no network access and passes or fails the same
+way every time. External sites throttle, block headless browsers, and time out
+at random. Run <code>make links</code> to check every link, including the links to
+external sites. The Documentation workflow checks them too: on pull requests
+in the lines that changed, and on <code>main</code> in every file.</p>
 <p>If <code>prek</code>, <code>tox</code>, or the <code>tox-uv</code> plugin is missing, the Makefile will stop
 early and print the matching <code>uv tool install ...</code> command to install it.</p>
 <p>Use <code>make lint</code> to run only the prek hooks. For a focused test run, use
