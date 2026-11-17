@@ -1,0 +1,9 @@
+# `make check` uses this config to check only the links that the repository controls: relative links to files and
+# links to headings. They pass or fail the same way every time, without network access. External sites throttle,
+# block headless browsers, and time out at random, so they would turn the whole local check red for reasons that no
+# change can fix. `.linkspector.yml` checks external links too, in `make links` and in the Documentation workflow.
+dirs:
+  - .
+useGitIgnore: true
+ignorePatterns:
+  - pattern: "^https?://"

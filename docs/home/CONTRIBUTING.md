@@ -64,6 +64,13 @@ of `cadwyn-core` installed on its own (`tox -e standalone`), coverage, prek
 linting, documentation build, link validation, and package build checks.
 Each supported Python test environment runs ty before its tests.
 
+The link validation in `make check` covers only relative links to files and
+links to headings, so it needs no network access and passes or fails the same
+way every time. External sites throttle, block headless browsers, and time out
+at random. Run `make links` to check every link, including the links to
+external sites. The Documentation workflow checks them too: on pull requests
+in the lines that changed, and on `main` in every file.
+
 If `prek`, `tox`, or the `tox-uv` plugin is missing, the Makefile will stop
 early and print the matching `uv tool install ...` command to install it.
 

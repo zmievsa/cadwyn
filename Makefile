@@ -2,7 +2,7 @@ SHELL := /bin/bash
 py_warn = PYTHONDEVMODE=1
 .DEFAULT_GOAL := help
 
-.PHONY: help install hooks lint check check-tools check-prek
+.PHONY: help install hooks lint check links check-tools check-prek
 
 help: ## Show the available developer commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -38,6 +38,9 @@ lint: check-prek ## Run all prek hooks
 
 check: check-tools ## Run the full local CI-equivalent suite
 	tox run-parallel --parallel-no-spinner
+
+links: check-tools ## Check every link in the docs, including the links to external sites
+	tox run -e links_external
 
 check-tools:
 	@status=0; \
