@@ -3,5 +3,6 @@
 - Never close a GitHub issue (or mark it as done) until the fix is released. Merging a fix to `main` is not enough; reference the issue without closing keywords like "fixes"/"closes" in PRs and commits
 - The twice-daily "Package Update Testing" workflow (`.github/workflows/daily_tests.yaml`) must always pass. If it fails, find the root cause and fix it in Cadwyn as soon as possible, ahead of other work. Don't pin, cap, skip, or xfail your way around it.
 - Before changing Cadwyn, read `docs/home/CONTRIBUTING.md` and the pages it links to
-- A silent wrong value is worse than an error. Better crash early
+- A silent wrong value is worse than an error most of the time. Better crash early
+- Cadwyn should not be stricter/safer than FastAPI or Pydantic, and it should not try to fix their shortcomings
 - End every PR description, issue, and GitHub comment that an agent writes with the public model name and harness that made it, e.g. `Created with Claude Opus 5.5 in Claude Code.` Name subagent models that wrote part of it too. If the model is unknown, name only the harness
