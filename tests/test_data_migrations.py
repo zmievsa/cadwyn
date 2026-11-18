@@ -13236,6 +13236,213 @@ def test__request_body_migration__with_json_field_dumped_differently_in_older_ve
     assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("json_type", ("body", "data"))]
 
 
+class ResponseSchemaWithJsonStrings(BaseModel):
+    data: Optional[Json[dict[str, Any]]] = None
+    anything: Optional[Json[Any]] = None
+    text: Optional[Json[str]] = None
+    text_or_number: Optional[Json[Union[str, int]]] = None
+    kind: Optional[Json[_JsonStrEnum]] = None
+    items: list[Json[Any]] = []
+    mapping: dict[str, Json[Any]] = {}
+
+
+@pytest.mark.parametrize(
+    ("response_model", "returned_value"),
+    [
+        pytest.param(
+            SchemaWithJsonDict, SchemaWithJsonDict.model_validate({"data": '{"a": 1}'}), id="json_dict_in_model"
+        ),
+        pytest.param(SchemaWithJsonDict, {"data": '{"a": 1}'}, id="raw_dict_with_json_dict"),
+        pytest.param(
+            ResponseSchemaWithJsonStrings, ResponseSchemaWithJsonStrings(anything='"123"'), id="string_in_any"
+        ),
+        pytest.param(ResponseSchemaWithJsonStrings, {"anything": '"123"'}, id="raw_dict_with_json_string"),
+        pytest.param(
+            ResponseSchemaWithJsonStrings, ResponseSchemaWithJsonStrings(anything='"5"'), id="one_character_string"
+        ),
+        pytest.param(ResponseSchemaWithJsonStrings, ResponseSchemaWithJsonStrings(anything='""'), id="empty_string"),
+        pytest.param(
+            ResponseSchemaWithJsonStrings,
+            ResponseSchemaWithJsonStrings(anything='"é"'),
+            id="one_character_string_below_x100",
+        ),
+        pytest.param(
+            ResponseSchemaWithJsonStrings,
+            ResponseSchemaWithJsonStrings(anything='"€"'),
+            id="one_character_string_above_xff",
+        ),
+        pytest.param(
+            ResponseSchemaWithJsonStrings,
+            ResponseSchemaWithJsonStrings(anything='"abc"'),
+            id="string_that_isnt_json",
+        ),
+        pytest.param(
+            ResponseSchemaWithJsonStrings,
+            ResponseSchemaWithJsonStrings(
+                items=['"1"', "2"], mapping={"k": '"3"'}, text_or_number='"123"', text='"null"', kind='"1"'
+            ),
+            id="strings_in_containers_and_unions",
+        ),
+        pytest.param(
+            list[ResponseSchemaWithJsonStrings],
+            [ResponseSchemaWithJsonStrings(anything='"123"')],
+            id="list_of_models",
+        ),
+        pytest.param(list[ResponseSchemaWithJsonStrings], [{"anything": '"123"'}], id="list_of_raw_dicts"),
+        pytest.param(
+            dict[str, ResponseSchemaWithJsonStrings],
+            {"k": ResponseSchemaWithJsonStrings(anything='"123"')},
+            id="dict_of_models",
+        ),
+        pytest.param(
+            JsonRootModel,
+            JsonRootModel([SchemaWithJsonDict.model_validate({"data": '{"a": 1}'})]),
+            id="root_model",
+        ),
+        pytest.param(
+            Optional[ResponseSchemaWithJsonStrings],
+            ResponseSchemaWithJsonStrings(anything='"123"'),
+            id="optional_model_with_value",
+        ),
+        pytest.param(Optional[ResponseSchemaWithJsonStrings], None, id="optional_model_with_none"),
+        pytest.param(Json[Any], '"123"', id="raw_json_response_model"),
+    ],
+)
+def test__response_body_migration__with_json_fields__should_be_the_same_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    response_model: Any,
+    returned_value: Any,
+):
+    async def endpoint():
+        return returned_value
+
+    router.get(test_path, response_model=response_model)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.get(test_path, response_model=response_model)(endpoint)
+    clients = create_versioned_clients(version_change(), router=router)
+
+    expected = TestClient(fastapi_app).get(test_path)
+    assert expected.status_code == 200
+    for version_client in clients.values():
+        response = version_client.get(test_path)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        pytest.param('{"a": 1}', {"encoded_by_migration": True}, id="value_that_the_migration_encodes"),
+        pytest.param('{"b": 2}', {"set_by_migration": True}, id="value_that_the_migration_sets"),
+        pytest.param('{"c": 3}', {"c": 3}, id="value_that_the_migration_keeps"),
+    ],
+)
+def test__response_body_migration__with_json_field__should_get_its_parsed_value_and_keep_the_value_it_sets(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    data: str,
+    expected: dict[str, Any],
+):
+    seen_bodies = []
+
+    @router.get(test_path, response_model=SchemaWithJsonDict)
+    async def endpoint():
+        return SchemaWithJsonDict.model_validate({"data": data})
+
+    @convert_response_to_previous_version_for(SchemaWithJsonDict)
+    def migrator(response: ResponseInfo):
+        seen_bodies.append(dict(response.body))
+        if response.body["data"] == {"a": 1}:
+            response.body["data"] = '{"encoded_by_migration": true}'
+        elif response.body["data"] == {"b": 2}:
+            response.body["data"] = {"set_by_migration": True}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].get(test_path).json() == {"data": expected}
+    assert seen_bodies == [{"data": json.loads(data)}]
+
+
+@pytest.mark.parametrize(
+    ("migrate", "expected"),
+    [
+        pytest.param(lambda _body: None, "123", id="string_that_the_migration_keeps"),
+        pytest.param(
+            lambda body: body.update(anything=json.dumps(body["anything"])),
+            "123",
+            id="string_that_the_migration_encodes",
+        ),
+        pytest.param(lambda body: body.update(anything="456"), 456, id="string_that_the_migration_sets"),
+        pytest.param(lambda body: body.update(anything=["a"]), ["a"], id="list_that_the_migration_sets"),
+    ],
+)
+def test__response_body_migration__with_string_in_json_field__should_get_the_decoded_string_and_keep_what_it_sets(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migrate: Callable[[dict[str, Any]], None],
+    expected: Any,
+):
+    seen_bodies = []
+
+    @router.get(test_path, response_model=FormModelWithJsonAny)
+    async def endpoint():
+        return FormModelWithJsonAny(anything='"123"')
+
+    @convert_response_to_previous_version_for(FormModelWithJsonAny)
+    def migrator(response: ResponseInfo):
+        seen_bodies.append(dict(response.body))
+        migrate(response.body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].get(test_path).json() == {"anything": expected}
+    assert seen_bodies == [{"anything": "123"}]
+
+
+@pytest.mark.parametrize("value", [pytest.param("", id="empty_string"), pytest.param("é", id="one_character_string")])
+def test__response_body_migration__with_json_string_that_python_shares_and_a_migration__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    value: str,
+):
+    @router.get(test_path, response_model=ResponseSchemaWithJsonStrings)
+    async def endpoint():
+        return ResponseSchemaWithJsonStrings(anything='"abc"', text=json.dumps(value))
+
+    @convert_response_to_previous_version_for(ResponseSchemaWithJsonStrings)
+    def migrator(response: ResponseInfo):
+        response.body["data"] = json.dumps({"set_by_migration": True})
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors()] == [
+        ("json_invalid", ("response", "anything")),
+        ("json_invalid", ("response", "text")),
+    ]
+
+
+def test__response_body_migration__when_only_older_version_has_response_model_with_json_field__should_validate_once(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path)
+    async def endpoint():
+        return {"anything": '"123"'}
+
+    clients = create_versioned_clients(
+        version_change(cadwyn_endpoint(test_path, ["GET"]).had(response_model=FormModelWithJsonAny))
+    )
+
+    assert clients["2000-01-01"].get(test_path).json() == {"anything": "123"}
+
+
 class OptionalOuterWithRequiredInner(BaseModel):
     inner: Optional[InnerSchemaWithValidationAlias] = Field(default=None, alias="i", validation_alias="j")
     name: str = "n"
@@ -14537,6 +14744,80 @@ def test__migrate_response__for_what_an_endpoint_returns__should_give_what_the_c
     assert migrated.headers == [
         (key, value) for key, value in route_response.headers.multi_items() if key in {"x-version", "set-cookie"}
     ]
+
+
+@pytest.mark.parametrize(
+    ("model", "latest_body"),
+    [
+        pytest.param(
+            SchemaWithJsonDict, SchemaWithJsonDict.model_validate({"data": '{"a": 1}'}), id="json_dict_in_model"
+        ),
+        pytest.param(SchemaWithJsonDict, {"data": '{"a": 1}'}, id="raw_dict_with_json_dict"),
+        pytest.param(FormModelWithJsonAny, FormModelWithJsonAny(anything='"123"'), id="json_string_in_model"),
+        pytest.param(FormModelWithJsonAny, {"anything": '"123"'}, id="raw_dict_with_json_string"),
+        pytest.param(FormModelWithJsonAny, FormModelWithJsonAny(anything='""'), id="empty_json_string_in_model"),
+    ],
+)
+def test__migrate_response__with_json_fields__should_give_what_the_client_gets(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+    test_path: Literal["/test"],
+    model: type[BaseModel],
+    latest_body: Any,
+):
+    @router.get(test_path, response_model=model)
+    async def endpoint():
+        return latest_body
+
+    app = create_versioned_app(version_change())
+    route_response = CadwynTestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"}).get(test_path)
+
+    migrated = migrate_response(app.versions, model, body=latest_body, version="2000-01-01")
+
+    assert migrated.body.model_dump(mode="json", by_alias=True) == route_response.json()
+
+
+def test__migrate_response__with_json_string_from_version_in_between__should_preserve_string():
+    @convert_response_to_previous_version_for(FormModelWithJsonAny)
+    def add_header(response: ResponseInfo):
+        response.headers["x-migrated"] = "yes"
+
+    versions = VersionBundle(*conftest_versions(version_change(add_header=add_header), version_change()))
+    body = generate_versioned_models(versions)["2001-01-01"][FormModelWithJsonAny](anything='"123"')
+
+    migrated = migrate_response(
+        versions, FormModelWithJsonAny, body=body, version="2000-01-01", from_version="2001-01-01"
+    )
+
+    assert migrated.body.anything == "123"
+    assert migrated.headers == [("x-migrated", "yes")]
+
+
+def test__migrate_response__with_json_field_and_migration_that_makes_it_an_error__should_return_the_error_body():
+    @convert_response_to_previous_version_for(FormModelWithJsonAny)
+    def migration_to_error(response: ResponseInfo):
+        response.status_code = 404
+        response.body = {"detail": "Not found"}
+
+    versions = VersionBundle(*conftest_versions(version_change(migration=migration_to_error)))
+
+    migrated = migrate_response(
+        versions, FormModelWithJsonAny, body=FormModelWithJsonAny(anything='"123"'), version="2000-01-01"
+    )
+
+    assert migrated == MigratedResponse(body={"detail": "Not found"}, status_code=404, headers=[])
+
+
+def test__migrate_response__with_shared_json_string_and_migration__should_not_encode_shared_string():
+    @convert_response_to_previous_version_for(FormModelWithJsonAny)
+    def touch_response(response: ResponseInfo):
+        response.headers["x-migrated"] = "yes"
+
+    versions = VersionBundle(*conftest_versions(version_change(touch_response=touch_response)))
+
+    with pytest.raises(ValidationError) as exc_info:
+        migrate_response(versions, FormModelWithJsonAny, body=FormModelWithJsonAny(anything='""'), version="2000-01-01")
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors()] == [("json_invalid", ("anything",))]
 
 
 def test__migrate_response__with_migration_that_makes_it_an_error__should_return_the_error_body():

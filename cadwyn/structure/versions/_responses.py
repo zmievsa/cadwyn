@@ -26,6 +26,12 @@ from cadwyn_core.structure.data import (
 )
 from cadwyn_core.structure.versions._aliases import _rescue_body
 from cadwyn_core.structure.versions._common import _CADWYN_RESPONSE_PARAM_NAME
+from cadwyn_core.structure.versions._json import (
+    _ClientJsonStrings,
+    _copy_decoded_json_strings,
+    _encode_planned_json_values,
+    _get_response_json_values_plan,
+)
 from cadwyn_core.structure.versions._migration_targets import (
     _get_closest_union_member,
     _no_union_member,
@@ -87,6 +93,8 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
     if api_version is None:
         return response_or_response_body
 
+    json_values_plan = None
+    decoded_json_strings = _ClientJsonStrings()
     # Whether Cadwyn decoded the body of the returned response as JSON. Only such a body can be encoded back as JSON,
     # so the body of any other response that stays text reaches the client as the bytes that the endpoint returned.
     body_is_json = False
@@ -122,14 +130,18 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
         else:
             status_code = 200
         fastapi_response_dependency.status_code = status_code
+        json_values_plan = _get_response_json_values_plan(
+            route.response_field, head_route.response_field, head_route.response_model, response_or_response_body
+        )
+        content = _prepare_response_content(
+            response_or_response_body,
+            exclude_unset=head_route.response_model_exclude_unset,
+            exclude_defaults=head_route.response_model_exclude_defaults,
+            exclude_none=head_route.response_model_exclude_none,
+        )
         response_info = ResponseInfo(
             fastapi_response_dependency,
-            _prepare_response_content(
-                response_or_response_body,
-                exclude_unset=head_route.response_model_exclude_unset,
-                exclude_defaults=head_route.response_model_exclude_defaults,
-                exclude_none=head_route.response_model_exclude_none,
-            ),
+            _copy_decoded_json_strings(json_values_plan, content, decoded_json_strings),
         )
 
     response_info = versions._migrate_response(
@@ -148,6 +160,7 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
             if response_target.union_members
             else _no_union_member
         ),
+        decoded_json_strings=decoded_json_strings,
     )
 
     if isinstance(response_or_response_body, FastapiResponse):
@@ -195,9 +208,14 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
         return response_info._response
     if route.response_field is None:
         return response_info.body
-    return _rescue_response(
+    rescued_body = _rescue_response(
         route.response_field, head_route.response_model, response_or_response_body, response_info.body
     )
+    if json_values_plan is not None:
+        return _encode_planned_json_values(
+            json_values_plan, rescued_body, decoded_json_strings, has_other_body_readers=lambda: False
+        )
+    return rescued_body
 
 
 def _get_union_member_of_response(

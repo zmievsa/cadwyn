@@ -7,6 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
+- `Json[...]` fields in response model instances returned from routes or passed to `migrate_response()` are no longer decoded a second time or rejected with a 500 error, e.g. `Json[Any]` keeps `"123"` instead of becoming `123` and `Json[dict]` keeps `{"a": 1}`. Plain `dict` responses and response migrations that encode values with `json.dumps()` work as before, subject to [known limitations](https://docs.cadwyn.dev/theory/design_decisions/#known-limitations) ([#653](https://github.com/zmievsa/cadwyn/issues/653)).
 - A plain `Response` whose content type is exactly `application/json` now reaches clients with the bytes that the endpoint returned, as it already did with parameters such as `application/json; charset=utf-8`. Cadwyn used to encode its body as a JSON string a second time, e.g. `"{\"a\": 1}"` instead of `{"a": 1}`, in every version, with or without migrations. Response migrations by path still get its body as text and can set it to text, which also reaches clients as it is ([#638](https://github.com/zmievsa/cadwyn/issues/638)). Thanks to @ununto for the first fix in [#650](https://github.com/zmievsa/cadwyn/pull/650), which this one builds on.
 
 ### Changed

@@ -21,6 +21,7 @@ from cadwyn_core.structure.common import VersionedModel, VersionType
 from cadwyn_core.structure.data import ResponseInfo
 
 from ._changes import HeadVersion, IdentifierPythonPath, Version, VersionChange, get_cls_pythonpath
+from ._json import _ClientJsonStrings
 from ._migration_targets import (
     _get_models_of_schema,
     _SchemaMigrationTarget,  # Needed by runtime annotation introspection.
@@ -145,6 +146,7 @@ class VersionBundle:
         head_route: "Union[APIRoute, None]",
         response_target: "_SchemaMigrationTarget",
         get_response_union_member: "Union[Callable[[], Union[type[BaseModel], None]], None]" = None,
+        decoded_json_strings: Union[_ClientJsonStrings, None] = None,
     ) -> ResponseInfo:
         return _migrate_response(
             self,
@@ -153,4 +155,5 @@ class VersionBundle:
             head_route,
             response_target,
             get_response_union_member,
+            decoded_json_strings=decoded_json_strings,
         )

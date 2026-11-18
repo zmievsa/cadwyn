@@ -36,7 +36,7 @@ They also do what routes do around the migrations, which a loop of your own usua
 
 * `migrate_request()` validates the body of the older version first, and migrates only the fields that it has set, by their aliases. `migrate_response()` validates the result of the migrations with the model of the older version.
 * They give the HEAD the members of its own enums instead of the members of the copies of enums that older versions have.
-* They restore the validation aliases that the migrated body needs, and, in requests, the `Json[...]` values.
+* They restore the validation aliases and the `Json[...]` values that the migrated body needs.
 * Once a migration turns a response into an error, they only run the migrations that set `migrate_http_errors=True`.
 * They take dates and pick the closest older version, as `migrate_response_body()` does.
 * They migrate between any two versions: pass `to_version` to `migrate_request()` or `from_version` to `migrate_response()` if your loop doesn't start or end at HEAD.

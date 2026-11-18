@@ -22,6 +22,7 @@ from pydantic_core import (
     to_json,
 )
 
+from ._aliases import _get_restorer_spec, _is_dumped_from_models
 from ._core_schema import (
     _CORE_SCHEMA_DEFINITIONS,
     _CORE_SCHEMA_ERRORS,
@@ -53,6 +54,23 @@ def _get_route_json_values_plan(
     if embed_body_fields or len(head_dependant.body_params) != 1 or len(route.dependant.body_params) != 1:
         return None
     return _get_json_values_plan(head_dependant.body_params[0], route.dependant.body_params[0])
+
+
+def _get_response_json_values_plan(
+    target: "Union[_JsonPlanSource, None]",
+    source: "Union[_JsonPlanSource, None]",
+    source_model: object,
+    content: Any,
+) -> "Union[_JsonValuesPlan, None]":
+    if target is None or source is None:
+        return None
+    plan = _get_json_values_plan(target, source)
+    if plan is None:
+        return None
+    spec = _get_restorer_spec(source_model)
+    if spec is None or not _is_dumped_from_models(content, spec):
+        return None
+    return plan
 
 
 @dataclasses.dataclass(slots=True)

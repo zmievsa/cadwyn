@@ -25,6 +25,7 @@ from cadwyn_core.structure.data import (
 )
 
 from ._aliases import _get_restorer_spec, _is_dumped_from_models
+from ._json import _ClientJsonStrings
 from ._migration_targets import (
     _get_schema_migrations,
     _no_union_member,
@@ -108,6 +109,7 @@ def _migrate_response(
     response_target: "_SchemaMigrationTarget",
     get_response_union_member: "Union[Callable[[], Union[type[BaseModel], None]], None]" = None,
     from_version: Union[VersionType, None] = None,
+    decoded_json_strings: Union[_ClientJsonStrings, None] = None,
 ) -> ResponseInfo:
     """Run the response migrations from from_version or head down to the response's version"""
     if get_response_union_member is None:
@@ -115,6 +117,7 @@ def _migrate_response(
     head_route_id = id(head_route)
     start = 0 if from_version is None else versions.version_values.index(from_version)
     end = versions.version_values.index(current_version)
+    has_run_migrations = False
     for v in versions.versions[start:end]:
         for version_change in v.changes:
             migrations_to_apply: list[_BaseAlterResponseInstruction] = list(
@@ -134,6 +137,9 @@ def _migrate_response(
                 # successful body must not run on the error body, unless they migrate HTTP errors
                 if response_info.status_code < 300 or migration.migrate_http_errors:
                     migration(response_info)
+                    has_run_migrations = True
+    if has_run_migrations and decoded_json_strings is not None:
+        decoded_json_strings.forget_shared_strings()
     return response_info
 
 
