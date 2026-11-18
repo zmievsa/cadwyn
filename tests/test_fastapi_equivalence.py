@@ -8,11 +8,14 @@ their head routes, so they must behave exactly like plain FastAPI.
 
 Every case has a route, a request, and an app with two versions whose version change touches something else. We send
 the request to plain FastAPI and to each version of Cadwyn in which the route is untouched, check that the route of
-that version served it, and compare the status, the content type, and the text of the body that they return, and what
+that version served it, and compare the status, the content type, and the bytes of the body that they return, and what
 the endpoint, its dependencies, and its background tasks did.
 """
 
 import dataclasses
+import functools
+import sys
+import traceback
 from collections.abc import Callable, Iterable
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, TypeVar, Union
@@ -153,8 +156,8 @@ class _Case:
 class _Result:
     status_code: int
     content_type: Union[str, None]
-    # The text of the body, so that e.g. `true` and `1` differ
-    body: str
+    # The bytes of the body, so that e.g. `true` and `1` or two undecodable bytes differ
+    body: bytes
     events: list[str]
 
 
@@ -162,7 +165,7 @@ def _send(client: TestClient, case: _Case, headers: dict[str, str]) -> _Result:
     _events.clear()
     request = dict(case.request)
     response = client.post(_PATH, headers={**request.pop("headers", {}), **headers}, **request)
-    return _Result(response.status_code, response.headers.get("content-type"), response.text, list(_events))
+    return _Result(response.status_code, response.headers.get("content-type"), response.content, list(_events))
 
 
 class _ServedRouteRecorder:
@@ -986,6 +989,12 @@ def _dependency_that_asks_for_the_solver(router: APIRouter) -> None:
         return {}
 
 
+def _partial_of_the_solver(router: APIRouter) -> None:
+    @router.post(_PATH, dependencies=[Depends(functools.partial(current_dependency_solver))])
+    async def route():  # pragma: no cover
+        return {}
+
+
 def _dependency_with_names_only_for_type_checkers(
     # FastAPI reads it as a query param because it can't resolve the name, so we can't tell what Cadwyn versions
     value: "Annotated[_OnlyForTypeCheckers, Depends(_record_call)]",
@@ -1090,6 +1099,7 @@ def _route_that_only_exists_in_older_versions(router: APIRouter) -> None:
             id="endpoint_existed",
         ),
         pytest.param(_dependency_that_asks_for_the_solver, _unrelated_change, (), (), id="current_dependency_solver"),
+        pytest.param(_partial_of_the_solver, _unrelated_change, (), (), id="partial_of_current_dependency_solver"),
         pytest.param(
             _route_with_names_only_for_type_checkers, _unrelated_change, (), (), id="unknown_models_of_dependency"
         ),
@@ -1104,3 +1114,111 @@ def test__route_generation__version_changes_touch_route__should_record_it_as_tou
     _, app = _create_apps(_Case("touched", register, change=change), *head_changes)
 
     assert _get_untouched_versions(app) == untouched_versions
+
+
+# Computing the marker must not run any user code that Cadwyn wouldn't run without it, and must use the same
+# results as the migrations, so that it can't disagree with what runs
+
+_annotation_evaluations: list[str] = []
+
+
+def _record_annotation_evaluation() -> type[int]:  # pragma: no cover # Nothing may evaluate it
+    _annotation_evaluations.append("evaluated")
+    return int
+
+
+def _factory_with_annotation_that_records_its_evaluations(value: int = 0) -> int:  # pragma: no cover
+    return value
+
+
+# A quoted annotation is evaluated whenever something reads the signature with its annotations evaluated
+_factory_with_annotation_that_records_its_evaluations.__annotations__["value"] = "_record_annotation_evaluation()"
+
+
+class _ParentOfUnusedSubclass(BaseModel):
+    number: int = 0
+
+
+class _ChangedSubclass(_ParentOfUnusedSubclass):
+    other_number: int = 0
+
+
+class _UnusedSubclass(_ParentOfUnusedSubclass):
+    other_number: int = Field(default_factory=_factory_with_annotation_that_records_its_evaluations)
+
+
+def _parent_of_unused_subclass_in_response_model(router: APIRouter) -> None:
+    @router.post(_PATH, response_model=_ParentOfUnusedSubclass)
+    async def route():  # pragma: no cover
+        return {}
+
+
+def test__route_generation__unused_subclass_of_a_model_of_the_route__should_not_be_looked_into():
+    _annotation_evaluations.clear()
+    case = _Case(
+        "unused_subclass",
+        _parent_of_unused_subclass_in_response_model,
+        change=lambda: version_change(schema(_ChangedSubclass).field("other_number").didnt_exist),
+    )
+
+    # Every version has instructions that differ from head, so the marker looks at the models in every version
+    _, app = _create_apps(case, version_change(schema(_Unrelated).field("b").didnt_exist))
+
+    assert _annotation_evaluations == []
+    # Nothing copied the unused subclass, so we can't tell whether it differs without looking into it
+    assert _get_untouched_versions(app) == ()
+
+
+class _MigratedResponseModel(BaseModel):
+    state: str
+
+
+class _OtherResponseModel(BaseModel):
+    state: str
+
+
+# The names of the functions on the stack of each evaluation of the lazy type alias
+_alias_evaluation_stacks: list[list[str]] = []
+
+
+def _resolve_lazy_response_model() -> type[BaseModel]:
+    stack = [frame.name for frame in traceback.extract_stack()]
+    _alias_evaluation_stacks.append(stack)
+    # The migrations of the routes are looked up by another model than the one of the responses
+    if "_get_migration_targets" in stack:
+        return _OtherResponseModel
+    return _MigratedResponseModel
+
+
+if sys.version_info >= (3, 12):
+    # Only the values of native type aliases are evaluated lazily, each time something reads them
+    exec("type _LazyResponseModel = _resolve_lazy_response_model()", globals())
+
+
+def _lazy_response_type_alias(router: APIRouter) -> None:
+    @router.post(_PATH, response_model=globals()["_LazyResponseModel"])
+    async def route():
+        return {"state": "new"}
+
+
+def _migration_of_the_alias_value() -> type[VersionChange]:
+    @convert_response_to_previous_version_for(_MigratedResponseModel, check_usage=False)
+    def migration(response: ResponseInfo) -> None:  # pragma: no cover
+        response.body["state"] = "old"
+
+    return version_change(migration=migration)
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 14),
+    reason="Cadwyn evaluates the values of native type aliases on each read since Python 3.14",
+)
+def test__route_generation__response_type_alias_that_resolves_to_another_model__should_agree_with_the_migrations():
+    _, app = _create_apps(_Case("lazy_alias", _lazy_response_type_alias, change=_migration_of_the_alias_value))
+    response = TestClient(app).post(_PATH, headers={app.router.api_version_parameter_name: _OLDER_VERSION})
+
+    assert any("_get_migration_targets" in stack for stack in _alias_evaluation_stacks)
+    assert not any("_is_untouched_route" in stack for stack in _alias_evaluation_stacks)
+    # The migration of the model doesn't run because the route looks its migrations up by the other model
+    assert response.json() == {"state": "new"}
+    assert _get_untouched_versions(app) == _VERSIONS

@@ -146,7 +146,6 @@ class SchemaGenerator:
         "_bare_models_being_generated",
         "_changed_models",
         "_copied_cycles",
-        "_copy_differs_from_head_answers",
         "_cycles_behind_latest_generic_args",
         "_cycles_being_copied",
         "_cycles_to_copy",
@@ -158,6 +157,8 @@ class SchemaGenerator:
         "_models_copied_eagerly",
         "_parent_renames",
         "_reference_cycles",
+        "_requests_being_recorded",
+        "_requests_of_copies",
         "_root_models",
         "_route_versioning_thread",
         "_version",
@@ -195,8 +196,6 @@ class SchemaGenerator:
         self._instructions_that_differ_from_head = instructions_that_differ_from_head
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._versioning_answers: dict[_VersioningQuestion, bool] = {}
-        # The answers of copies_differ_from_head for each question (see _reaches)
-        self._copy_differs_from_head_answers: dict[_VersioningQuestion, bool] = {}
         self._reference_cycles = reference_cycles
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
@@ -206,6 +205,11 @@ class SchemaGenerator:
         self._adds_references: Union[bool, None] = None
         # The reference cycles whose copies we are generating right now, innermost last
         self._cycles_being_copied: list[frozenset[type[BaseModel]]] = []
+        # The models that generating each copy requested from this generator: in fields, field attributes such as
+        # default factories, annotations, bases, generic args, etc. (see copies_differ_from_head)
+        self._requests_of_copies: dict[type[Union[BaseModel, Enum]], set[type[Union[BaseModel, Enum]]]] = {}
+        # The requests of the copies that we are generating right now, innermost last (see _recording_requests)
+        self._requests_being_recorded: list[set[type[Union[BaseModel, Enum]]]] = []
         # The models that this version copies in any case: the ones with instructions, which the generator copies
         # when it is created, and the ones that the routes use (see _add_route_models). Along with all of the models
         # that they refer to, they are the models copied eagerly (see _is_copied_eagerly)
@@ -248,8 +252,17 @@ class SchemaGenerator:
         other models in this version than in head (see _BareGenericCopier).
         """
         with self._lock:
+            self._record_request(original)
             if original in self._bare_models:
                 return self._bare_models[original]
+            with self._recording_requests() as requests:
+                bare_model = self._generate_bare_model(original)
+            # The template of the model has recorded its own requests, which the bare model has too
+            self._requests_of_copies[original] = self._requests_of_copies.get(original, set()) | requests
+            return bare_model
+
+    def _generate_bare_model(self, original: type[BaseModel]) -> type[BaseModel]:
+        with self._lock:
             if original in self._bare_models_being_generated:
                 raise SchemaGenerationError(
                     f"Cadwyn cannot version the bare generic {original.__qualname__} because its type parameter "
@@ -377,6 +390,7 @@ class SchemaGenerator:
         model = _unwrap_model(model)
 
         with self._lock:
+            self._record_request(model)
             if not self._needs_copy(model):
                 return model
             if model not in self.concrete_models:
@@ -390,7 +404,9 @@ class SchemaGenerator:
                 cycle = self._get_cycle_to_copy(model)
                 if cycle is None:
                     wrapper = self._get_wrapper_for_model(model)
-                    model_copy = wrapper.generate_model_copy(self)
+                    with self._recording_requests() as requests:
+                        model_copy = wrapper.generate_model_copy(self)
+                    self._requests_of_copies[model] = requests
                     if lenient_issubclass(model_copy, BaseModel):
                         self._check_that_copy_follows_parent_renames(cast("type[BaseModel]", model), model_copy)
                     if self._copied_cycles and lenient_issubclass(model_copy, BaseModel):
@@ -446,30 +462,54 @@ class SchemaGenerator:
         return False
 
     def copies_differ_from_head(self, models: "collections.abc.Iterable[type[Union[BaseModel, Enum]]]") -> bool:
-        """Whether this version's copies of the models or of any of their subclasses could differ from them.
+        """Whether this version's copies of the models could differ from them, judging only by what copying did.
 
-        Unlike validates_models_that_differ_from_head, this follows everything that copying a model versions (see
-        _get_references), not only what pydantic validates: e.g. field attributes such as defaults and default
-        factories, annotations, bases, and generic args, and the subclasses too (see _is_versioned). A copy differs
-        if it reaches a model or enum with instructions in HeadVersion or in a version newer than this one, or
-        a model whose references we don't know.
+        Generating a copy records the models that it requests from the generator: in fields, field attributes such
+        as default factories, annotations, bases, generic args, etc. A copy could differ if it reaches a model or enum
+        with instructions in HeadVersion or in a version newer than this one, directly or through the subclasses
+        (see _is_versioned). We never look into a model ourselves because that can run user code that copying
+        doesn't, e.g. evaluate its annotations. So a model that this version hasn't copied, and that we don't already
+        know to be the same in every version, counts as different.
         """
         if not self._instructions_that_differ_from_head:
             return False
-        return any(
-            self._reaches(
-                _VersioningQuestion(model, includes_subclasses=True),
-                self._copy_differs_from_head,
-                self._copy_differs_from_head_answers,
-            )
-            for model in models
-        )
+        with self._lock:
+            models_to_visit = list(models)
+            visited_models: set[type[Union[BaseModel, Enum]]] = set()
+            while models_to_visit:
+                model = models_to_visit.pop()
+                if model in visited_models:
+                    continue
+                visited_models.add(model)
+                if model in self._instructions_that_differ_from_head:
+                    return True
+                if model not in self._requests_of_copies:
+                    # Every version uses the model itself if no version changes it or its subclasses (see _needs_copy)
+                    if self._versioning_answers.get(_VersioningQuestion(model, includes_subclasses=True)) is False:
+                        continue
+                    return True
+                models_to_visit.extend(self._requests_of_copies[model])
+                subclasses, are_all_known = _get_subclasses_that_can_be_versioned(model)
+                # E.g. another thread is creating a subclass, which pydantic hasn't finished yet
+                if not are_all_known:  # pragma: no cover
+                    return True
+                models_to_visit.extend(_unwrap_model(subclass) for subclass in subclasses)
+        return False
 
-    def _copy_differs_from_head(self, question: "_VersioningQuestion") -> bool:
-        if question.includes_subclasses:
-            return False
-        model = question.model
-        return model in self._instructions_that_differ_from_head or not self._get_references(model).is_complete
+    def _record_request(self, model: type[Union[BaseModel, Enum]]) -> None:
+        """Record that the copy that we are generating requests the model (see copies_differ_from_head)"""
+        if self._requests_being_recorded:
+            self._requests_being_recorded[-1].add(model)
+
+    @contextlib.contextmanager
+    def _recording_requests(self) -> Generator[set[type[Union[BaseModel, Enum]]], None, None]:
+        """Record the models that generating a copy requests from the generator, under the lock"""
+        requests: set[type[Union[BaseModel, Enum]]] = set()
+        self._requests_being_recorded.append(requests)
+        try:
+            yield requests
+        finally:
+            self._requests_being_recorded.pop()
 
     def _base_differs_from_head(self, model: type[BaseModel], base_index: int) -> bool:
         instructions = self._instructions_that_differ_from_head.get(model.__mro__[base_index])
@@ -539,37 +579,28 @@ class SchemaGenerator:
         return self._reaches_changed_models(_VersioningQuestion(model, includes_subclasses=True))
 
     def _reaches_changed_models(self, question: "_VersioningQuestion") -> bool:
-        return self._reaches(question, self._is_changed, self._versioning_answers)
-
-    def _reaches(
-        self,
-        question: "_VersioningQuestion",
-        is_changed: "Callable[[_VersioningQuestion], bool]",
-        answers: "dict[_VersioningQuestion, bool]",
-    ) -> bool:
-        """Whether the question or any question that its answer depends on is changed, caching the answers"""
-        if question in answers:
-            return answers[question]
+        if question in self._versioning_answers:
+            return self._versioning_answers[question]
         visited_questions: set[_VersioningQuestion] = set()
         questions_to_visit = [question]
         answer = False
         depends_on_unknown_subclasses = False
         while questions_to_visit:
             current_question = questions_to_visit.pop()
-            if current_question in visited_questions or answers.get(current_question) is False:
+            if current_question in visited_questions or self._versioning_answers.get(current_question) is False:
                 continue
             visited_questions.add(current_question)
-            if answers.get(current_question) or is_changed(current_question):
+            if self._versioning_answers.get(current_question) or self._is_changed(current_question):
                 answer = True
                 break
             dependent_questions, are_all_known = self._get_dependent_questions(current_question)
             depends_on_unknown_subclasses |= not are_all_known
             questions_to_visit.extend(dependent_questions)
         if answer:
-            answers[question] = True
+            self._versioning_answers[question] = True
         elif not depends_on_unknown_subclasses:
             # None of the visited questions lead to changed models either
-            answers.update(dict.fromkeys(visited_questions, False))
+            self._versioning_answers.update(dict.fromkeys(visited_questions, False))
         # Otherwise, we ask again next time because the subclasses that are still being created could change it
         return answer
 
@@ -1085,7 +1116,11 @@ class SchemaGenerator:
         creation_order = self._get_creation_order_of_cycle(cycle)
         self._cycles_being_copied.append(cycle)
         try:
-            copies = _CycleCopier(self, cycle).copy(creation_order)
+            with self._recording_requests() as requests:
+                copies = _CycleCopier(self, cycle).copy(creation_order)
+            # The models of the cycle request each other from the copier instead of the generator
+            for model in cycle:
+                self._requests_of_copies[model] = requests | cycle
             for model in creation_order:
                 self._check_that_copy_follows_parent_renames(model, copies[model])
                 # The defaults of the models in the cycle are checked for every model that needs versioning
