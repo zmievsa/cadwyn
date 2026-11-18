@@ -1,20 +1,21 @@
 """Untouched routes compared with plain FastAPI.
 
 A route is untouched in a version if no version change between that version and head touches it: no endpoint
-instruction of a newer version changes it, no migration of a newer version runs for it, it validates no models or
-enums that differ from head, and no dependency asks for `current_dependency_solver`. Route generation records this on
-every route that it generates. Cadwyn 10.0 will serve such routes with their head routes, so they must behave
-exactly like plain FastAPI.
+instruction of a newer version changes it, no migration of a newer version runs for it, the copies of its models and
+enums don't differ from them, and no dependency asks for `current_dependency_solver`. Route generation records this
+on every API route that it generates, but not on WebSocket routes or webhooks. Cadwyn 10.0 will serve such routes with
+their head routes, so they must behave exactly like plain FastAPI.
 
 Every case has a route, a request, and an app with two versions whose version change touches something else. We send
-the request to plain FastAPI and to each version of Cadwyn in which the route is untouched, and compare what they
-return and what the endpoint, its dependencies, and its background tasks did.
+the request to plain FastAPI and to each version of Cadwyn in which the route is untouched, check that the route of
+that version served it, and compare the status, the content type, and the text of the body that they return, and what
+the endpoint, its dependencies, and its background tasks did.
 """
 
 import dataclasses
 from collections.abc import Callable, Iterable
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, TypeVar, Union
 
 import pytest
 from fastapi import (
@@ -43,6 +44,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from starlette.types import ASGIApp, Receive, Scope, Send
 from typing_extensions import override
 
 from cadwyn import (
@@ -95,11 +97,11 @@ _FASTAPI_DEVIATIONS: dict[str, str] = {
     ),
     "non_idempotent_validator_in_request_body": "Requests are validated twice: by their version and by head",
     "non_idempotent_validator_in_response_model": "Returned models are validated again by the response model (#592)",
-    "before_model_validator_in_request_body": "Head validates the dump of the validated body instead of what was sent",
+    "before_model_validator_in_request_body": "Head validates the dump of the body instead of what was sent (#682)",
     "model_construct_with_wrong_type_in_response": (
         "Returned models are validated again by the response model, which coerces their values (#592)"
     ),
-    "field_serializer_in_request_body": "Head validates the dump of the body, which serializers have changed",
+    "field_serializer_in_request_body": "Head validates the dump of the body, which serializers changed (#682)",
     "field_serializer_in_response_model": (
         "Returned models are dumped and validated again, after serializers have changed the dump (#592)"
     ),
@@ -107,7 +109,7 @@ _FASTAPI_DEVIATIONS: dict[str, str] = {
         "List and dict bodies lose extra keys and set fields in apps with dependency overrides (#566)"
     ),
     "union_with_serialization_alias_in_request_body": (
-        "Head validates the dump of a union body by its serialization aliases"
+        "Head validates the dump of a union body by its serialization aliases (#681)"
     ),
     "dependency_with_side_effect": "Dependencies run twice: for the request's version and for head (#220)",
     "background_task_of_dependency_with_tasks_param": (
@@ -150,7 +152,9 @@ class _Case:
 @dataclasses.dataclass(frozen=True)
 class _Result:
     status_code: int
-    body: Any
+    content_type: Union[str, None]
+    # The text of the body, so that e.g. `true` and `1` differ
+    body: str
     events: list[str]
 
 
@@ -158,11 +162,28 @@ def _send(client: TestClient, case: _Case, headers: dict[str, str]) -> _Result:
     _events.clear()
     request = dict(case.request)
     response = client.post(_PATH, headers={**request.pop("headers", {}), **headers}, **request)
-    if response.headers.get("content-type") == "application/json":
-        body = response.json()
-    else:
-        body = response.text
-    return _Result(response.status_code, body, list(_events))
+    return _Result(response.status_code, response.headers.get("content-type"), response.text, list(_events))
+
+
+class _ServedRouteRecorder:
+    """Records the route that served each request, which FastAPI puts into the scope when the route matches"""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.routes: list[object] = []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.routes.append(scope.get("route"))
+
+
+def _get_served_version(app: Cadwyn, recorder: _ServedRouteRecorder) -> Union[str, None]:
+    served_route = recorder.routes[-1]
+    return next(
+        (version for version, router in app.router.versioned_routers.items() if served_route in router.routes), None
+    )
 
 
 def _create_apps(case: _Case, *head_changes: type[VersionChange]) -> tuple[FastAPI, Cadwyn]:
@@ -624,6 +645,66 @@ def _model_dependency(router: APIRouter) -> None:
         return query.model_dump()
 
 
+# Models whose copies differ from them in what pydantic doesn't validate
+
+
+class _Details(BaseModel):
+    old_field: str = "old"
+    new_field: str = "new"
+
+
+def _details_change() -> type[VersionChange]:
+    return version_change(schema(_Details).field("new_field").didnt_exist)
+
+
+class _ModelWithDefaultFactory(BaseModel):
+    payload: Any = Field(default_factory=_Details)
+
+
+def _default_factory_in_response_model(router: APIRouter) -> None:
+    @router.post(_PATH, response_model=_ModelWithDefaultFactory)
+    async def route():
+        return {}
+
+
+class _ModelWithClassVar(BaseModel):
+    details_model: ClassVar[type[_Details]] = _Details
+    number: int = 0
+
+
+def _class_var_in_response_model(router: APIRouter) -> None:
+    @router.post(_PATH, response_model=_ModelWithClassVar)
+    async def route():
+        return _ModelWithClassVar()
+
+
+class _ParentModel(BaseModel):
+    number: int = 0
+
+
+class _ChildModel(_ParentModel):
+    other_number: int = 0
+
+
+def _parent_of_changed_model_in_response_model(router: APIRouter) -> None:
+    @router.post(_PATH, response_model=_ParentModel)
+    async def route():
+        return _ChildModel()
+
+
+_T = TypeVar("_T")
+
+
+class _GenericModel(BaseModel, Generic[_T]):
+    number: int = 0
+
+
+def _generic_arg_that_no_field_uses_in_response_model(router: APIRouter) -> None:
+    @router.post(_PATH, response_model=_GenericModel[_Details])
+    async def route():
+        return _GenericModel[_Details]()
+
+
 # Plain params, errors, and responses
 
 
@@ -774,6 +855,31 @@ _CASES = [
     _Case("http_exception", _http_exception),
     _Case("returned_json_response", _returned_json_response),
     _Case("streaming_response", _streaming_response),
+    # The copies of their models in the older version differ from them, so only the newer version is untouched
+    _Case(
+        "default_factory_of_changed_model_in_response_model",
+        _default_factory_in_response_model,
+        change=_details_change,
+        untouched_versions=(_NEWER_VERSION,),
+    ),
+    _Case(
+        "class_var_of_changed_model_in_response_model",
+        _class_var_in_response_model,
+        change=_details_change,
+        untouched_versions=(_NEWER_VERSION,),
+    ),
+    _Case(
+        "parent_of_changed_model_in_response_model",
+        _parent_of_changed_model_in_response_model,
+        change=lambda: version_change(schema(_ChildModel).field("other_number").didnt_exist),
+        untouched_versions=(_NEWER_VERSION,),
+    ),
+    _Case(
+        "generic_arg_that_no_field_uses_in_response_model",
+        _generic_arg_that_no_field_uses_in_response_model,
+        change=_details_change,
+        untouched_versions=(_NEWER_VERSION,),
+    ),
 ]
 
 
@@ -785,11 +891,15 @@ def test__untouched_route__request__should_get_the_same_response_as_in_fastapi(c
     assert _get_untouched_versions(app) == case.untouched_versions
 
     expected = _send(TestClient(fastapi_app, raise_server_exceptions=False), case, {})
-    client = TestClient(app, raise_server_exceptions=False)
-    results = {
-        version: _send(client, case, {app.router.api_version_parameter_name: version})
-        for version in case.untouched_versions
-    }
+    recorder = _ServedRouteRecorder(app)
+    client = TestClient(recorder, raise_server_exceptions=False)
+    results: dict[str, _Result] = {}
+    served_versions: dict[str, Union[str, None]] = {}
+    for version in case.untouched_versions:
+        results[version] = _send(client, case, {app.router.api_version_parameter_name: version})
+        served_versions[version] = _get_served_version(app, recorder)
+
+    assert served_versions == {version: version for version in case.untouched_versions}
 
     if case.id in _FASTAPI_DEVIATIONS:
         assert results != dict.fromkeys(case.untouched_versions, expected), (

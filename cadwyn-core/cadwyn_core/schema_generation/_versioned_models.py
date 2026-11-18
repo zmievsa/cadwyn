@@ -53,6 +53,7 @@ from cadwyn_core.structure.versions._migrations import (
 )
 
 from ._annotation_transformer import (
+    _ModelReferences,
     _ReferencedModelCollector,
 )
 from ._enums import (
@@ -458,15 +459,33 @@ def _get_version_to_migrate(versions: "VersionBundle", version: Union[VersionTyp
 
 def get_models_that_routes_request(routers: "collections.abc.Iterable[APIRouter]") -> set[type[Any]]:
     """Return the models that versioning the routes of the routers requests from a generator directly"""
+    return {
+        model
+        for router in routers
+        for references in _get_references_of_routes(router.routes)
+        if references is not None
+        for model in references.models
+    }
+
+
+def _get_references_of_routes(routes: "collections.abc.Iterable[object]") -> "list[Union[_ModelReferences, None]]":
+    """Return the models that versioning each route requests from a generator directly, or None for other routes.
+
+    Recording a route evaluates the annotations of its endpoint and dependencies, which can have side effects, so
+    route generation records each route once per version and reuses the results.
+    """
     # Only route generation versions routes, so FastAPI is there
     import fastapi.routing
 
-    collector = _ReferencedModelCollector()
-    for router in routers:
-        for route in router.routes:
-            if isinstance(route, fastapi.routing.APIRoute):
-                collector.annotation_transformer.record_route(route)
-    return collector.models
+    references: list[Union[_ModelReferences, None]] = []
+    for route in routes:
+        if isinstance(route, fastapi.routing.APIRoute):
+            collector = _ReferencedModelCollector()
+            collector.annotation_transformer.record_route(route)
+            references.append(collector.get_references())
+        else:
+            references.append(None)
+    return references
 
 
 @cache

@@ -39,8 +39,9 @@ from cadwyn.structure.versions._background import (
 from cadwyn.structure.versions._versioned_endpoints import _versioned
 from cadwyn_core._utils import DATACLASS_SLOTS, Sentinel, _callable_name, is_same_value, lenient_issubclass
 from cadwyn_core.schema_generation import SchemaGenerator, generate_versioned_models, get_models_that_routes_request
-from cadwyn_core.schema_generation._annotation_transformer import _ReferencedModelCollector
+from cadwyn_core.schema_generation._annotation_transformer import _ModelReferences
 from cadwyn_core.schema_generation._callables import _add_request_and_response_params
+from cadwyn_core.schema_generation._versioned_models import _get_references_of_routes
 from cadwyn_core.structure import Version, VersionBundle
 from cadwyn_core.structure.common import Endpoint, VersionType
 from cadwyn_core.structure.data import _AlterRequestByPathInstruction, _AlterResponseByPathInstruction
@@ -276,6 +277,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
         routers: dict[VersionType, _R] = {}
         webhook_routers: dict[VersionType, _WR] = {}
 
+        # What versioning each head route requests from a generator (see _get_models_of_head_route)
+        head_route_references: list[Union[_ModelReferences, None]] = []
         for version in self.versions:
             for version_router in (router, webhook_router):
                 for route in version_router.routes:
@@ -284,7 +287,14 @@ class _EndpointTransformer(Generic[_R, _WR]):
             schema_generator = self.schema_generators[str(version.value)]
             # All routes of the version must be known before any of them is versioned so that the decisions about
             # the models that refer to each other do not depend on the order of the routes
-            with schema_generator.versioning_routes(get_models_that_routes_request([router, webhook_router])):
+            route_references = _get_references_of_routes(router.routes)
+            if not head_route_references:
+                # Nothing has versioned the routes of the newest version yet, so they are the same as the head routes
+                head_route_references = route_references
+            models_that_routes_request = get_models_that_routes_request([webhook_router]).union(
+                *(references.models for references in route_references if references is not None)
+            )
+            with schema_generator.versioning_routes(models_that_routes_request):
                 schema_generator.annotation_transformer.migrate_router_to_version(router)
                 schema_generator.annotation_transformer.migrate_router_to_version(webhook_router)
 
@@ -312,7 +322,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             _validate_no_http_error_migrations_of_union_members(
                 head_route, _get_version_changes_that_migrate_route(route_index, self.versions, routers)
             )
-            head_route_models = _get_models_that_route_validates(head_route)
+            head_route_models = _get_models_of_head_route(head_route_references[route_index])
             _add_request_and_response_params(head_route)
             copy_of_dependant = copy(head_route.dependant)
             dropped_background_tasks_warning = _DroppedBackgroundTasksWarning(
@@ -787,18 +797,17 @@ def _get_template_body_model(route: APIRoute) -> object:
     return getattr(annotation, "__cadwyn_original_model__", annotation)
 
 
-def _get_models_that_route_validates(head_route: APIRoute) -> Union[set[type[Any]], None]:
-    """Return the models and enums that the route validates requests or responses with, or None if we can't know all.
+def _get_models_of_head_route(references: Union[_ModelReferences, None]) -> Union[frozenset[type[Any]], None]:
+    """Return the models and enums that versioning the route requests directly, or None if we can't know all of them.
 
-    Versioning a route only replaces the models that recording it finds, so its copy in a version validates
-    differently from it only through these. The copies keep the head models in the return types of computed fields
-    and serializers (see SchemaGenerator._check_copy), so serialization differs only through them too.
+    Versioning a route only replaces these models with their copies, and the copies with everything that copying
+    reaches (see SchemaGenerator.copies_differ_from_head), so the route of a version can differ from the head route
+    only through them.
     """
-    collector = _ReferencedModelCollector(expands_type_aliases=True)
-    collector.annotation_transformer.record_route(head_route)
-    if not collector.is_complete:
+    # Only API routes reach here, and they always have references
+    if references is None or not references.is_complete:
         return None
-    return collector.models | collector.arg_models
+    return references.models | references.arg_models
 
 
 def _depends_on_current_dependency_solver(dependant: "Dependant") -> bool:
@@ -823,17 +832,22 @@ def _is_untouched_route(
     route: APIRoute,
     head_route: APIRoute,
     request_target: _SchemaMigrationTarget,
-    head_route_models: Union[set[type[Any]], None],
+    head_route_models: Union[frozenset[type[Any]], None],
     newer_version_changes: Sequence[type[VersionChange]],
     schema_generator: SchemaGenerator,
 ) -> bool:
     """Whether no version change between the route's version and head touches the route.
 
     Such a route behaves like its head route in everything but Cadwyn's own handling of requests and responses:
-    no endpoint instruction of a newer version has changed it, no request or response migration runs for it, it
-    validates no models or enums that differ from head, and no dependency asks which solve it runs in. Whatever we
-    can't prove counts as touched. Requests of a version run the migrations of every newer version, and so do
-    their responses (see _run_request_migrations and _migrate_response), so we look at the same migrations.
+    no endpoint instruction of a newer version has changed it, no request or response migration runs for it, the
+    copies of its models and enums don't differ from them (in what pydantic validates or in anything else that
+    copying versions, such as default factories), and no dependency asks which solve it runs in. Whatever we can't
+    prove counts as touched. Requests of a version run the migrations of every newer version, and so do their
+    responses (see _run_request_migrations and _migrate_response), so we look at the same migrations.
+
+    Only API routes have this, not WebSocket routes or webhooks. We decide it when we generate the routes, so we
+    can't see the dependency overrides that the app gets later: an override can depend on `current_dependency_solver`
+    in an untouched route. Serving untouched routes with their head routes must check the overrides at request time.
     """
     if getattr(route, _CHANGED_BY_ENDPOINT_INSTRUCTION_ATTR, False):
         return False
@@ -848,6 +862,8 @@ def _is_untouched_route(
             return False
     if _depends_on_current_dependency_solver(head_route.dependant):
         return False
-    return head_route_models is not None and not schema_generator.validates_models_that_differ_from_head(
-        head_route_models
+    return not (
+        head_route_models is None
+        or schema_generator.validates_models_that_differ_from_head(head_route_models)
+        or schema_generator.copies_differ_from_head(head_route_models)
     )
