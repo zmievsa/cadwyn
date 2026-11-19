@@ -42,6 +42,7 @@ from cadwyn_core.structure.versions._json import (
     _copy_decoded_json_strings,
     _encode_planned_json_values,
     _get_json_values_plan,
+    _get_response_json_values_plan,
 )
 from cadwyn_core.structure.versions._migration_targets import _get_schema_migration_target, _no_union_member
 from cadwyn_core.structure.versions._migrations import (
@@ -246,7 +247,12 @@ def migrate_response(
         source_model = generate_versioned_models(versions)[from_version][latest_response_model]
     _check_that_response_body_is_of_version(versions, body, from_version, status_code)
     with _api_version_set_to(versions, version):
-        content = _prepare_response_content(body, exclude_unset=False)
+        versioned_response_model = generate_versioned_models(versions)[version][latest_response_model]
+        json_values_plan = _get_response_json_values_plan(versioned_response_model, source_model, source_model, body)
+        decoded_json_strings = _ClientJsonStrings()
+        content = _copy_decoded_json_strings(
+            json_values_plan, _prepare_response_content(body, exclude_unset=False), decoded_json_strings
+        )
         if from_version is not None and versions._has_versioned_plain_enums:
             # Response migrations get the members of head enums, as in routes, instead of those of the copies of
             # a version. We leave lazy iterators as they are: the version gets their items after the migrations.
@@ -254,8 +260,13 @@ def migrate_response(
                 content, replace_enum_members=True, replay_lazy_iterators=False, walk_lazy_item=None
             )
         response_info = _get_standalone_response_info(content, status_code, headers)
-        versioned_response_model, migrated_body = _run_response_migrations(
-            versions, latest_response_model, response_info, version, from_version=from_version
+        _, migrated_body = _run_response_migrations(
+            versions,
+            latest_response_model,
+            response_info,
+            version,
+            from_version=from_version,
+            decoded_json_strings=decoded_json_strings,
         )
         migrated_headers = _get_items_of_headers(response_info.headers)
         if response_info.status_code >= 300:
@@ -275,6 +286,10 @@ def migrate_response(
         restored_body = _keep_restored_dumps_of_head_models(
             _rescue_model_data(versioned_response_model, migrated_body), migrated_body, source_model, body
         )
+        if json_values_plan is not None:
+            restored_body = _encode_planned_json_values(
+                json_values_plan, restored_body, decoded_json_strings, has_other_body_readers=lambda: False
+            )
         return MigratedResponse(
             body=_validate_like_fastapi(versioned_response_model, restored_body),
             status_code=response_info.status_code,
@@ -322,6 +337,7 @@ def _run_response_migrations(
     version: VersionType,
     *,
     from_version: Union[VersionType, None] = None,
+    decoded_json_strings: Union[_ClientJsonStrings, None] = None,
 ) -> tuple[type[_ModelT], Any]:
     """Run the response migrations by schema from from_version or head down to the version, and return its model"""
     migrated_response = _migrate_response(
@@ -331,6 +347,7 @@ def _run_response_migrations(
         head_route=None,
         response_target=_get_schema_migration_target(latest_response_model),
         from_version=from_version,
+        decoded_json_strings=decoded_json_strings,
     )
     return generate_versioned_models(versions)[version][latest_response_model], migrated_response.body
 
