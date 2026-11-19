@@ -1,24 +1,20 @@
-"""Untouched routes compared with plain FastAPI.
+"""Routes that no version change touches, compared with plain FastAPI.
 
-A route is untouched in a version if no version change between that version and head touches it: no endpoint
-instruction of a newer version changes it, no migration of a newer version runs for it, the copies of its models and
-enums don't differ from them, and no dependency asks for `current_dependency_solver`. Route generation records this
-on every API route that it generates, but not on WebSocket routes or webhooks. Cadwyn 10.0 will serve such routes with
-their head routes, so they must behave exactly like plain FastAPI.
+A route that no version change touches should behave exactly like plain FastAPI. Every case has one HTTP route,
+a request, and an app with two versions. The version change of the newer version touches only a schema that the route
+doesn't use, so the route is untouched in both versions by construction. A few cases need a version change that
+changes a model or enum of the route itself: they compare only the newer version, which no version change touches
+because the changes of a version only apply to the older versions.
 
-Every case has a route, a request, and an app with two versions whose version change touches something else. We send
-the request to plain FastAPI and to each version of Cadwyn in which the route is untouched, check that the route of
-that version served it, and compare the status, the content type, and the bytes of the body that they return, and what
-the endpoint, its dependencies, and its background tasks did.
+We send the request to plain FastAPI and to each compared version of Cadwyn, check that the route of that version
+served it, and compare the status, the content type, and the bytes of the body that they return, and what the
+endpoint, its dependencies, and its background tasks did.
 """
 
 import dataclasses
-import functools
-import sys
-import traceback
 from collections.abc import Callable, Iterable
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, TypeVar, Union
+from typing import Annotated, Any, Union
 
 import pytest
 from fastapi import (
@@ -34,7 +30,6 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import (
     AliasChoices,
@@ -52,32 +47,21 @@ from typing_extensions import override
 
 from cadwyn import (
     Cadwyn,
-    HeadVersion,
-    RequestInfo,
-    ResponseInfo,
     Version,
     VersionBundle,
     VersionChange,
     VersionedAPIRouter,
-    convert_request_to_next_version_for,
-    convert_response_to_previous_version_for,
-    endpoint,
     enum,
     schema,
 )
-from cadwyn.dependencies import current_dependency_solver
-from cadwyn.route_generation import _UNTOUCHED_ROUTE_ATTR
 from tests.conftest import version_change
-
-if TYPE_CHECKING:
-    _OnlyForTypeCheckers = int
 
 _NEWER_VERSION = "2001-01-01"
 _OLDER_VERSION = "2000-01-01"
 _VERSIONS = (_NEWER_VERSION, _OLDER_VERSION)
 _PATH = "/test"
 
-# The cases whose untouched routes behave differently from plain FastAPI today: the case's id, and why.
+# The cases that behave differently from plain FastAPI today: the case's id, and why.
 #
 # Cadwyn should not be stricter or safer than FastAPI or Pydantic, and it should not try to fix their shortcomings
 # (AGENTS.md). This test enforces that for the routes that no version change touches, so this list may only shrink:
@@ -146,8 +130,8 @@ class _Case:
     register: Callable[[APIRouter], None]
     request: dict[str, Any] = dataclasses.field(default_factory=dict)
     change: Callable[[], type[VersionChange]] = _unrelated_change
-    # The versions in which the case's route is untouched, which we compare with FastAPI
-    untouched_versions: tuple[str, ...] = _VERSIONS
+    # The versions that we compare with FastAPI, in which no version change touches the route
+    compared_versions: tuple[str, ...] = _VERSIONS
     # Any overrides make Cadwyn handle some bodies differently, so the apps of some cases have one
     dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = dataclasses.field(default_factory=dict)
 
@@ -189,7 +173,7 @@ def _get_served_version(app: Cadwyn, recorder: _ServedRouteRecorder) -> Union[st
     )
 
 
-def _create_apps(case: _Case, *head_changes: type[VersionChange]) -> tuple[FastAPI, Cadwyn]:
+def _create_apps(case: _Case) -> tuple[FastAPI, Cadwyn]:
     fastapi_router = APIRouter()
     case.register(fastapi_router)
     fastapi_app = FastAPI()
@@ -197,24 +181,11 @@ def _create_apps(case: _Case, *head_changes: type[VersionChange]) -> tuple[FastA
     fastapi_app.dependency_overrides.update(case.dependency_overrides)
     cadwyn_router = VersionedAPIRouter()
     case.register(cadwyn_router)
-    app = Cadwyn(
-        versions=VersionBundle(
-            HeadVersion(*head_changes), Version(_NEWER_VERSION, case.change()), Version(_OLDER_VERSION)
-        )
-    )
+    app = Cadwyn(versions=VersionBundle(Version(_NEWER_VERSION, case.change()), Version(_OLDER_VERSION)))
     app.generate_and_include_versioned_routers(cadwyn_router)
     app.dependency_overrides.update(case.dependency_overrides)
     app._cadwyn_initialize()
     return fastapi_app, app
-
-
-def _get_untouched_versions(app: Cadwyn) -> tuple[str, ...]:
-    return tuple(
-        version
-        for version, router in app.router.versioned_routers.items()
-        for route in router.routes
-        if isinstance(route, APIRoute) and getattr(route, _UNTOUCHED_ROUTE_ATTR)
-    )
 
 
 def _echo_model(model: BaseModel) -> dict[str, Any]:
@@ -648,66 +619,6 @@ def _model_dependency(router: APIRouter) -> None:
         return query.model_dump()
 
 
-# Models whose copies differ from them in what pydantic doesn't validate
-
-
-class _Details(BaseModel):
-    old_field: str = "old"
-    new_field: str = "new"
-
-
-def _details_change() -> type[VersionChange]:
-    return version_change(schema(_Details).field("new_field").didnt_exist)
-
-
-class _ModelWithDefaultFactory(BaseModel):
-    payload: Any = Field(default_factory=_Details)
-
-
-def _default_factory_in_response_model(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=_ModelWithDefaultFactory)
-    async def route():
-        return {}
-
-
-class _ModelWithClassVar(BaseModel):
-    details_model: ClassVar[type[_Details]] = _Details
-    number: int = 0
-
-
-def _class_var_in_response_model(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=_ModelWithClassVar)
-    async def route():
-        return _ModelWithClassVar()
-
-
-class _ParentModel(BaseModel):
-    number: int = 0
-
-
-class _ChildModel(_ParentModel):
-    other_number: int = 0
-
-
-def _parent_of_changed_model_in_response_model(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=_ParentModel)
-    async def route():
-        return _ChildModel()
-
-
-_T = TypeVar("_T")
-
-
-class _GenericModel(BaseModel, Generic[_T]):
-    number: int = 0
-
-
-def _generic_arg_that_no_field_uses_in_response_model(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=_GenericModel[_Details])
-    async def route():
-        return _GenericModel[_Details]()
-
-
 # Plain params, errors, and responses
 
 
@@ -773,7 +684,7 @@ _CASES = [
         "strict_response_model_with_versioned_enum",
         _strict_response_model_with_enum,
         change=_versioned_color_change,
-        untouched_versions=(_NEWER_VERSION,),
+        compared_versions=(_NEWER_VERSION,),
     ),
     _Case("enum_in_request_body", _enum_in_request_body, request={"json": {"color": "red"}}),
     _Case(
@@ -787,7 +698,7 @@ _CASES = [
         _enum_in_iterable_request_body,
         request={"json": [{"color": "red"}]},
         change=_versioned_color_change,
-        untouched_versions=(_NEWER_VERSION,),
+        compared_versions=(_NEWER_VERSION,),
     ),
     _Case(
         "non_idempotent_validator_in_request_body",
@@ -858,31 +769,6 @@ _CASES = [
     _Case("http_exception", _http_exception),
     _Case("returned_json_response", _returned_json_response),
     _Case("streaming_response", _streaming_response),
-    # The copies of their models in the older version differ from them, so only the newer version is untouched
-    _Case(
-        "default_factory_of_changed_model_in_response_model",
-        _default_factory_in_response_model,
-        change=_details_change,
-        untouched_versions=(_NEWER_VERSION,),
-    ),
-    _Case(
-        "class_var_of_changed_model_in_response_model",
-        _class_var_in_response_model,
-        change=_details_change,
-        untouched_versions=(_NEWER_VERSION,),
-    ),
-    _Case(
-        "parent_of_changed_model_in_response_model",
-        _parent_of_changed_model_in_response_model,
-        change=lambda: version_change(schema(_ChildModel).field("other_number").didnt_exist),
-        untouched_versions=(_NEWER_VERSION,),
-    ),
-    _Case(
-        "generic_arg_that_no_field_uses_in_response_model",
-        _generic_arg_that_no_field_uses_in_response_model,
-        change=_details_change,
-        untouched_versions=(_NEWER_VERSION,),
-    ),
 ]
 
 
@@ -891,334 +777,25 @@ _CASES = [
 @pytest.mark.parametrize("case", _CASES, ids=[case.id for case in _CASES])
 def test__untouched_route__request__should_get_the_same_response_as_in_fastapi(case: _Case):
     fastapi_app, app = _create_apps(case)
-    assert _get_untouched_versions(app) == case.untouched_versions
 
     expected = _send(TestClient(fastapi_app, raise_server_exceptions=False), case, {})
     recorder = _ServedRouteRecorder(app)
     client = TestClient(recorder, raise_server_exceptions=False)
     results: dict[str, _Result] = {}
     served_versions: dict[str, Union[str, None]] = {}
-    for version in case.untouched_versions:
+    for version in case.compared_versions:
         results[version] = _send(client, case, {app.router.api_version_parameter_name: version})
         served_versions[version] = _get_served_version(app, recorder)
 
-    assert served_versions == {version: version for version in case.untouched_versions}
+    assert served_versions == {version: version for version in case.compared_versions}
 
     if case.id in _FASTAPI_DEVIATIONS:
-        assert results != dict.fromkeys(case.untouched_versions, expected), (
+        assert results != dict.fromkeys(case.compared_versions, expected), (
             f'"{case.id}" behaves like FastAPI now. Remove it from _FASTAPI_DEVIATIONS'
         )
     else:
-        assert results == dict.fromkeys(case.untouched_versions, expected)
+        assert results == dict.fromkeys(case.compared_versions, expected)
 
 
 def test__fastapi_deviations__every_entry__should_name_a_case():
     assert set(_FASTAPI_DEVIATIONS) <= {case.id for case in _CASES}
-
-
-# Routes that version changes touch
-
-
-def _request_migration_by_path() -> type[VersionChange]:
-    @convert_request_to_next_version_for(_PATH, ["POST"])
-    def migration(request: RequestInfo) -> None:  # pragma: no cover
-        pass
-
-    return version_change(migration=migration)
-
-
-def _response_migration_by_path() -> type[VersionChange]:
-    @convert_response_to_previous_version_for(_PATH, ["POST"])
-    def migration(response: ResponseInfo) -> None:  # pragma: no cover
-        pass
-
-    return version_change(migration=migration)
-
-
-def _request_migration_by_schema() -> type[VersionChange]:
-    @convert_request_to_next_version_for(_ModelWithValidationAlias)
-    def migration(request: RequestInfo) -> None:  # pragma: no cover
-        pass
-
-    return version_change(migration=migration)
-
-
-def _response_migration_by_schema() -> type[VersionChange]:
-    @convert_response_to_previous_version_for(_ModelWithSerializationAlias)
-    def migration(response: ResponseInfo) -> None:  # pragma: no cover
-        pass
-
-    return version_change(migration=migration)
-
-
-def _request_migration_of_union_member() -> type[VersionChange]:
-    @convert_request_to_next_version_for(_AllowingModel)
-    def migration(request: RequestInfo) -> None:  # pragma: no cover
-        pass
-
-    return version_change(migration=migration)
-
-
-def _response_migration_of_union_member() -> type[VersionChange]:
-    @convert_response_to_previous_version_for(_ModelWithInt)
-    def migration(response: ResponseInfo) -> None:  # pragma: no cover
-        pass
-
-    return version_change(migration=migration)
-
-
-class _ResponseModelWithNestedModel(BaseModel):
-    nested: _ModelWithInt
-
-
-def _union_in_response_model(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=Union[_ModelWithInt, _ModelWithSerializationAlias])
-    async def route():  # pragma: no cover
-        return _ModelWithInt(number=1)
-
-
-def _nested_model_in_response_model(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=_ResponseModelWithNestedModel)
-    async def route():  # pragma: no cover
-        return _ResponseModelWithNestedModel(nested=_ModelWithInt(number=1))
-
-
-def _dependency_that_asks_for_the_solver(router: APIRouter) -> None:
-    @router.post(_PATH, dependencies=[Depends(current_dependency_solver)])
-    async def route():  # pragma: no cover
-        return {}
-
-
-def _partial_of_the_solver(router: APIRouter) -> None:
-    @router.post(_PATH, dependencies=[Depends(functools.partial(current_dependency_solver))])
-    async def route():  # pragma: no cover
-        return {}
-
-
-def _dependency_with_names_only_for_type_checkers(
-    # FastAPI reads it as a query param because it can't resolve the name, so we can't tell what Cadwyn versions
-    value: "Annotated[_OnlyForTypeCheckers, Depends(_record_call)]",
-) -> None:  # pragma: no cover
-    pass
-
-
-def _route_with_names_only_for_type_checkers(router: APIRouter) -> None:
-    @router.post(_PATH, dependencies=[Depends(_dependency_with_names_only_for_type_checkers)])
-    async def route():  # pragma: no cover
-        return {}
-
-
-def _route_that_only_exists_in_older_versions(router: APIRouter) -> None:
-    @router.post(_PATH)
-    async def route():  # pragma: no cover
-        return {}
-
-    if isinstance(router, VersionedAPIRouter):
-        router.only_exists_in_older_versions(route)
-
-
-@pytest.mark.parametrize(
-    ("register", "change", "head_changes", "untouched_versions"),
-    [
-        pytest.param(
-            _dependency_with_side_effect, _request_migration_by_path, (), (_NEWER_VERSION,), id="request_path"
-        ),
-        pytest.param(
-            _dependency_with_side_effect, _response_migration_by_path, (), (_NEWER_VERSION,), id="response_path"
-        ),
-        pytest.param(
-            _validation_alias_in_request_body, _request_migration_by_schema, (), (_NEWER_VERSION,), id="request_schema"
-        ),
-        pytest.param(
-            _serialization_alias_in_response_model,
-            _response_migration_by_schema,
-            (),
-            (_NEWER_VERSION,),
-            id="response_schema",
-        ),
-        pytest.param(
-            _union_in_request_body, _request_migration_of_union_member, (), (_NEWER_VERSION,), id="request_union_member"
-        ),
-        pytest.param(
-            _union_in_response_model,
-            _response_migration_of_union_member,
-            (),
-            (_NEWER_VERSION,),
-            id="response_union_member",
-        ),
-        pytest.param(
-            _validation_alias_in_request_body,
-            lambda: version_change(schema(_ModelWithValidationAlias).field("other").didnt_exist),
-            (),
-            (_NEWER_VERSION,),
-            id="changed_request_body",
-        ),
-        pytest.param(
-            _nested_model_in_response_model,
-            lambda: version_change(schema(_ModelWithInt).field("number").had(description="A number")),
-            (),
-            (_NEWER_VERSION,),
-            id="changed_model_in_response_model",
-        ),
-        pytest.param(
-            _model_dependency,
-            lambda: version_change(schema(_ModelWithInt).field("number").had(description="A number")),
-            (),
-            (_NEWER_VERSION,),
-            id="changed_model_of_dependency",
-        ),
-        pytest.param(
-            _enum_in_request_body, _versioned_color_change, (), (_NEWER_VERSION,), id="changed_enum_in_request_body"
-        ),
-        pytest.param(
-            _validation_alias_in_request_body,
-            _unrelated_change,
-            (version_change(schema(_ModelWithValidationAlias).field("other").didnt_exist),),
-            (),
-            id="changed_by_head_version",
-        ),
-        pytest.param(
-            _dependency_with_side_effect,
-            lambda: version_change(endpoint(_PATH, ["POST"]).had(description="Old")),
-            (),
-            (_NEWER_VERSION,),
-            id="endpoint_had",
-        ),
-        pytest.param(
-            _dependency_with_side_effect,
-            lambda: version_change(endpoint(_PATH, ["POST"]).didnt_exist),
-            (),
-            (_NEWER_VERSION,),
-            id="endpoint_didnt_exist",
-        ),
-        pytest.param(
-            _route_that_only_exists_in_older_versions,
-            lambda: version_change(endpoint(_PATH, ["POST"]).existed),
-            (),
-            (),
-            id="endpoint_existed",
-        ),
-        pytest.param(_dependency_that_asks_for_the_solver, _unrelated_change, (), (), id="current_dependency_solver"),
-        pytest.param(_partial_of_the_solver, _unrelated_change, (), (), id="partial_of_current_dependency_solver"),
-        pytest.param(
-            _route_with_names_only_for_type_checkers, _unrelated_change, (), (), id="unknown_models_of_dependency"
-        ),
-    ],
-)
-def test__route_generation__version_changes_touch_route__should_record_it_as_touched_in_their_older_versions(
-    register: Callable[[APIRouter], None],
-    change: Callable[[], type[VersionChange]],
-    head_changes: tuple[type[VersionChange], ...],
-    untouched_versions: tuple[str, ...],
-):
-    _, app = _create_apps(_Case("touched", register, change=change), *head_changes)
-
-    assert _get_untouched_versions(app) == untouched_versions
-
-
-# Computing the marker must not run any user code that Cadwyn wouldn't run without it, and must use the same
-# results as the migrations, so that it can't disagree with what runs
-
-_annotation_evaluations: list[str] = []
-
-
-def _record_annotation_evaluation() -> type[int]:  # pragma: no cover # Nothing may evaluate it
-    _annotation_evaluations.append("evaluated")
-    return int
-
-
-def _factory_with_annotation_that_records_its_evaluations(value: int = 0) -> int:  # pragma: no cover
-    return value
-
-
-# A quoted annotation is evaluated whenever something reads the signature with its annotations evaluated
-_factory_with_annotation_that_records_its_evaluations.__annotations__["value"] = "_record_annotation_evaluation()"
-
-
-class _ParentOfUnusedSubclass(BaseModel):
-    number: int = 0
-
-
-class _ChangedSubclass(_ParentOfUnusedSubclass):
-    other_number: int = 0
-
-
-class _UnusedSubclass(_ParentOfUnusedSubclass):
-    other_number: int = Field(default_factory=_factory_with_annotation_that_records_its_evaluations)
-
-
-def _parent_of_unused_subclass_in_response_model(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=_ParentOfUnusedSubclass)
-    async def route():  # pragma: no cover
-        return {}
-
-
-def test__route_generation__unused_subclass_of_a_model_of_the_route__should_not_be_looked_into():
-    _annotation_evaluations.clear()
-    case = _Case(
-        "unused_subclass",
-        _parent_of_unused_subclass_in_response_model,
-        change=lambda: version_change(schema(_ChangedSubclass).field("other_number").didnt_exist),
-    )
-
-    # Every version has instructions that differ from head, so the marker looks at the models in every version
-    _, app = _create_apps(case, version_change(schema(_Unrelated).field("b").didnt_exist))
-
-    assert _annotation_evaluations == []
-    # Nothing copied the unused subclass, so we can't tell whether it differs without looking into it
-    assert _get_untouched_versions(app) == ()
-
-
-class _MigratedResponseModel(BaseModel):
-    state: str
-
-
-class _OtherResponseModel(BaseModel):
-    state: str
-
-
-# The names of the functions on the stack of each evaluation of the lazy type alias
-_alias_evaluation_stacks: list[list[str]] = []
-
-
-def _resolve_lazy_response_model() -> type[BaseModel]:
-    stack = [frame.name for frame in traceback.extract_stack()]
-    _alias_evaluation_stacks.append(stack)
-    # The migrations of the routes are looked up by another model than the one of the responses
-    if "_get_migration_targets" in stack:
-        return _OtherResponseModel
-    return _MigratedResponseModel
-
-
-if sys.version_info >= (3, 12):
-    # Only the values of native type aliases are evaluated lazily, each time something reads them
-    exec("type _LazyResponseModel = _resolve_lazy_response_model()", globals())
-
-
-def _lazy_response_type_alias(router: APIRouter) -> None:
-    @router.post(_PATH, response_model=globals()["_LazyResponseModel"])
-    async def route():
-        return {"state": "new"}
-
-
-def _migration_of_the_alias_value() -> type[VersionChange]:
-    @convert_response_to_previous_version_for(_MigratedResponseModel, check_usage=False)
-    def migration(response: ResponseInfo) -> None:  # pragma: no cover
-        response.body["state"] = "old"
-
-    return version_change(migration=migration)
-
-
-@pytest.mark.skipif(
-    sys.version_info < (3, 14),
-    reason="Cadwyn evaluates the values of native type aliases on each read since Python 3.14",
-)
-def test__route_generation__response_type_alias_that_resolves_to_another_model__should_agree_with_the_migrations():
-    _, app = _create_apps(_Case("lazy_alias", _lazy_response_type_alias, change=_migration_of_the_alias_value))
-    response = TestClient(app).post(_PATH, headers={app.router.api_version_parameter_name: _OLDER_VERSION})
-
-    assert any("_get_migration_targets" in stack for stack in _alias_evaluation_stacks)
-    assert not any("_is_untouched_route" in stack for stack in _alias_evaluation_stacks)
-    # The migration of the model doesn't run because the route looks its migrations up by the other model
-    assert response.json() == {"state": "new"}
-    assert _get_untouched_versions(app) == _VERSIONS

@@ -21,7 +21,6 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute, compile_path
 from typing_extensions import TypeVar
 
-from cadwyn.dependencies import current_dependency_solver
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -36,12 +35,10 @@ from cadwyn.structure.versions._background import (
     _DroppedBackgroundTasksWarning,
     _get_hidden_background_tasks_param_name,
 )
-from cadwyn.structure.versions._versioned_endpoints import _get_migration_targets, _versioned
+from cadwyn.structure.versions._versioned_endpoints import _versioned
 from cadwyn_core._utils import DATACLASS_SLOTS, Sentinel, _callable_name, is_same_value, lenient_issubclass
-from cadwyn_core.schema_generation import SchemaGenerator, generate_versioned_models, get_models_that_routes_request
-from cadwyn_core.schema_generation._annotation_transformer import _ModelReferences
-from cadwyn_core.schema_generation._callables import _add_request_and_response_params, _unwrap_partial
-from cadwyn_core.schema_generation._versioned_models import _get_references_of_routes
+from cadwyn_core.schema_generation import generate_versioned_models, get_models_that_routes_request
+from cadwyn_core.schema_generation._callables import _add_request_and_response_params
 from cadwyn_core.structure import Version, VersionBundle
 from cadwyn_core.structure.common import Endpoint, VersionType
 from cadwyn_core.structure.data import _AlterRequestByPathInstruction, _AlterResponseByPathInstruction
@@ -52,11 +49,7 @@ from cadwyn_core.structure.endpoints import (
 )
 from cadwyn_core.structure.versions import VersionChange
 from cadwyn_core.structure.versions._common import _DELETED_ROUTE_TAG
-from cadwyn_core.structure.versions._migration_targets import (
-    _get_request_body_target,
-    _get_schema_migration_target,
-    _SchemaMigrationTarget,
-)
+from cadwyn_core.structure.versions._migration_targets import _get_request_body_target, _get_schema_migration_target
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -71,10 +64,6 @@ _FLAT_DEPENDANT_ATTR: Final = "_flat_dependant"
 _RoutePath = str
 _RouteMethod = str
 _RouteId = int
-# Whether no version change between the version of a generated route and head touches it (see _is_untouched_route)
-_UNTOUCHED_ROUTE_ATTR: Final = "_cadwyn_is_untouched"
-# Set on the routes that an endpoint instruction has changed, and kept by the copies of the older versions
-_CHANGED_BY_ENDPOINT_INSTRUCTION_ATTR: Final = "_cadwyn_is_changed_by_endpoint_instruction"
 
 
 @dataclass(**DATACLASS_SLOTS, frozen=True, eq=True)
@@ -277,8 +266,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
         routers: dict[VersionType, _R] = {}
         webhook_routers: dict[VersionType, _WR] = {}
 
-        # What versioning each head route requests from a generator (see _get_models_of_head_route)
-        head_route_references: list[Union[_ModelReferences, None]] = []
         for version in self.versions:
             for version_router in (router, webhook_router):
                 for route in version_router.routes:
@@ -287,14 +274,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             schema_generator = self.schema_generators[str(version.value)]
             # All routes of the version must be known before any of them is versioned so that the decisions about
             # the models that refer to each other do not depend on the order of the routes
-            route_references = _get_references_of_routes(router.routes)
-            if not head_route_references:
-                # Nothing has versioned the routes of the newest version yet, so they are the same as the head routes
-                head_route_references = route_references
-            models_that_routes_request = get_models_that_routes_request([webhook_router]).union(
-                *(references.models for references in route_references if references is not None)
-            )
-            with schema_generator.versioning_routes(models_that_routes_request):
+            with schema_generator.versioning_routes(get_models_that_routes_request([router, webhook_router])):
                 schema_generator.annotation_transformer.migrate_router_to_version(router)
                 schema_generator.annotation_transformer.migrate_router_to_version(webhook_router)
 
@@ -322,14 +302,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
             _validate_no_http_error_migrations_of_union_members(
                 head_route, _get_version_changes_that_migrate_route(route_index, self.versions, routers)
             )
-            head_route_models = _get_models_of_head_route(head_route_references[route_index])
             _add_request_and_response_params(head_route)
             copy_of_dependant = copy(head_route.dependant)
             dropped_background_tasks_warning = _DroppedBackgroundTasksWarning(
                 f'"{list(_route_methods(head_route))} {head_route.path}"'
             )
 
-            for version_index, (version, older_router) in enumerate(zip(self.versions, routers.values(), strict=True)):
+            for older_router in list(routers.values()):
                 older_route = older_router.routes[route_index]
 
                 # We know they are APIRoutes because of the check at the very beginning of the top loop.
@@ -337,28 +316,15 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 older_route = cast("APIRoute", older_route)
                 if _DELETED_ROUTE_TAG in older_route.tags:
                     continue
-                template_older_body_model = _get_template_body_model(older_route)
-                # The marker must use the very same targets as the migrations, which _versioned gets from here
-                request_target, response_target = _get_migration_targets(
-                    self.versions, template_older_body_model, head_route
-                )
-                setattr(
-                    older_route,
-                    _UNTOUCHED_ROUTE_ATTR,
-                    _is_untouched_route(
-                        older_route,
-                        head_route,
-                        request_target,
-                        response_target,
-                        head_route_models,
-                        [
-                            change
-                            for newer_version in self.versions.versions[:version_index]
-                            for change in newer_version.changes
-                        ],
-                        self.schema_generators[str(version.value)],
-                    ),
-                )
+                # Wait.. Why do we need this code again?
+                if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
+                    annotation = older_route.body_field.field_info.annotation
+                    if hasattr(annotation, "__cadwyn_original_model__"):
+                        template_older_body_model = annotation.__cadwyn_original_model__
+                    else:
+                        template_older_body_model = annotation
+                else:
+                    template_older_body_model = None
                 _add_data_migrations_to_route(
                     older_route,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
@@ -371,8 +337,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
                         self.run_background_tasks_of_latest_version_dependencies
                     ),
                     dropped_background_tasks_warning=dropped_background_tasks_warning,
-                    request_target=request_target,
-                    response_target=response_target,
                 )
         for router in routers.values():
             router.routes = [
@@ -538,7 +502,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
             changed_methods = _get_methods(existing_routes)
             for route in existing_routes:
                 _set_route_deleted(route, deleted=True)
-                setattr(route, _CHANGED_BY_ENDPOINT_INSTRUCTION_ATTR, True)
         elif isinstance(instruction, EndpointExistedInstruction):
             action, problem_of_missing_methods = "restore", "wasn't among the deleted routes"
             if existing_routes:
@@ -554,7 +517,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
             changed_methods = _get_methods(deleted_routes)
             for route in deleted_routes:
                 _set_route_deleted(route, deleted=False)
-                setattr(route, _CHANGED_BY_ENDPOINT_INSTRUCTION_ATTR, True)
                 self._forget_restored_endpoint(route, version_change_name)
         elif isinstance(instruction, EndpointHadInstruction):
             action, problem_of_missing_methods = "change", "doesn't exist"
@@ -567,7 +529,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     api_version_parameter_name=self.api_version_parameter_name,
                     api_version_location=self.api_version_location,
                 )
-                setattr(route, _CHANGED_BY_ENDPOINT_INSTRUCTION_ATTR, True)
         else:
             assert_never(instruction)
         if missing_methods := instruction.endpoint_methods - changed_methods:
@@ -626,8 +587,6 @@ def _add_data_migrations_to_route(
     *,
     run_background_tasks_of_latest_version_dependencies: bool,
     dropped_background_tasks_warning: _DroppedBackgroundTasksWarning,
-    request_target: _SchemaMigrationTarget,
-    response_target: _SchemaMigrationTarget,
 ):
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
         raise CadwynError(
@@ -655,8 +614,6 @@ def _add_data_migrations_to_route(
         hidden_background_tasks_param_name=hidden_background_tasks_param_name,
         response_param_name=route.dependant.response_param_name,
         dropped_background_tasks_warning=dropped_background_tasks_warning,
-        request_target=request_target,
-        response_target=response_target,
     )(route.endpoint)
     route.dependant.call = route.endpoint
 
@@ -795,92 +752,3 @@ def _schema_name(schema: object) -> str:
 def _route_has_a_simple_body_schema(route: APIRoute) -> bool:
     # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
     return len(route.dependant.body_params) == 1
-
-
-def _get_template_body_model(route: APIRoute) -> object:
-    """Return the head version of the body of a route with a single body param, or None for other routes.
-
-    Request migrations by schema are looked up by it (see _get_request_body_target).
-    """
-    if route.body_field is None or not _route_has_a_simple_body_schema(route):
-        return None
-    annotation = route.body_field.field_info.annotation
-    return getattr(annotation, "__cadwyn_original_model__", annotation)
-
-
-def _get_models_of_head_route(references: Union[_ModelReferences, None]) -> Union[frozenset[type[Any]], None]:
-    """Return the models and enums that versioning the route requests directly, or None if we can't know all of them.
-
-    Versioning a route only replaces these models with their copies, and the copies with everything that copying
-    reaches (see SchemaGenerator.copies_differ_from_head), so the route of a version can differ from the head route
-    only through them.
-    """
-    # Only API routes reach here, and they always have references
-    if references is None or not references.is_complete:
-        return None
-    return references.models | references.arg_models
-
-
-def _depends_on_current_dependency_solver(dependant: "Dependant") -> bool:
-    """Whether a dependency of the dependant is `current_dependency_solver`, e.g. in a `functools.partial`.
-
-    We unwrap partials the way FastAPI does to tell how to call a dependency. We can't see the dependencies that call
-    it in their own bodies.
-    """
-    dependants_to_visit = [dependant]
-    while dependants_to_visit:
-        current = dependants_to_visit.pop()
-        if _unwrap_partial(current.call) is current_dependency_solver:
-            return True
-        dependants_to_visit.extend(current.dependencies)
-    return False
-
-
-def _has_schema_migrations(target: _SchemaMigrationTarget, schema_instructions: Mapping[Any, Any]) -> bool:
-    """Whether a body or a response with this target can get any of these schema migrations.
-
-    Like _get_schema_migrations, but without telling the union member: we count the migrations of every member.
-    """
-    return any(schema in schema_instructions for schema in (*target.keys, *target.union_members))
-
-
-def _is_untouched_route(
-    route: APIRoute,
-    head_route: APIRoute,
-    request_target: _SchemaMigrationTarget,
-    response_target: _SchemaMigrationTarget,
-    head_route_models: Union[frozenset[type[Any]], None],
-    newer_version_changes: Sequence[type[VersionChange]],
-    schema_generator: SchemaGenerator,
-) -> bool:
-    """Whether no version change between the route's version and head touches the route.
-
-    Such a route behaves like its head route in everything but Cadwyn's own handling of requests and responses:
-    no endpoint instruction of a newer version has changed it, no request or response migration runs for it, the
-    copies of its models and enums don't differ from them (in anything that copying versions, such as default
-    factories), and no dependency asks which solve it runs in. Whatever we can't prove counts as touched.
-
-    Every input comes from what route generation has already computed, as the very same objects, so the marker can't
-    disagree with what runs and doesn't run any user code that Cadwyn wouldn't run without it: the migration targets
-    that _versioned gets, the models that recording the head route found (see _get_references_of_routes), and the
-    models that copying requested (see SchemaGenerator.copies_differ_from_head). Requests of a version run the
-    migrations of every newer version, and so do their responses (see _run_request_migrations and
-    _migrate_response), so we look at the same migrations.
-
-    Only API routes have this, not WebSocket routes or webhooks. We decide it when we generate the routes, so we
-    can't see the dependency overrides that the app gets later: an override can depend on `current_dependency_solver`
-    in an untouched route. Serving untouched routes with their head routes must check the overrides at request time.
-    """
-    if getattr(route, _CHANGED_BY_ENDPOINT_INSTRUCTION_ATTR, False):
-        return False
-    for version_change in newer_version_changes:
-        if (
-            id(head_route) in version_change._route_to_request_migration_mapping
-            or id(head_route) in version_change._route_to_response_migration_mapping
-            or _has_schema_migrations(request_target, version_change.alter_request_by_schema_instructions)
-            or _has_schema_migrations(response_target, version_change.alter_response_by_schema_instructions)
-        ):
-            return False
-    if _depends_on_current_dependency_solver(head_route.dependant):
-        return False
-    return head_route_models is not None and not schema_generator.copies_differ_from_head(head_route_models)

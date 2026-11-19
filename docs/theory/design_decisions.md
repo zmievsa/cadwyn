@@ -113,7 +113,7 @@ These are accepted for now. Fixing one is a separate change with its own issue.
 **What a change may alter**
 
 * Compare every change against the last release, not against an idea of correct behavior.
-* Cadwyn must not be stricter or safer than FastAPI or Pydantic, or try to fix their shortcomings. `tests/test_fastapi_equivalence.py` checks this for the routes that no version change touches (see [Route generation](architecture.md#route-generation)). Its list of the cases that still differ from FastAPI may only shrink: a change must not add a case to it.
+* Cadwyn must not be stricter or safer than FastAPI or Pydantic, or try to fix their shortcomings. `tests/test_fastapi_equivalence.py` checks this for the routes that no version change touches (see [The path of a request](architecture.md#the-path-of-a-request)). Its list of the cases that still differ from FastAPI may only shrink: a change must not add a case to it.
 * A change may alter output that is broken today: a crash, a 500, an empty or lost value. It may not alter output that works today, even if it's wrong, unless the maintainer accepts it as a breaking change with an upgrade note in the CHANGELOG.
 * The OpenAPI of every version counts as output, including schema names.
 * When clients rely on behavior that differs from the docs, a fix toward the docs is a breaking change. Warn at startup in the current major version, naming the model, the field, and how to keep working, and change the behavior in the next one.

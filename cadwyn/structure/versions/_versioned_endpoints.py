@@ -27,7 +27,6 @@ from cadwyn_core.structure.versions._migration_targets import (
     _get_request_body_target,
     _get_schema_migration_target,
     _has_union_member_migrations,
-    _SchemaMigrationTarget,
 )
 
 from ._background import _add_keyword_only_parameter, _DroppedBackgroundTasksWarning
@@ -39,24 +38,6 @@ if TYPE_CHECKING:
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
-
-
-def _get_migration_targets(
-    versions: "VersionBundle", head_body_field: object, head_route: APIRoute
-) -> tuple[_SchemaMigrationTarget, _SchemaMigrationTarget]:
-    """Return what the schema migrations of the request body and of the response of a route are looked up by"""
-    request_target = _get_request_body_target(head_body_field, head_route)
-    response_target = _get_schema_migration_target(head_route.response_model)
-    # Routes whose union members have no migrations don't need to tell which member a body or a response is
-    if not _has_union_member_migrations(
-        request_target, (change.alter_request_by_schema_instructions for change in versions._all_changes)
-    ):
-        request_target = request_target._replace(union_members=())
-    if not _has_union_member_migrations(
-        response_target, (change.alter_response_by_schema_instructions for change in versions._all_changes)
-    ):
-        response_target = response_target._replace(union_members=())
-    return request_target, response_target
 
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
@@ -73,10 +54,19 @@ def _versioned(
     hidden_background_tasks_param_name: Union[str, None],
     response_param_name: str,
     dropped_background_tasks_warning: "_DroppedBackgroundTasksWarning",
-    # From _get_migration_targets
-    request_target: _SchemaMigrationTarget,
-    response_target: _SchemaMigrationTarget,
 ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
+    request_target = _get_request_body_target(head_body_field, head_route)
+    response_target = _get_schema_migration_target(head_route.response_model)
+    # Routes whose union members have no migrations don't need to tell which member a body or a response is
+    if not _has_union_member_migrations(
+        request_target, (change.alter_request_by_schema_instructions for change in versions._all_changes)
+    ):
+        request_target = request_target._replace(union_members=())
+    if not _has_union_member_migrations(
+        response_target, (change.alter_response_by_schema_instructions for change in versions._all_changes)
+    ):
+        response_target = response_target._replace(union_members=())
+
     def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
         @functools.wraps(endpoint)
         async def decorator(*args: Any, **kwargs: Any) -> _R:
