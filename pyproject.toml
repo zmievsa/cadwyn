@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "9.1.0rc1"
+version = "9.1.0"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -50,7 +50,7 @@ classifiers = [
 ]
 dependencies = [
     # Exactly the same version, which `cadwyn` and `cadwyn_core` also check at import
-    "cadwyn-core==9.1.0rc1",
+    "cadwyn-core==9.1.0",
     "fastapi >=0.137.1",
     "starlette >=0.30.0",
     "pydantic >=2.12.0",
