@@ -5,16 +5,9 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-### Fixed
+## [9.1.0]
 
-- A plain `Response` whose content type is exactly `application/json` now reaches clients with the bytes that the endpoint returned, as it already did with parameters such as `application/json; charset=utf-8`. Cadwyn used to encode its body as a JSON string a second time, e.g. `"{\"a\": 1}"` instead of `{"a": 1}`, in every version, with or without migrations. Response migrations by path still get its body as text and can set it to text, which also reaches clients as it is ([#638](https://github.com/zmievsa/cadwyn/issues/638)). Thanks to @ununto for the first fix in [#650](https://github.com/zmievsa/cadwyn/pull/650), which this one builds on.
-
-### Changed
-
-- The documentation and the README were edited for clarity without changing what they say about Cadwyn.
-- For contributors: `make check` no longer checks the links to external sites, which failed it at random, and no longer needs network access or Chrome for its link check. It still checks the links to files and headings in the docs. The new `make links` checks every link, including the external ones.
-
-## [9.1.0rc1]
+These are the changes since 9.0.0. The release candidate 9.1.0rc1 had all of them except the last two entries under Changed and the last entry under Fixed.
 
 ### Added
 
@@ -32,6 +25,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - The "Migrate data outside of routes" guide now says what validating the older version first means for your own migration loop: without schema instructions, older requests have to fit HEAD's fields and validators. It also says which errors `migrate_request()` and `migrate_response()` raise, and that `CadwynHeadRequestValidationError` isn't a `ValueError`.
 - The docs now say that `cadwyn-core` fails at import next to another version of `cadwyn`, 9.0 included, and that a project that requires both in different packages should require at least the same version of `cadwyn` as of `cadwyn-core`.
 - `VersionBundle.version_values` is now part of the supported API.
+- The documentation and the README were edited for clarity without changing what they say about Cadwyn.
+- For contributors: `make check` no longer checks the links to external sites, which failed it at random, and no longer needs network access or Chrome for its link check. It still checks the links to files and headings in the docs. The new `make links` checks every link, including the external ones.
 
 ### Fixed
 
@@ -39,6 +34,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - `CadwynHeadRequestValidationError` can be unpickled, e.g. when a worker process raises it, instead of failing with a `TypeError`.
 - The docs now say that `migrate_response_body()` takes plain data, because objects of the HEAD models can fail in it ([#651](https://github.com/zmievsa/cadwyn/issues/651)).
 - The docs no longer claim that `migrate_response_body()` runs migrations by path. It runs only the migrations by schema of the model you pass.
+- A plain `Response` whose content type is exactly `application/json` now reaches clients with the bytes that the endpoint returned, as it already did with parameters such as `application/json; charset=utf-8`. Cadwyn used to encode its body as a JSON string a second time, e.g. `"{\"a\": 1}"` instead of `{"a": 1}`, in every version, with or without migrations. Response migrations by path still get its body as text and can set it to text, which also reaches clients as it is. This fix was already released in 9.0.1 but not in 9.1.0rc1 ([#638](https://github.com/zmievsa/cadwyn/issues/638)). Thanks to @ununto for the first fix in [#650](https://github.com/zmievsa/cadwyn/pull/650), which this one builds on.
 
 ## [9.0.1]
 
