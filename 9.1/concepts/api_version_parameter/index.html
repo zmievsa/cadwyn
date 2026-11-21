@@ -2105,12 +2105,12 @@
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>In the example above any arbitrary string is accepted as a valid version. Cadwyn does not sort them, Cadwyn assumes that their actual order matches the order of the versions in the <code>VersionBundle</code>.</p>
+<p>In the example above any arbitrary string is accepted as a valid version. Cadwyn does not sort them: it assumes that their actual order matches the order of the versions in the <code>VersionBundle</code>.</p>
 <h3 id="api-version-waterfalling">API version waterfalling<a class="headerlink" href="#api-version-waterfalling" title="Permanent link">&para;</a></h3>
 <p>For historical reasons, date-based routing with a header or a default version also supports waterfalling the requests to the closest earlier version of the API if the request date parameter does not match any of the versions exactly.</p>
 <p>If the app has two versions: 2022-01-02 and 2022-01-05, and the request date parameter is 2022-01-03, then the request will be routed to the 2022-01-02 version, as it is the closest version, but lower than the request date parameter.</p>
 <p>An exact match is always preferred to a partial match and a request is never matched to the higher-versioned route.</p>
-<p>The routing is implemented like this because Cadwyn was born in a microservice architecture and it is extremely convenient to have waterfalling there. Assume that you have two Cadwyn services: Payables and Receivables, each defining its own API versions. Payables service might have ten versions while Receivables service might have only two versions because it did not need as many breaking changes. If a client requests a version that does not exist in Receivables, Cadwyn will waterfall to some earlier version, making Receivables behavior consistent even if API keeps getting new versions.</p>
+<p>Cadwyn routes like this because it was born in a microservice architecture, where waterfalling is very convenient. Assume that you have two Cadwyn services: Payables and Receivables, each defining its own API versions. Payables service might have ten versions while Receivables service might have only two versions because it did not need as many breaking changes. If a client requests a version that does not exist in Receivables, Cadwyn will waterfall to some earlier version, making Receivables behavior consistent even if API keeps getting new versions.</p>
 <h2 id="requests-without-an-api-version">Requests without an API version<a class="headerlink" href="#requests-without-an-api-version" title="Permanent link">&para;</a></h2>
 <p>Cadwyn routes versioned endpoints by the API version, so a request without it gets a 404. That's why the OpenAPI of each version documents the version header as required unless you <a href="#set-a-default-api-version">set a default API version</a>. Some clients cannot send the version header. For example, Swagger UI's "Authorize" button for <code>OAuth2PasswordBearer(tokenUrl=...)</code> sends the token request to <code>tokenUrl</code> without any custom headers. You have two options for such endpoints.</p>
 <h3 id="keep-the-endpoint-unversioned">Keep the endpoint unversioned<a class="headerlink" href="#keep-the-endpoint-unversioned" title="Permanent link">&para;</a></h3>
@@ -2214,7 +2214,7 @@
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="api-version-context-variables">API version context variables<a class="headerlink" href="#api-version-context-variables" title="Permanent link">&para;</a></h2>
-<p>Cadwyn automatically converts your data to the correct version and has "version checks" when dealing with side effects as described in <a href="../version_changes/#version-changes-with-side-effects">the section above</a>. It can only do so using a special <a href="https://docs.python.org/3/library/contextvars.html">context variable</a> that stores the current API version.</p>
+<p>Cadwyn automatically converts your data to the correct version and has "version checks" when dealing with side effects as described in <a href="../version_changes/#version-changes-with-side-effects">version changes with side effects</a>. It can only do so using a special <a href="https://docs.python.org/3/library/contextvars.html">context variable</a> that stores the current API version.</p>
 <p>You can also pass a different compatible <code>contextvar</code> to your <code>cadwyn.VersionBundle()</code> constructor.</p>
 
 

@@ -2043,10 +2043,10 @@
 
 
 <h1 id="schema-generation">Schema generation<a class="headerlink" href="#schema-generation" title="Permanent link">&para;</a></h1>
-<p>Cadwyn automatically generates versioned schemas and everything related to them from HEAD version at runtime — no code is actually generated. These versioned schemas will be automatically used in requests to and responses from <a href="../main_app/#main-app">versioned API routes</a>.</p>
+<p>Cadwyn generates versioned schemas and everything related to them from the HEAD version at runtime, so no code is actually generated. These versioned schemas are automatically used in requests to and responses from <a href="../main_app/#main-app">versioned API routes</a>.</p>
 <h2 id="rendering-schemas">Rendering schemas<a class="headerlink" href="#rendering-schemas" title="Permanent link">&para;</a></h2>
-<p>If you have many versions and schemas, it is quite challenging to know what validators, fields, and other attributes are defined in each schema in a specific version. To address this issue, there is a way to <strong>render</strong> the generated Pydantic models and enums as code using the command-line interface.</p>
-<p><strong>NOTICE</strong> that <code>cadwyn render</code> does not guarantee rendering correct schemas. It provides a close enough approximation for manual validation, but it is not yet ready for production code generation. For example, it doesn't handle schema renaming in a class's <code>__bases__</code> yet.</p>
+<p>If you have many versions and schemas, it is hard to know what validators, fields, and other attributes each schema has in a specific version. To see them, you can <strong>render</strong> the generated Pydantic models and enums as code using the command-line interface.</p>
+<p>Note that <code>cadwyn render</code> does not guarantee rendering correct schemas. It provides a close enough approximation for manual validation, but it is not yet ready for production code generation. For example, it doesn't handle schema renaming in a class's <code>__bases__</code> yet.</p>
 <h3 id="rendering-a-module">Rendering a module<a class="headerlink" href="#rendering-a-module" title="Permanent link">&para;</a></h3>
 <p>Here's a way to render the entire module with the schemas:</p>
 <div class="highlight"><pre><span></span><code>cadwyn<span class="w"> </span>render<span class="w"> </span>module<span class="w"> </span>data.schemas<span class="w"> </span>--app<span class="o">=</span>main:app<span class="w"> </span>--version<span class="o">=</span><span class="m">2024</span>-05-26

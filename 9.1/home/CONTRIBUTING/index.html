@@ -2131,6 +2131,12 @@ parallelism. It runs the supported Python test matrix, tutorial tests, the tests
 of <code>cadwyn-core</code> installed on its own (<code>tox -e standalone</code>), coverage, prek
 linting, documentation build, link validation, and package build checks.
 Each supported Python test environment runs ty before its tests.</p>
+<p>The link validation in <code>make check</code> covers only relative links to files and
+links to headings, so it needs no network access and passes or fails the same
+way every time. External sites throttle, block headless browsers, and time out
+at random. Run <code>make links</code> to check every link, including the links to
+external sites. The Documentation workflow checks them too: on pull requests
+in the lines that changed, and on <code>main</code> in every file.</p>
 <p>If <code>prek</code>, <code>tox</code>, or the <code>tox-uv</code> plugin is missing, the Makefile will stop
 early and print the matching <code>uv tool install ...</code> command to install it.</p>
 <p>Use <code>make lint</code> to run only the prek hooks. For a focused test run, use
@@ -2152,7 +2158,7 @@ against your active project environment with:</p>
 <p>The documentation is located in the <code>/docs</code> directory and uses
 <a href="https://www.markdownguide.org/">Markdown</a>.</p>
 <h3 id="docs-theme-and-appearance">Docs theme and appearance<a class="headerlink" href="#docs-theme-and-appearance" title="Permanent link">&para;</a></h3>
-<p>We welcome contributions that improve the appearance and usability of the docs. We use <a href="https://squidfunk.github.io/mkdocs-material/">mkdocs-material</a> If you wish to contribute to the docs style / setup, or static site generation, consult the theme docs as a first step.</p>
+<p>We welcome contributions that improve the appearance and usability of the docs. We use <a href="https://squidfunk.github.io/mkdocs-material/">mkdocs-material</a>. If you wish to contribute to the docs style, setup, or static site generation, consult the theme docs first.</p>
 <h3 id="running-the-docs-locally">Running the docs locally<a class="headerlink" href="#running-the-docs-locally" title="Permanent link">&para;</a></h3>
 <p>After improving the docs, serve the documentation with <code>uv run mkdocs serve</code>.</p>
 <h3 id="writing-and-editing-docs">Writing and editing docs<a class="headerlink" href="#writing-and-editing-docs" title="Permanent link">&para;</a></h3>

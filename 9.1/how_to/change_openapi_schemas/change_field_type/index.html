@@ -1967,7 +1967,7 @@
 
 <h1 id="change-field-type-in-schemas">Change field type in schemas<a class="headerlink" href="#change-field-type-in-schemas" title="Permanent link">&para;</a></h1>
 <h2 id="change-the-type-incompatibly">Change the type incompatibly<a class="headerlink" href="#change-the-type-incompatibly" title="Permanent link">&para;</a></h2>
-<p>If your data had a type <code>int</code> and you want to change it to a <code>str</code> in a new version, then your data from the new version can easily break the responses of the old versions, thus making it <a href="../../../concepts/beware_of_data_versioning/">data versioning</a>, not API versioning -- as you are versioning the fundamental structures the user is operating on instead of just the API.</p>
+<p>If your data had a type <code>int</code> and you want to change it to a <code>str</code> in a new version, then your data from the new version can easily break the responses of the old versions, which makes it <a href="../../../concepts/beware_of_data_versioning/">data versioning</a> rather than API versioning: you are versioning the fundamental structures the user operates on instead of just the API.</p>
 <h2 id="expand-the-type">Expand the type<a class="headerlink" href="#expand-the-type" title="Permanent link">&para;</a></h2>
 <p>Suppose your clients could choose a <code>role</code> for your users. Originally, it was only possible to choose <code>admin</code> or <code>regular</code> but you would like to expand it to <code>moderator</code> which has all the permissions of an admin except assigning other admins.</p>
 <p>This is not a breaking change in terms of requests but it <a href="#why-enum-expansion-is-a-breaking-change-for-responses"><strong>can be</strong></a> a breaking change in terms of responses. So if you do consider it a breaking change in terms of responses, do the following:</p>
@@ -2086,8 +2086,8 @@
 </ul>
 </li>
 </ol>
-<p>All of these interactions are done internally by Cadwyn. As you see, the process is more than straightforward: requests are converted to HEAD, and responses are converted from HEAD.</p>
-<p>Thus, you have kept the old behavior, added new constrained behavior, and minimized the impact on your business logic as business logic simply doesn't know that <code>date_of_birth</code> in requests is ever a date and that <code>date_of_birth</code> in responses is ever a date. All of this information is hidden in your migration.</p>
+<p>All of these interactions are done internally by Cadwyn. The process itself is straightforward: requests are converted to HEAD, and responses are converted from HEAD.</p>
+<p>Thus, you have kept the old behavior, added new constrained behavior, and minimized the impact on your business logic because the business logic doesn't know that <code>date_of_birth</code> is ever a date in requests or responses. All of this information is hidden in your migration.</p>
 <p>Please note that unlike schemas, routes, and business logic, the migrations written above will likely never need to change because they describe the fundamental differences between the API versions, and these differences cannot be changed in the future because that would defeat the purpose of API versioning. This makes migrations effectively immutable and consequently very cheap to support.</p>
 
 

@@ -2139,6 +2139,7 @@
 <p><strong>What a change may alter</strong></p>
 <ul>
 <li>Compare every change against the last release, not against an idea of correct behavior.</li>
+<li>Cadwyn must not be stricter or safer than FastAPI or Pydantic, or try to fix their shortcomings. <code>tests/test_fastapi_equivalence.py</code> checks this for the routes that no version change touches (see <a href="../architecture/#the-path-of-a-request">The path of a request</a>). Its list of the cases that still differ from FastAPI may only shrink: a change must not add a case to it.</li>
 <li>A change may alter output that is broken today: a crash, a 500, an empty or lost value. It may not alter output that works today, even if it's wrong, unless the maintainer accepts it as a breaking change with an upgrade note in the CHANGELOG.</li>
 <li>The OpenAPI of every version counts as output, including schema names.</li>
 <li>When clients rely on behavior that differs from the docs, a fix toward the docs is a breaking change. Warn at startup in the current major version, naming the model, the field, and how to keep working, and change the behavior in the next one.</li>

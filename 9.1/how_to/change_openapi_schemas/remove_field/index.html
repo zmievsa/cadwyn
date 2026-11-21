@@ -2069,7 +2069,7 @@
 </code></pre></div>
 </li>
 </ol>
-<p>We added a new version with a breaking change but neither the HEAD schema that we use in business logic, neither has the business logic itself have changed one bit.</p>
+<p>We added a new version with a breaking change, but neither the HEAD schema that we use in business logic nor the business logic itself has changed.</p>
 <h3 id="required-field">Required field<a class="headerlink" href="#required-field" title="Permanent link">&para;</a></h3>
 <p>There are two main cases with required fields:</p>
 <ol>
@@ -2083,7 +2083,7 @@
 <li>Talk to your users. In any API versioning problem, talking to your users is the best first step. See whether this is actually a breaking change for them. Maybe only a small subset of your users is using this field and you can migrate this subset manually without much investment, which will allow you to make the breaking changes without breaking anyone's API. Though this approach becomes impossible to use once you get a lot of clients.</li>
 <li>Issue a warning to your users that <code>tax_id</code> is going to become optional in all API versions in <code>N</code> months and then make it so. This will allow you to avoid data versioning and your users will have a grace period to fix their issues. Then you can simply follow the <a href="#optional-field">approach above</a>.</li>
 <li>Release a <code>V2</code> version of your API which users will have to migrate their <strong>data</strong> to. This is a drastic approach and you should only reserve it for extreme cases but it is a <strong>correct</strong> way to represent data versioning.</li>
-<li>Disallow the new version (2001-01-01) to be used alongside older versions and disallow users to migrate to older versions after they have migrated to 2001-01-01. Then you can simply follow the <a href="#optional-field">approach above</a>. This is a dirty hack and an inconvenience to your users but it solves the problem too, albeit I would never recommend to use this solition.</li>
+<li>Disallow the new version (2001-01-01) to be used alongside older versions and disallow users to migrate to older versions after they have migrated to 2001-01-01. Then you can simply follow the <a href="#optional-field">approach above</a>. This is a dirty hack and an inconvenience to your users but it solves the problem too, although I would never recommend this solution.</li>
 </ol>
 
 
