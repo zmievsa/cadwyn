@@ -61,12 +61,7 @@ _OLDER_VERSION = "2000-01-01"
 _VERSIONS = (_NEWER_VERSION, _OLDER_VERSION)
 _PATH = "/test"
 
-# The cases that behave differently from plain FastAPI today: the case's id, and why.
 #
-# Cadwyn should not be stricter or safer than FastAPI or Pydantic, and it should not try to fix their shortcomings
-# (AGENTS.md). This test enforces that for the routes that no version change touches, so this list may only shrink:
-# a change must not add an entry to it. When a fix makes a case behave like FastAPI, the test fails until you remove
-# the case's entry.
 _FASTAPI_DEVIATIONS: dict[str, str] = {
     "json_in_request_body_with_type_field": "Json[...] request fields are decoded twice next to a `type` field (#677)",
     "json_in_request_body_named_metadata": "Json[...] request fields named `metadata` are decoded twice (#679)",
@@ -104,7 +99,6 @@ _FASTAPI_DEVIATIONS: dict[str, str] = {
     ),
 }
 
-# What the endpoint, its dependencies, its validators, and its background tasks did during a request, in order
 _events: list[str] = []
 
 
@@ -126,13 +120,10 @@ def _unrelated_change() -> type[VersionChange]:
 @dataclasses.dataclass(frozen=True)
 class _Case:
     id: str
-    # Adds the case's single route at _PATH to a router, the same for FastAPI and for Cadwyn
     register: Callable[[APIRouter], None]
     request: dict[str, Any] = dataclasses.field(default_factory=dict)
     change: Callable[[], type[VersionChange]] = _unrelated_change
-    # The versions that we compare with FastAPI, in which no version change touches the route
     compared_versions: tuple[str, ...] = _VERSIONS
-    # Any overrides make Cadwyn handle some bodies differently, so the apps of some cases have one
     dependency_overrides: dict[Callable[..., Any], Callable[..., Any]] = dataclasses.field(default_factory=dict)
 
 
@@ -140,7 +131,6 @@ class _Case:
 class _Result:
     status_code: int
     content_type: Union[str, None]
-    # The bytes of the body, so that e.g. `true` and `1` or two undecodable bytes differ
     body: bytes
     events: list[str]
 
@@ -190,9 +180,6 @@ def _create_apps(case: _Case) -> tuple[FastAPI, Cadwyn]:
 
 def _echo_model(model: BaseModel) -> dict[str, Any]:
     return {"dump": model.model_dump(), "fields_set": sorted(model.model_fields_set)}
-
-
-# Json fields
 
 
 class _JsonAnyBody(BaseModel):
@@ -254,9 +241,6 @@ def _json_form_field(router: APIRouter) -> None:
         return {"data": data, "type": type(data).__name__}
 
 
-# Computed fields
-
-
 class _ForbiddingModelWithComputedField(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
@@ -300,9 +284,6 @@ def _overridden_model_dump_in_request_body(router: APIRouter) -> None:
         return _echo_model(body)
 
 
-# Enums
-
-
 class _Color(Enum):
     red = "red"
     green = "green"
@@ -337,9 +318,6 @@ def _enum_in_iterable_request_body(router: APIRouter) -> None:
     @router.post(_PATH)
     async def route(body: Annotated[Iterable[_ModelWithEnum], Body()]):
         return [item.color is _Color.red for item in body]
-
-
-# Validators
 
 
 class _RequestWithNonIdempotentValidator(BaseModel):
@@ -405,9 +383,6 @@ def _response_that_fails_validation(router: APIRouter) -> None:
         return {"number": "not a number"}
 
 
-# Serializers
-
-
 class _ModelWithListSerializer(BaseModel):
     numbers: list[int]
 
@@ -426,9 +401,6 @@ def _field_serializer_in_response_model(router: APIRouter) -> None:
     @router.post(_PATH, response_model=_ModelWithListSerializer)
     async def route():
         return _ModelWithListSerializer(numbers=[1, 2])
-
-
-# Aliases
 
 
 class _ModelWithValidationAlias(BaseModel):
@@ -482,9 +454,6 @@ def _alias_choices_in_request_body(router: APIRouter) -> None:
     @router.post(_PATH)
     async def route(body: _ModelWithAliasChoices):
         return body.model_dump()
-
-
-# Extra keys, set fields, containers, and unions
 
 
 class _AllowingModel(BaseModel):
@@ -557,9 +526,6 @@ def _omitted_optional_body(router: APIRouter) -> None:
         return {"body": body}
 
 
-# Forms and files
-
-
 def _form_fields(router: APIRouter) -> None:
     @router.post(_PATH)
     async def route(name: Annotated[str, Form()], tags: Annotated[list[str], Form()]):
@@ -581,9 +547,6 @@ def _uploaded_file(router: APIRouter) -> None:
     @router.post(_PATH)
     async def route(file: UploadFile):
         return {"name": file.filename, "content": (await file.read()).decode()}
-
-
-# Dependencies and background tasks
 
 
 def _record_call(request: Request) -> None:
@@ -619,9 +582,6 @@ def _model_dependency(router: APIRouter) -> None:
         return query.model_dump()
 
 
-# Plain params, errors, and responses
-
-
 def _query_and_header_params(router: APIRouter) -> None:
     @router.post(_PATH)
     async def route(number: int, x_name: Annotated[Union[str, None], Header()] = None):
@@ -630,7 +590,7 @@ def _query_and_header_params(router: APIRouter) -> None:
 
 def _request_validation_error(router: APIRouter) -> None:
     @router.post(_PATH)
-    async def route(body: _ModelWithInt):  # pragma: no cover # FastAPI rejects the request
+    async def route(body: _ModelWithInt):  # pragma: no cover
         return body
 
 
@@ -772,7 +732,6 @@ _CASES = [
 ]
 
 
-# FastAPI serializes the wrong-typed values of `model_construct()` objects with a warning
 @pytest.mark.filterwarnings("ignore:Pydantic serializer warnings:UserWarning")
 @pytest.mark.parametrize("case", _CASES, ids=[case.id for case in _CASES])
 def test__untouched_route__request__should_get_the_same_response_as_in_fastapi(case: _Case):

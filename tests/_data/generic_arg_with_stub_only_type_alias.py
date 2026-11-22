@@ -21,12 +21,10 @@ else:
 if TYPE_CHECKING:
     StubOnlyAlias = Any
 else:
-    # The values of native type aliases are evaluated lazily
     exec("type StubOnlyAlias = StubOnlyGeneric[int]")
 
 
 class Page(BaseModel, Generic[T]):
-    # A default makes it a statement that runs, unlike lazily evaluated annotations
     items: list[T] = Field(default_factory=list)
 
 

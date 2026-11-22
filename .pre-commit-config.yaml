@@ -23,7 +23,7 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/adamchainz/blacken-docs
-    rev: 1.19.1 # replace with latest tag on GitHub
+    rev: 1.19.1
     hooks:
       - id: blacken-docs
         language: python
@@ -46,3 +46,12 @@ repos:
     rev: 0.10.7
     hooks:
       - id: uv-lock
+
+  - repo: local
+    hooks:
+      - id: no-new-comments
+        name: no new comments
+        entry: python scripts/check_comments.py
+        language: python
+        pass_filenames: false
+        always_run: true

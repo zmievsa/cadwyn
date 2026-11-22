@@ -107,7 +107,7 @@ if TYPE_CHECKING:
         SchemaGenerator,
     )
 else:
-    from cadwyn_core._stand_ins import (  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import (  # noqa: TC001
         APIRoute,
         APIRouter,
         Depends,
@@ -117,9 +117,6 @@ else:
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 
 
-# Versioning works without FastAPI, so we only look for FastAPI's classes in annotations once FastAPI has imported
-# them. Their objects can't exist before that.
-# A module that is still being imported might not have defined the class yet.
 def _get_fastapi_depends_classes() -> "tuple[type[Depends], ...]":
     depends = getattr(sys.modules.get("fastapi.params"), "Depends", None)
     return () if depends is None else (depends,)
@@ -143,52 +140,25 @@ class _AnnotationTransformer:
         self.typevar_copies: dict[typing.TypeVar, typing.TypeVar] = {}
         self._typevars_being_copied: set[typing.TypeVar] = set()
         self._typevar_owners: list[Any] = []
-        # The models whose own fields use the TypeVars of each namespace (see typevar_namespace)
         self._typevar_users: list[list[Any]] = []
         self._model_owners: list[type[BaseModel]] = []
         self._typevar_scope_model_depth = 0
         self._template_position_depth = 0
         self._typevar_fallback_depth = 0
-        # Only request the models from the generator without rebuilding the annotations. This way, we can find
-        # the models that an annotation refers to without failing on annotations that we cannot rebuild
         self.record_only = record_only
-        # Record the values of type aliases with their args instead of the args themselves (record-only), so that
-        # the args that the values do not use are not recorded (see SchemaGenerator.dependency_differs_from_head)
         self._expands_type_aliases = expands_type_aliases
-        # The type aliases whose values we are recording right now (by their ids) with the args of each expansion,
-        # to stop at the ones that refer to themselves
         self._type_aliases_being_expanded: dict[int, list[tuple[Any, ...]]] = {}
-        # The ids of the type aliases, callables and containers that we are recording, to detect the ones that
-        # lead back to themselves (e.g. a default factory whose default argument is a registry that contains it)
         self._ids_being_recorded: set[int] = set()
-        # The ids of the type aliases that we are copying right now, to detect the ones that refer to themselves
         self._type_aliases_being_copied: set[int] = set()
-        # The ids of the lists, tuples, and dicts that we are copying right now with whether they contain themselves
         self._containers_being_copied: dict[int, bool] = {}
-        # How many classes and callables we have replaced with this version's copies, so that we can tell whether
-        # anything within a container gets replaced. Typing objects, such as `list[int]`, get rebuilt even when
-        # nothing within them gets replaced, so we cannot tell it by comparing the results with the originals.
         self._replacement_count = 0
-        # How many containers that get deep copied as a whole we are in (see _change_version_of_container)
         self._only_checking_depth = 0
-        # The places that we are versioning right now (e.g. fields), innermost last (see describing)
         self._locations: list[str] = []
-        # Whether we are recording the routes, whose endpoints and dependencies copying reads like _get_signature
         self._records_routes = False
-        # How many positions that need the classes themselves we are in right now (see is_in_hard_position)
         self._hard_position_depth = 0
-        # How many metadata objects that pydantic uses we are in (see is_in_pydantic_metadata)
         self._pydantic_metadata_depth = 0
-        # The copies of the parameters of the model that a _BareGenericCopier copies, by the parameters
         self.versioned_parameters: dict[Any, Any] = {}
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
-        # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
-        # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
-        # because such copies could produce weird behaviors at runtime, especially if you/FastAPI do any comparisons.
-        # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
-        # self.change_versions_of_a_non_container_annotation = functools.cache(
-        #     self._change_version_of_a_non_container_annotation,
-        # )
 
     @property
     def is_in_hard_position(self) -> bool:
@@ -241,17 +211,13 @@ class _AnnotationTransformer:
         Otherwise, we fail instead of using the latest classes or giving them another type.
         """
         if id(container) in self._containers_being_copied:
-            # It contains itself, so we deep copy it as a whole once we know that nothing within it gets replaced
             self._containers_being_copied[id(container)] = True
             return container
         self._containers_being_copied[id(container)] = False
         replacement_count = self._replacement_count
         is_plain = type(container) in {dict, list, tuple}
         try:
-            # We deep copy other containers as a whole, so that their own __deepcopy__ decides how to copy the values
-            # within them (e.g. it can keep the ones that cannot be copied), and we only check these values
             with contextlib.nullcontext() if is_plain else self._only_checking_containers():
-                # The (key, value) pairs of dicts
                 values: list[Any] = (
                     [
                         (self.change_version_of_annotation(key), self.change_version_of_annotation(value))
@@ -307,7 +273,6 @@ class _AnnotationTransformer:
             self._locations.pop()
 
     def migrate_router_to_version(self, router: "APIRouter"):
-        # Only route generation versions routes, so FastAPI is there
         import fastapi.routing
 
         for route in router.routes:
@@ -387,7 +352,6 @@ class _AnnotationTransformer:
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
                 return annotation
-            # Pydantic resolves the forward refs in the values of type aliases in their own module
             with self.hard_position():
                 if self.record_only:
                     self._record_type_alias(annotation)
@@ -400,8 +364,6 @@ class _AnnotationTransformer:
                         annotation.dependency, callable_kind=_CallableKind.DEPENDENCY
                     )
                     return annotation
-                # This also covers Security. Copying keeps all of their other fields (e.g. use_cache, scope, and
-                # scopes) without calling __init__ which subclasses could have overridden with a different signature
                 annotation_copy = copy.copy(annotation)
                 dependency = self.change_versions_of_a_non_container_annotation(
                     annotation.dependency, callable_kind=_CallableKind.DEPENDENCY
@@ -492,13 +454,9 @@ class _AnnotationTransformer:
         collector = _ReferencedModelCollector()
         collector.annotation_transformer._typevar_owners = self._typevar_owners.copy()
         collector.annotation_transformer._typevar_users = self._typevar_users.copy()
-        # Stops at the models and TypeVars that lead back to themselves, as in this transformer
         collector.annotation_transformer._ids_being_recorded = self._ids_being_recorded
         collector.annotation_transformer._typevars_being_copied = self._typevars_being_copied
         collector.annotation_transformer._change_version_of_typevar_values(resolved_values)
-        # Pydantic resolves a quoted reference to a model to its copy only within that copy itself, and every other
-        # name in the copy to its latest version. So the TypeVar can stay the same only if a single model uses it
-        # and its fallbacks refer to no other model that changes in this version than that model
         users = {_unwrap_model(user) for user in self._typevar_users[-1]}
         generator = self.generator.schema_generator
         user = next(iter(users)) if len(users) == 1 else None
@@ -514,23 +472,19 @@ class _AnnotationTransformer:
         if self.record_only:
             self._change_version_of_typevar_values(resolved_values)
             return param
-        # Only the transformers of collectors, which only record, have no schema generator
         assert generator is not None  # noqa: S101
         if collector.is_complete and not generator.validates_models_that_differ_from_head(
             collector.models | collector.arg_models
         ):
             return param
-        # One copy per version, so that e.g. `Page[T]` within `Outer[T]` stays the copy of the bare `Page`
         key = (param, resolved_values)
         try:
             return generator.typevar_copies[key]
-        except (KeyError, TypeError):  # Unhashable values get a copy each time
+        except (KeyError, TypeError):
             pass
         versioned_values = self._change_version_of_typevar_values(resolved_values)
         for value in versioned_values:
             self._check_typevar_value(generator, param, value)
-        # Runtime reconstruction uses the third-party factory dynamically; static TypeVar syntax
-        # cannot express bounds, constraints, and defaults discovered at runtime.
         factory = sys.modules["typing_extensions"].TypeVar
         variance = {
             "covariant": param.__covariant__,
@@ -547,7 +501,6 @@ class _AnnotationTransformer:
         return copied
 
     def _change_version_of_typevar_values(self, values: tuple[Any, ...]) -> tuple[Any, ...]:
-        # A TypeVar must be built before pydantic sees it, so cyclic bounds need the classes themselves.
         self._typevar_fallback_depth += 1
         try:
             with self.hard_position():
@@ -560,7 +513,6 @@ class _AnnotationTransformer:
             return value
         owner = self._typevar_owners[-1]
         if lenient_issubclass(owner, BaseModel):
-            # The copies of models can have other namespaces, e.g. in reference cycles
             value = _eval_forward_refs(value, _unwrap_model(owner))
         else:
             value = _try_eval_type(value, vars(sys.modules[owner.__module__]))
@@ -640,8 +592,6 @@ class _AnnotationTransformer:
         return type(alias)(name=alias.__name__, value=value, type_params=type_params)
 
     def _change_version_of_callable(self, annotation: Callable[..., Any], *, callable_kind: _CallableKind) -> Any:
-        # Callables, such as default factories, are called with the classes themselves and their annotations are
-        # not resolved by pydantic
         with (
             self.hard_position(),
             self.template_position() if callable_kind is _CallableKind.OTHER else contextlib.nullcontext(),
@@ -650,16 +600,12 @@ class _AnnotationTransformer:
                 ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
             ) or isinstance(annotation, _get_fastapi_security_base_classes()):
                 return annotation
-            # Special forms such as typing.Self are callable but they are not functions
             if type(annotation).__module__ in {"typing", "typing_extensions"}:
                 return annotation
             if callable_kind is _CallableKind.OTHER:
                 try:
-                    # A custom __signature__ can also fail when its parameters are read
                     _get_unevaluated_signature(annotation).parameters  # noqa: B018
                 except (ValueError, TypeError):
-                    # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
-                    # have no annotations or defaults to version
                     return annotation
 
             def modifier(annotation: Any):
@@ -694,7 +640,6 @@ class _AnnotationTransformer:
         that are not defined yet or with a TypeVarTuple).
         """
         value = _get_value_of_type_alias_with_args(annotation)
-        # Pydantic's own type aliases (e.g. JsonValue) are never versioned (see the branch for them below)
         if value is _UNRESOLVED or (value.alias.__module__ or "").startswith("pydantic."):
             return False
         expanded_args = self._type_aliases_being_expanded.get(id(value.alias))
@@ -729,10 +674,8 @@ class _AnnotationTransformer:
     def _get_annotations_and_defaults_to_record(self, call: Callable[..., Any], callable_kind: _CallableKind) -> Any:
         """Return the annotations and the defaults that _modify_callable_annotations versions, or _UNRESOLVED"""
         if callable_kind is _CallableKind.OTHER:
-            # The annotations are read from the same wrapper as in _modify_callable_annotations
             wrapper = self._copy_function_through_class_based_wrapper(call, is_called_by_fastapi=False)
             if _has_undefined_names_in_lazy_annotations(wrapper):
-                # Copying it fails on Python 3.14, as on main
                 self._record_unknown_references()
                 return _UNRESOLVED
             callable_annotations = _get_annotations_without_evaluating(wrapper)
@@ -744,16 +687,11 @@ class _AnnotationTransformer:
             }
             defaults = tuple(p.default for p in parameters.values() if p.default is not inspect.Signature.empty)
         else:
-            # The models of the routes must include every model that versioning the routes requests (see
-            # SchemaGenerator._add_route_models) so we read their endpoints and dependencies exactly like copying does,
-            # which resolves the annotations one by one if some names are only defined for type checkers. Elsewhere,
-            # we keep the decisions that main made about the models that refer to such callables
             get_signature = (
                 _get_signature if self._records_routes else functools.partial(inspect.signature, eval_str=True)
             )
             signature = _evaluate_user_annotations(lambda: get_signature(call))
             if signature is _UNRESOLVED:
-                # E.g. some names are not defined yet so copying could request other models once they get defined
                 self._record_unknown_references()
                 return _UNRESOLVED
             callable_annotations = self._get_annotations_of_callable_called_by_fastapi(
@@ -762,13 +700,11 @@ class _AnnotationTransformer:
             defaults = tuple(
                 param.default for param in signature.parameters.values() if param.default is not inspect.Signature.empty
             )
-        # The string annotations that cannot be evaluated yet stay strings
         if any(type(value) is str for value in callable_annotations.values()):
             self._record_unknown_references()
         return [callable_annotations, defaults]
 
     def _record_type_alias(self, alias: Any) -> None:
-        # The values of native type aliases are evaluated lazily since Python 3.12
         if _evaluate_user_annotations(lambda: alias.__value__) is _UNRESOLVED:
             self._record_unknown_references()
             return
@@ -797,8 +733,6 @@ class _AnnotationTransformer:
         if is_typealiastype(origin):
             versioned_args = self.change_version_of_annotation(args)
             versioned_origin = origin
-            # The args replace these parameters, so only the other TypeVars in the value validate as fallbacks.
-            # The value can also hold a bare generic even when none of the args contains a model
             supplied_params = origin.__type_params__[: len(args)]
             if self._typevar_fallback_depth or _get_typevar_uses(
                 _get_type_alias_value(origin), ignored=frozenset(supplied_params)
@@ -818,12 +752,7 @@ class _AnnotationTransformer:
         if self.record_only:
             return annotation
         if origin is Annotated and self._has_dependency_that_differs_from_head(args):
-            # typing caches Annotated[...] by "==" and "hash", and our dependency wrappers are equal to the originals
-            # (so that dependency_overrides match them), so typing would usually return the alias that holds
-            # the original dependency (#467). We bypass its cache only where the original dependency would validate
-            # requests differently, so everywhere else the dependency keeps getting the original classes, as before
             if self._has_inferred_dependency(args) and not isinstance(args[0], type):
-                # FastAPI uses the first arg as the dependency (e.g. `Annotated[get_roles, Depends()]`)
                 with self.hard_position():
                     dependency = self.change_versions_of_a_non_container_annotation(
                         args[0], callable_kind=_CallableKind.DEPENDENCY
@@ -834,16 +763,12 @@ class _AnnotationTransformer:
 
     def _has_dependency_that_differs_from_head(self, annotated_args: tuple[Any, ...]) -> bool:
         generator = self.generator
-        return (
-            generator.schema_generator is generator
-            and any(
-                isinstance(value, _get_fastapi_depends_classes())
-                # FastAPI infers the dependency from the type when it is not set (e.g. `Annotated[Params, Depends()]`)
-                and generator.dependency_differs_from_head(
-                    annotated_args[0] if value.dependency is None else value.dependency
-                )
-                for value in annotated_args[1:]
+        return generator.schema_generator is generator and any(
+            isinstance(value, _get_fastapi_depends_classes())
+            and generator.dependency_differs_from_head(
+                annotated_args[0] if value.dependency is None else value.dependency
             )
+            for value in annotated_args[1:]
         )
 
     @staticmethod
@@ -903,8 +828,6 @@ class _AnnotationTransformer:
     def _remake_endpoint_dependencies(cls, route: "APIRoute") -> None:
         import fastapi.routing
 
-        # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
-
         route_copy = fastapi.routing.APIRoute(
             route.path, route.endpoint, dependencies=route.dependencies, response_model=route.response_model
         )
@@ -913,7 +836,7 @@ class _AnnotationTransformer:
         _add_request_and_response_params(route)
 
     @classmethod
-    def _modify_callable_annotations(  # pragma: no branch # because of lambdas
+    def _modify_callable_annotations(  # pragma: no branch
         cls,
         call: _Call,
         modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
@@ -924,8 +847,6 @@ class _AnnotationTransformer:
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
         if callable_kind is _CallableKind.OTHER:
-            # FastAPI never evaluates the annotations of such callables (e.g. pydantic's default factories) and they
-            # may not even be evaluable at runtime (e.g. pandas.Series[int]) so this is exactly what Cadwyn always did
             old_params = inspect.signature(call).parameters
             if sys.version_info >= (3, 14):  # pragma: no cover
                 from annotationlib import get_annotations
@@ -942,22 +863,15 @@ class _AnnotationTransformer:
                 tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
             )
         else:
-            # FastAPI evaluates the annotations of endpoints and dependencies the same way so we cannot fail where
-            # FastAPI would not. Unlike __annotations__, the signature also follows functools.partial and __signature__
             old_signature = _get_signature(call)
             old_params = old_signature.parameters
             return_annotation = old_signature.return_annotation
             callable_annotations = cls._get_annotations_of_callable_called_by_fastapi(call, old_signature)
             annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
             if return_annotation is not inspect.Signature.empty:
-                # FastAPI validates the route's explicit response_model, which is versioned separately, and never
-                # validates dependency returns. Copying these annotations can reject models that no route uses.
                 annotation_modifying_wrapper.__annotations__["return"] = return_annotation
             annotation_modifying_wrapper.__defaults__ = modify_defaults(
                 tuple(
-                    # FastAPI mutates the FieldInfo objects in defaults (e.g. their annotation) so every version
-                    # (and app) must have its own copies. Otherwise, all of them would use the models of whichever
-                    # got built last
                     _copy_field_info(p.default) if isinstance(p.default, FieldInfo) else p.default
                     for p in old_params.values()
                     if p.default is not inspect.Signature.empty
@@ -984,11 +898,6 @@ class _AnnotationTransformer:
             for name, param in old_signature.parameters.items()
             if param.annotation is not inspect.Parameter.empty
         }
-        # Cadwyn always evaluated the annotations that were written as strings (e.g. postponed ones) recursively
-        # before versioning them. inspect.signature() evaluates them only once so forward references can be left
-        # within them (e.g. `body: "Model"` or `list["Model"]` with postponed annotations) or they can stay strings
-        # (e.g. if they could not be evaluated or if they come from __signature__). FastAPI would evaluate some of
-        # them itself but in the globals that lead to the head models so we finish evaluating them here
         unevaluated_signature = _get_unevaluated_signature(call)
         annotations_written_as_strings = {
             name for name, param in unevaluated_signature.parameters.items() if type(param.annotation) is str
@@ -1045,10 +954,8 @@ class _AnnotationTransformer:
         if is_called_by_fastapi:
             actual_call = _get_function_behind_callable(call)
             if inspect.isclass(actual_call):
-                # Like FastAPI, we call classes synchronously because calling them constructs an instance
                 return _CallableWrapper(call, is_called_by_fastapi=True)
         elif not is_regular_function(call):
-            # This means that the callable is actually an instance of a regular class
             actual_call = call.__call__
         else:
             actual_call = call
@@ -1083,7 +990,6 @@ class _ReferencedModelCollector:
         self.hard_models: set[type[Union[BaseModel, Enum]]] = set()
         self.arg_models: set[type[Union[BaseModel, Enum]]] = set()
         self.base_models: set[type[Union[BaseModel, Enum]]] = set()
-        # Whether the annotations that we looked at only refer to names that are already defined
         self.is_complete = True
 
     @property
@@ -1094,7 +1000,6 @@ class _ReferencedModelCollector:
         if _is_versionable_model(model):
             original = _unwrap_model(model)
             self.models.add(original)
-            # The versioned copies of bare generics are not generic, so we look at the original, as the generator
             if (
                 issubclass(original, BaseModel)
                 and original.__pydantic_generic_metadata__["parameters"]
@@ -1120,11 +1025,9 @@ class _ReferencedModelCollector:
         args = _eval_generic_args(model)
         arg_collector.annotation_transformer.change_version_of_annotation(args)
         self.arg_models |= arg_collector.models
-        # The quoted args that cannot be evaluated yet stay forward refs
         if not arg_collector.is_complete or any(_contains_forward_refs(arg) for arg in args):
             self.is_complete = False
         if generic_metadata["origin"] is not None:
-            # A parametrized generic is a subclass of its origin
             self.change_version_of_base(generic_metadata["origin"])
         return generic_metadata
 
@@ -1139,28 +1042,15 @@ class _ReferencedModelCollector:
 
 
 class _ModelReferences(NamedTuple):
-    # The models that are always versioned along with the model: in its fields, annotations, etc
     models: frozenset[type[Union[BaseModel, Enum]]]
-    # The models in the type args of a parametrized generic (e.g. Item in Page[Item])
     arg_models: frozenset[type[Union[BaseModel, Enum]]]
-    # The bases of the model and the origin of a parametrized generic (e.g. Page in Page[Item])
     base_models: frozenset[type[Union[BaseModel, Enum]]]
-    # Whether we know all of the models that copying the model would request. We do not when some names in its
-    # annotations (fields, class variables, quoted generic args, annotations of default factories, values of type
-    # aliases, etc.) are not defined yet: once they get defined, copying the model can request any model. We do not
-    # either when copying it would recurse forever through a type alias that refers to itself. So we always copy
-    # such a model and never version the generic args that lead to it, even after the names get defined, which
-    # keeps them exactly as on main.
     is_complete: bool = True
-    # The models among `models` that are requested in positions that need the classes themselves rather than
-    # forward refs to them, e.g. default factories (see _AnnotationTransformer.is_in_hard_position)
     hard_models: frozenset[type[Union[BaseModel, Enum]]] = frozenset()
 
 
 class _GenerationAnalysis(NamedTuple):
-    # Whether generating the copy of the model will not recurse forever
     terminates: bool
-    # Whether the model or the models that it refers to have schema or enum instructions
     refers_to_changed_models: bool
 
 
@@ -1200,7 +1090,6 @@ def _get_models_validated_by_fields(model: type[BaseModel]) -> set[type[Union[Ba
     if model.model_config.get("extra") == "allow":
         annotations.append(_get_extra_fields_annotation(model))
     collector = _ReferencedModelCollector(expands_type_aliases=True)
-    # Pydantic validates the TypeVars left in the resolved fields as their bounds, constraints, or defaults
     with collector.annotation_transformer.typevar_namespace(model):
         for annotation in annotations:
             collector.annotation_transformer.change_version_of_annotation(annotation)

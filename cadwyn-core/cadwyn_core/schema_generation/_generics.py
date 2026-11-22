@@ -50,11 +50,8 @@ def _get_typevar_uses(
     """
     from typing_inspection.typing_objects import is_typealiastype
 
-    # The models that use each TypeVar, in the order of their fields
     found: dict[typing.TypeVar, dict[type[BaseModel], None]] = {}
-    # The annotations with their models and ignored parameters, and whether they type extra fields
     pending: list[tuple[Any, Any, frozenset[Any], bool]] = [(annotation, None, ignored, False)]
-    # Keeps the annotations alive so that their ids stay unique
     visited: dict[tuple[int, int, frozenset[Any], bool], Any] = {}
     visited_aliases: dict[tuple[int, int, frozenset[Any]], Any] = {}
     while pending:
@@ -72,7 +69,6 @@ def _get_typevar_uses(
             nested = [(field.annotation, annotation, frozenset(), False) for field in annotation.model_fields.values()]
             if annotation.model_config.get("extra") == "allow":
                 nested.append((_get_extra_fields_annotation(annotation), annotation, frozenset(), True))
-            # Reversed so that the models come out in the order of the fields
             pending.extend(reversed(nested))
         else:
             origin = get_origin(annotation)
@@ -81,12 +77,10 @@ def _get_typevar_uses(
             if is_typealiastype(alias):
                 params = alias.__type_params__
                 alias_ignored = (ignored - frozenset(params)) | frozenset(params[: len(args)])
-                # Each read of the value of a native type alias can return a new object
                 alias_key = id(alias), id(owner), alias_ignored
                 if alias_key not in visited_aliases:
                     visited_aliases[alias_key] = alias
                     pending.append((_get_type_alias_value(alias), owner, alias_ignored, is_extra))
-            # The args of a type alias replace its parameters in its value
             pending.extend(
                 reversed(
                     [
@@ -107,12 +101,8 @@ def _change_version_of_generic_metadata(
     origin = generic_metadata["origin"]
     if not schema_generator._should_version_generic_args(model, generation_stack=[]):
         if origin is not None and schema_generator._is_copied_with_its_cycle(origin):
-            # Pydantic identifies a parametrized generic by its origin and args, so with the head origin, the copy
-            # of e.g. TreeNode[int] would be mistaken for the head TreeNode[int] wherever both of them are used
             return {**generic_metadata, "origin": generator.change_version_of_base(origin)}
         return generic_metadata
-    # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
-    # so they must point to this version's classes too
     return {
         "origin": generator.change_version_of_base(origin) if origin is not None else None,
         "args": generator.annotation_transformer.change_version_of_annotation(_eval_generic_args(model)),
@@ -134,21 +124,17 @@ def _substitute_type_vars_of_inherited_annotation(
     annotation of its parent with the type vars that the parametrizations between them substitute.
     """
     parent = next(parent for parent in model._get_parents(schemas) if field_name in parent.annotations).cls
-    # Like pydantic, each class inherits the field from its first base that has it. The other bases, e.g. `A[int]`
-    # in `class M(A[int], B[T])`, do not substitute its type vars even if they reuse them.
     classes_on_the_way: list[type] = []
     cls: type = model.cls
     while cls is not parent:
         classes_on_the_way.append(cls)
         cls = next(base for base in cls.__bases__ if lenient_issubclass(base, parent))
-    # From the parametrization closest to the parent to the model itself, as pydantic substitutes them
     for cls in reversed(classes_on_the_way):
         origin = getattr(cls, "__pydantic_generic_metadata__", {}).get("origin")
         if origin is not None:
             parameters = origin.__pydantic_generic_metadata__["parameters"]
             type_vars = dict(zip(parameters, _eval_generic_args(cast("type[BaseModel]", cls)), strict=True))
             substituted_annotation = replace_types(annotation, type_vars)
-            # Pydantic rebuilds Annotated even without type vars in it, which would give it another cache key
             if substituted_annotation != annotation:
                 annotation = substituted_annotation
     return annotation
@@ -181,5 +167,4 @@ def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[
 
 
 def _eval_generic_args(model: type[BaseModel]) -> tuple[Any, ...]:
-    # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
     return tuple(_eval_forward_refs(arg, model) for arg in model.__pydantic_generic_metadata__["args"])

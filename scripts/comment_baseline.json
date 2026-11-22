@@ -1,0 +1,16 @@
+{
+  "cadwyn-core/cadwyn_core/_asts.py": 3,
+  "cadwyn-core/cadwyn_core/schema_generation/_fields.py": 1,
+  "cadwyn-core/cadwyn_core/schema_generation/_instructions.py": 1,
+  "cadwyn-core/cadwyn_core/schema_generation/_models.py": 1,
+  "cadwyn-core/cadwyn_core/schema_generation/_versioned_models.py": 1,
+  "cadwyn/applications.py": 1,
+  "cadwyn/middleware.py": 1,
+  "cadwyn/route_generation.py": 4,
+  "cadwyn/structure/versions/_responses.py": 1,
+  "docs/concepts/schema_generation.md": 1,
+  "tests/_resources/utils.py": 4,
+  "tests/_resources/versioned_app/app.py": 1,
+  "tests/test_applications.py": 1,
+  "tests/test_render.py": 1
+}

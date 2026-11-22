@@ -26,8 +26,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      # Ubuntu 24.04 blocks unprivileged user namespaces, so the Chrome that
-      # linkspector starts crashes with "No usable sandbox!".
       - name: Allow Chrome's sandbox
         run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
       - name: Validate links

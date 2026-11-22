@@ -957,7 +957,6 @@ def test__router_generation__deleting_a_deleted_endpoint__should_raise_router_ge
     async def test():
         raise NotImplementedError
 
-    # with insert_pytest_raises():
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
@@ -1464,14 +1463,12 @@ def test__router_generation__using_uploadfile_typehint(
         version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
     assert len(routes_2000) == len(routes_2001) == 2
-    # We are intentionally not checking anything here. Our goal is to validate that there is no exception
 
 
 def test__router_generation__using_jsonvalue_typehint(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
 ):
-    # We fall into a recursion error if we use an unannotated syntax for this parameter
     @router.post("/test")
     async def test(param1: Annotated[JsonValue, Body()]):
         return param1
@@ -1562,9 +1559,6 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
     ("path", "schema_name", "is_applied"),
     [
         ("/field_defaults", "ConstrainedFieldsInFieldDefaults", True),
-        # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets (since pydantic 2.12).
-        # Applying it would make the older versions reject the requests and responses that they have always
-        # accepted, so it stays ignored
         ("/annotated", "ConstrainedFieldsInAnnotated", False),
     ],
 )
@@ -1684,7 +1678,6 @@ def test__router_generation__child_had_inherited_field__should_not_change_parent
         router=router,
     )
 
-    # The changes of the parent's field in even older versions still apply to the child
     for version, path, schema_name, description, max_length in [
         ("2001-01-01", "/parent", "ParentWithInheritedField", "Head description", 10),
         ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 3),
@@ -1742,8 +1735,6 @@ def test__router_generation__child_had_serialization_alias_of_inherited_field__s
     else:
         clients = create_versioned_clients(change, router=router)
 
-    # The parent has an instruction of its own (for "quantity"), so Cadwyn 7.4.0 also changed the keys of the parent
-    # and of the personal record in the older versions (or, with HeadVersion, in every version) (#466)
     versions_with_alias = ["2000-01-01", "2001-01-01"] if in_head_version else ["2000-01-01"]
     for version, versioned_client in clients.items():
         assert versioned_client.get("/record").json() == {"code": "ABC", "quantity": 1}
@@ -1820,7 +1811,6 @@ def _get_openapi_keys(client: TestClient, version: str, schema_name: str) -> tup
         ),
         pytest.param(ItemWithAlias, lambda field: field.had(alias=None), "name", "name", id="had_none"),
         pytest.param(ItemWithAlias, lambda field: field.didnt_have("alias"), "name", "name", id="didnt_have"),
-        # didnt_have() never removes an alias from the Field() in Annotated, so the field keeps it, as before
         pytest.param(
             ItemWithAliasInAnnotated,
             lambda field: field.didnt_have("alias"),
@@ -1880,7 +1870,6 @@ def test__router_generation__alias_instruction__should_use_keys_of_resulting_fie
     async def echo(item: model):  # ty: ignore[invalid-type-form]
         return item
 
-    # Cadwyn dumps the request body of the older version by its serialization aliases
     @convert_request_to_next_version_for(model)
     def migrate_request(request: RequestInfo):
         request.body[head_validation_key] = request.body.pop(serialization_key)
@@ -2073,7 +2062,6 @@ def test__router_generation__alias_instruction_without_response_migration__shoul
 ):
     assert clients_without_alias_migrations["2001-01-01"].get("/items").json() == {"a": "x"}
 
-    # Instead of returning the default under the new key
     with pytest.raises(ResponseValidationError) as exc_info:
         clients_without_alias_migrations["2000-01-01"].get("/items")
     assert [error["msg"] for error in exc_info.value.errors()] == [
@@ -2084,7 +2072,6 @@ def test__router_generation__alias_instruction_without_response_migration__shoul
 def test__router_generation__alias_instruction__should_reject_request_with_old_key(
     clients_without_alias_migrations: dict[str, CadwynTestClient],
 ):
-    # Instead of giving the field its default
     response = clients_without_alias_migrations["2000-01-01"].post("/items", json={"a": "x"})
     assert response.status_code == 422
     assert [error["msg"] for error in response.json()["detail"]] == [
@@ -2101,7 +2088,6 @@ class ItemWithOptionalAliasedNameAndFieldNamedLikeIt(BaseModel):
     a: str = Field("other", alias="b")
 
 
-# Pydantic validates by alias anyway because the model can't validate by neither
 class ItemWithOptionalAliasedNameAndFieldNamedLikeItThatDisablesValidationByAlias(BaseModel):
     model_config = ConfigDict(populate_by_name=False, validate_by_alias=False)
     name: str = Field("default", alias="a")
@@ -2223,7 +2209,6 @@ def test__router_generation__alias_instruction_gives_old_key_to_another_field_by
         version_change(schema(ItemWithOptionalAliasedNameAndCodeAliasedByTheSameKey).field("name").had(alias="legacy"))
     )
 
-    # Pydantic validates by alias anyway, so "code" reads "a"
     response = clients["2000-01-01"].post("/codes", json={"a": "x"})
     assert (response.status_code, response.json()) == (200, "x")
 
@@ -2243,8 +2228,6 @@ class ItemWithOptionalAliasedNameThatValidatorFills(BaseModel):
     [
         pytest.param({"compatibility_name": "x", "legacy": "y"}, (200, "x"), id="new_key"),
         pytest.param({"compatibility_name": "x", "legacy": "y", "a": "old"}, (200, "x"), id="both_keys"),
-        # Known limitation: the check only looks at the data that comes in, so it fails even though the validator
-        # fills the field
         pytest.param(
             {"compatibility_name": "x", "a": "old"},
             (
@@ -2384,7 +2367,6 @@ def test__router_generation__alias_instruction__should_accept_old_key_with_new_k
     clients_without_alias_migrations: dict[str, CadwynTestClient],
 ):
     response = clients_without_alias_migrations["2000-01-01"].post("/names", json={"a": "y", "legacy": "x"})
-    # Without a request migration, the latest version doesn't get the value, as for any other renamed key
     assert (response.status_code, response.json()) == (200, "default")
 
 
@@ -2494,7 +2476,6 @@ def test__router_generation__alias_instruction__should_keep_restoring_validation
         )
     )
 
-    # Responses have the dumped key of "code", which the model doesn't validate, so Cadwyn restores its validation key
     assert clients["2001-01-01"].get("/items").json() == {"a": "x", "cs": "y"}
     assert clients["2000-01-01"].get("/items").json() == {"legacy": "x", "cs": "y"}
 
@@ -2677,9 +2658,6 @@ def deletable_attributes_router(router: VersionedAPIRouter) -> VersionedAPIRoute
     ("path", "schema_name", "is_removed"),
     [
         ("/field_defaults", "DeletableAttributesInFieldDefaults", True),
-        # Cadwyn 7.4.0 ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
-        # them could make the older versions reject or change the data that they have always accepted or returned
-        # (e.g. through `ConfigDict(str_max_length=...)` or a `left_to_right` union), so it stays ignored
         ("/annotated", "DeletableAttributesInAnnotated", False),
     ],
 )
@@ -2867,9 +2845,6 @@ class SchemaWithLenConstraints(BaseModel):
     ("field_name", "old_min_length", "old_status_code_of_too_short_value"),
     [
         ("annotated_len", None, 200),
-        # Cadwyn 7.4.0 ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
-        # them could make the older versions reject or change the data that they have always accepted or returned,
-        # so it stays ignored
         ("field_info_with_len", 2, 422),
     ],
 )
@@ -2984,9 +2959,6 @@ class SchemaWithConstraintClasses(BaseModel):
 @pytest.mark.parametrize(
     ("field_name", "instruction", "value", "head_status_code", "old_status_code"),
     [
-        # Cadwyn 7.4.0 ignored had() for constraint classes, like for other constraints in the annotation's metadata.
-        # Applying it could make the older versions reject the requests that they have always accepted (as in
-        # had(allow_inf_nan=False)), so it stays ignored. didnt_have() failed with TypeError there instead
         ("strict_field", lambda field: field.had(strict=False), "1", 422, 422),
         ("strict_field", lambda field: field.didnt_have("strict"), "1", 422, 200),
         ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 200),
@@ -3270,7 +3242,6 @@ def test__router_generation__updating_request_depends(
     def sub_dependency2(my_schema: EmptySchema) -> EmptySchema:
         return my_schema
 
-    # TASK: What if "a" gets deleted? https://github.com/zmievsa/cadwyn/issues/25
     def dependency2(
         dep: Annotated[Union[EmptySchema, None], Depends(sub_dependency2)] = None,
     ):
@@ -3339,7 +3310,6 @@ def test__router_generation__enum_member_dependency_default__fails_without_membe
 
     assert clients["2002-01-01"].get("/test").json() == "a"
     response = clients["2001-01-01"].get("/test")
-    # This version's enum has no such member, so the default fails only where FastAPI validates it
     rejected_default = {
         "detail": [
             {
@@ -3465,10 +3435,10 @@ def test__router_generation_updating_unused_dependencies__with_migration(
     assert resp.status_code == 200
 
     assert saved_enum_names == [
-        "b",  # FastAPI called our dependency and got b in 2000
-        "a",  # We called our dependency and got a in 2001
-        "a",  # FastAPI called our dependency and got a in 2001
-        "a",  # We called our dependency and got a in 2001
+        "b",
+        "a",
+        "a",
+        "a",
     ]
 
 
@@ -3679,14 +3649,11 @@ def test__basic_router_generation__using_custom_class_based_dependency__should_m
     assert response.status_code == 200
     assert response.json() == {"foo": 3}
 
-    # This is not a nice behavior but this is the way Cadwyn functions: the dependency is going to be called
-    # twice: once by FastAPI with solve_dependencies for the old version and once by Cadwyn
-    # with solve_dependencies for the new version.
     assert payloads_dependency_was_called_with == [
-        {"foo": 3, "bar": "meaw"},  # client_2000
-        {"foo": 3},  # client_2000
-        {"foo": 3},  # client_2001
-        {"foo": 3},  # client_2001
+        {"foo": 3, "bar": "meaw"},
+        {"foo": 3},
+        {"foo": 3},
+        {"foo": 3},
     ]
 
 
@@ -3718,12 +3685,11 @@ def test__basic_router_generation__subclass_of_security_class_based_dependency_w
     assert response.status_code == 200
     assert response.json() == {"foo": 3}
 
-    # I.e. It was not migrated at all because we do not migrate any security classes that belong to FastAPI
     assert payloads_dependency_was_called_with == [
-        {"foo": 3},  # client_2000
-        {"foo": 3},  # client_2000
-        {"foo": 3},  # client_2001
-        {"foo": 3},  # client_2001
+        {"foo": 3},
+        {"foo": 3},
+        {"foo": 3},
+        {"foo": 3},
     ]
 
 
@@ -3881,14 +3847,12 @@ def test__router_generation__async_generator_dependency__should_forward_everythi
         if cleanup_failed:
             raise RuntimeError("cleanup failed")
 
-    # Not in Annotated[...] because such dependencies only get versioned where the version changes their models
     @router.get("/test")
     async def route(value: str = Depends(dependency)):
         raise NotImplementedError
 
     app = create_versioned_app(version_change())
     versioned_route = cast("APIRoute", app.router.versioned_routers["2000-01-01"].routes[-1])
-    # Versioned dependencies are equal to the originals so that dependency overrides work
     (versioned_dependency,) = [dep.call for dep in versioned_route.dependant.dependencies if dep.call == dependency]
     assert versioned_dependency is not dependency
 
@@ -3968,7 +3932,6 @@ def test__router_generation__query_model_defaults__should_stay_isolated_between_
         version_change(schema(Filters).field("limit").had(default=30)),
         version_change(schema(Filters).field("limit").had(default=20)),
     )
-    # The endpoint always gets the head default because Cadwyn migrates requests to head before solving them again
     expected_limits = {
         (version, path): (10, openapi_default)
         for version, openapi_default in {"2002-01-01": 10, "2001-01-01": 20, "2000-01-01": 30}.items()
@@ -4119,7 +4082,6 @@ def test__router_generation__decorated_dependencies__should_be_called_the_way_th
         yield role
         events.append(f"{solver} {role} exit")
 
-    # functools.wraps makes __wrapped__ point to the partial
     decorated_partial = _sync_decorator(functools.partial(generator_dependency, "admin"))
 
     @router.get("/token")
@@ -4391,7 +4353,6 @@ def test__router_generation__annotated_metadata_whose_signature_parameters_raise
 
 
 class _ModelWithUnsignaturedDefaultFactory(BaseModel):
-    # inspect.signature() fails for builtins such as next() (and time.time() before Python 3.13)
     value: Any = Field(default_factory=functools.partial(next, itertools.count(1)))
 
 
@@ -4402,7 +4363,6 @@ def _get_model_with_unsignatured_default_factory(multiplier: int = 1) -> _ModelW
 def test__router_generation__dependency_return_annotations__should_not_be_versioned(
     create_versioned_clients: CreateVersionedClients,
 ):
-    # FastAPI never looks at the return annotations of dependencies so Cadwyn must not generate their models either
     cached_dependency = functools.lru_cache(_get_model_with_unsignatured_default_factory)
     partial_dependency = functools.partial(_get_model_with_unsignatured_default_factory, 2)
     router = VersionedAPIRouter(dependencies=[Depends(cached_dependency), Depends(partial_dependency)])
@@ -4450,7 +4410,6 @@ class _PartialWithOverriddenCall(functools.partial):
 
 
 class _PartialWithOverriddenCallAndForwardedAttributes(_PartialWithOverriddenCall):
-    # Forwards __globals__ of .func too
     def __getattr__(self, name: str) -> Any:
         return getattr(self.func, name)
 
@@ -4480,7 +4439,6 @@ def test__router_generation__partial_subclass_dependency_with_overridden_call__s
     create_versioned_clients: CreateVersionedClients,
     partial_subclass: type[functools.partial[int]],
 ):
-    # The instance must not have any attributes. Otherwise, Python would not flatten it into the partials around it
     dependency = partial_subclass(_get_seven)
 
     @router.get("/default")
@@ -4529,7 +4487,6 @@ def test__router_generation__dependency_with_lazy_type_checking_only_annotations
     create_versioned_clients: CreateVersionedClients,
 ):
     paths = []
-    # Python 3.11-3.13 evaluate annotations when a function gets defined so such dependencies cannot exist there
     if sys.version_info >= (3, 14):
         lazy_dependencies = importlib.import_module("tests._data.lazy_type_checking_dependencies")
 
@@ -4557,8 +4514,7 @@ def test__router_generation__dependency_with_parameters_only_in_signature__shoul
     def dynamic_dependency(**kwargs: Any) -> dict[str, Any]:
         return kwargs
 
-    # Some libraries build dependencies dynamically and only describe their parameters through __signature__
-    dynamic_dependency.__signature__ = inspect.Signature(  # ty: ignore[missing-attribute]  # Set dynamically.
+    dynamic_dependency.__signature__ = inspect.Signature(  # ty: ignore[missing-attribute]
         [
             inspect.Parameter("limit", inspect.Parameter.KEYWORD_ONLY, default=Query(ge=1), annotation=int),
             inspect.Parameter("body", inspect.Parameter.KEYWORD_ONLY, annotation=SchemaWithOneIntField),
@@ -4767,7 +4723,6 @@ class AddonOfDependency(BaseModel):
 
 
 class SubscriptionOfDependency(BaseModel):
-    # Has no instructions itself but refers to an enum that has them, directly and through another model
     plan: PlanOfDependency
     addons: list[AddonOfDependency] = []
 
@@ -4829,7 +4784,6 @@ def test__router_generation__annotated_dependency_without_changed_models__should
 
     clients = create_versioned_clients(make_version_change())
     for version_client in clients.values():
-        # The dependency gets the original classes, so lookups by enum members and isinstance work
         assert send(version_client, "pro").json() == 10
         assert send(version_client, "team").json() == 30
 
@@ -4844,10 +4798,8 @@ def test__router_generation__annotated_dependency_with_changed_enum__should_be_v
     _add_price_route(router, dependency)
 
     clients = create_versioned_clients(version_change(enum(PlanOfDependency).didnt_have("team")))
-    # The latest version validates the same as head so the dependency gets the original classes there
     assert send(clients["2001-01-01"], "pro").json() == 10
     assert send(clients["2001-01-01"], "team").json() == 30
-    # The older version uses its own copy of the dependency, which rejects the plan that it did not have
     assert send(clients["2000-01-01"], "team").status_code == 422
     for version, enum_values in {"2001-01-01": ["free", "pro", "team"], "2000-01-01": ["free", "pro"]}.items():
         openapi = clients[version].get(f"/openapi.json?version={version}").json()
@@ -4859,7 +4811,6 @@ def get_default_role_name() -> RoleOfVersionedDependency:
 
 
 class UserWithDefaultFactoryOfChangedEnum(BaseModel):
-    # Only the default factory refers to the changed enum so it does not change what the model validates
     role_name: str = Field(default_factory=get_default_role_name)
 
 
@@ -4941,7 +4892,6 @@ TypingExtensionsRecursiveAlias = TypeAliasType(
 
 
 if sys.version_info >= (3, 12):
-    # Type aliases that refer to themselves can only be defined with the type statement
     exec(
         "type RecursiveJson = dict[str, RecursiveJson] | list[RecursiveJson] | str | int | None\n"
         "type MutuallyRecursiveList = list[MutuallyRecursiveDict] | int\n"
@@ -4973,7 +4923,6 @@ _requires_type_statement = pytest.mark.skipif(sys.version_info < (3, 12), reason
 
 class ModelWithTypedExtras(BaseModel):
     model_config = ConfigDict(extra="allow")
-    # Pydantic documents typing extra fields this way, but type checkers see it as narrowing a writable attribute
     if not TYPE_CHECKING:  # pragma: no branch
         __pydantic_extra__: dict[str, RoleOfVersionedDependency] = Field(init=False)
 
@@ -5023,12 +4972,10 @@ def test__router_generation__annotated_dependency_whose_models_do_not_validate_c
     async def route(role_name: Annotated[str, Depends(_make_body_dependency(model))]):
         return role_name
 
-    # HeadVersion changes the enum in every version, including the latest one
     clients = create_versioned_clients(
         version_change(),
         head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))],
     )
-    # The models refer to the changed enum without validating it so the dependency gets the original classes
     for version_client in clients.values():
         assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
         if model is UserWithDefaultFactoryOfChangedEnum:
@@ -5084,7 +5031,6 @@ def test__router_generation__annotated_dependency_whose_base_has_instructions__s
     clients = create_versioned_clients(
         version_change(schema(ParentWithChangedEnum).field("legacy").existed_as(type=str)),
     )
-    # The copy of the child inherits the field from the copy of its parent
     assert clients["2001-01-01"].post("/role", json={"role_name": "a"}).json() == "a"
     assert clients["2000-01-01"].post("/role", json={"role_name": "a"}).status_code == 422
     assert clients["2000-01-01"].post("/role", json={"role_name": "a", "legacy": "b"}).json() == "a"
@@ -5125,7 +5071,6 @@ def test__router_generation__annotated_dependency_whose_base_changes_only_overri
         version_change(),
         head_version_changes=[version_change(schema(ParentWithChangedEnum).field("role_name").had(type=int))],
     )
-    # The child overrides the only field that the instructions of its parent change
     for version_client in clients.values():
         assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
 
@@ -5158,7 +5103,6 @@ _TREE_OF_LEAVES = [{"name": "a", "extra": "x"}, [1, [{"name": "b", "extra": "y"}
             ]
             for usage in ["bare", "field", "two_fields"]
         ),
-        # Its copies differ for each field (as on main) so they get other names in OpenAPI than in FastAPI
         *(
             pytest.param("TypingExtensionsRecursiveAlias", _TREE_OF_LEAVES, usage, id=f"typing_extensions-{usage}")
             for usage in ["bare", "field"]
@@ -5187,7 +5131,6 @@ def test__router_generation__recursive_type_alias_of_builtin_types__should_work_
     fastapi_app.include_router(fastapi_router)
     fastapi_client = TestClient(fastapi_app)
 
-    # The other version changes a model that the aliases do not refer to
     clients = create_versioned_clients(version_change(schema(SchemaWithOneIntField).field("foo").had(type=str)))
 
     assert fastapi_client.post("/test", json=body).json() == body
@@ -5240,7 +5183,6 @@ def test__router_generation__recursive_type_alias_of_changed_model_that_no_route
 
     clients = create_versioned_clients(version_change(schema(LeafOfRecursiveAlias).field("extra").didnt_exist))
 
-    # ModelWithRecursiveTree refers to the changed model through a recursive type alias, but no route uses it
     assert globals()["ModelWithRecursiveTree"].model_fields["data"].annotation is globals()["RecursiveTree"]
     assert clients["2000-01-01"].post("/leaf", json={"name": "a", "extra": "x"}).json() == {"name": "a"}
 
@@ -5277,7 +5219,6 @@ def test__router_generation__annotated_dependency_with_enum_changed_by_head_vers
     clients = create_versioned_clients(
         head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))]
     )
-    # HeadVersion changes the latest published version too, so it is versioned there
     client = clients["2000-01-01"]
     assert client.get("/permissions", params={"role": "reader"}).json() == ["reader"]
     assert client.get("/permissions", params={"role": "editor"}).status_code == 422
@@ -5339,7 +5280,6 @@ def test__router_generation__annotated_dependency_with_quoted_args_in_annotation
     assert clients["2000-01-01"].get("/roles", params={"role": "reader"}).json() == ["reader"]
     assert clients["2000-01-01"].get("/roles", params={"role": "editor"}).status_code == 422
     if dependency is not get_roles_with_quoted_query:
-        # Pydantic cannot resolve the forward refs to the models in the OpenAPI, just like without Cadwyn
         return
     for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
         openapi = clients[version].get(f"/openapi.json?version={version}").json()
@@ -5347,7 +5287,6 @@ def test__router_generation__annotated_dependency_with_quoted_args_in_annotation
 
 
 class _MetadataWhoseEqualityRaises:
-    # Callable metadata gets versioned, so typing's Annotated cache would compare it with its versioned copy
     def __call__(self) -> None:
         raise NotImplementedError
 
@@ -5378,7 +5317,6 @@ def get_payload(payload: PayloadOfAnnotatedDependency) -> dict[str, Any]:
 
 
 def _make_dependency_with_many_annotated_parameters() -> Callable[..., Any]:
-    # More distinct Annotated[...] than typing caches
     parameters = ", ".join(f'p{i}: Annotated[int, "parameter {i}"] = 0' for i in range(150))
     namespace: dict[str, Any] = {"Annotated": Annotated, "get_payload": get_payload}
     payload_annotation = "get_payload.__annotations__['payload']"
@@ -5419,7 +5357,6 @@ def test__router_generation__annotated_dependency_with_any_metadata__should_use_
     clients = create_versioned_clients(
         version_change(schema(PayloadOfAnnotatedDependency).field("value").had(name="legacy_value"), migrate=migrate),
     )
-    # Whether typing would cache Annotated[...] with these args or not, every version gets its own dependency
     assert clients["2001-01-01"].post("/value", json={"value": "ok"}).json() == {"value": "ok"}
     assert clients["2000-01-01"].post("/value", json={"legacy_value": "ok"}).json() == {"value": "ok"}
     for version, field_name in [("2001-01-01", "value"), ("2000-01-01", "legacy_value")]:
@@ -5454,7 +5391,6 @@ def test__router_generation__with_pydantic_settings_dependency(
 
 
 ######################
-# External lib testing
 ######################
 
 
@@ -5462,12 +5398,10 @@ def test__router_generation__using_svcs_in_dependencies(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
-    # This makes sure that svcs is compatible with Cadwyn
     @router.api_route("/test")
     async def test(my_dep: svcs.fastapi.DepContainer):
         raise NotImplementedError
 
-    # We are simply validating that the routes were generated without errors
     routes_2000, routes_2001 = create_versioned_api_routes(version_change())
     assert len(routes_2000) == len(routes_2001) == 2
 
@@ -5616,7 +5550,6 @@ def test__router_generation__annotated_dependencies_of_various_kinds__should_wor
         assert client.get("/kwargs", params={"limit": 3}).json() == {"limit": 3}
         assert client.get("/kwargs", params={"limit": 0}).status_code == 422
         assert client.post("/conflict").status_code == 409
-        # Older versions also solve the dependencies of the latest version so they can run twice
         assert events.count("start") == events.count("rollback") > 0
         events.clear()
         parameters = client.get(f"/openapi.json?version={version}").json()["paths"]["/kwargs"]["get"]["parameters"]
@@ -5678,7 +5611,6 @@ def test__router_generation__bare_tuple_body__should_keep_its_current_behavior(
     app = create_versioned_app(version_change(schema(EmptySchema).had(name="OldEmptySchema")), router=router)
     for version in ("2000-01-01", "2001-01-01"):
         client = TestClient(app, headers={app.router.api_version_parameter_name: version})
-        # Bare aliases are rebuilt as `tuple[()]` in every version
         assert client.post("/tuples", json=[]).json() == []
         assert client.post("/tuples", json=[1]).status_code == 422
         request_body = client.get(f"/openapi.json?version={version}").json()["paths"]["/tuples"]["post"]["requestBody"]
@@ -5688,7 +5620,7 @@ def test__router_generation__bare_tuple_body__should_keep_its_current_behavior(
 def test__router_generation__endpoint_with_annotations_assigned_by_hand__should_get_body_in_all_versions(
     create_versioned_app: CreateVersionedApp,
 ):
-    def create_item(item):  # The annotations are assigned below like in route factories
+    def create_item(item):
         return item
 
     create_item.__annotations__ = {"item": SchemaWithOneIntField, "return": SchemaWithOneIntField}

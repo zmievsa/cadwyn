@@ -79,7 +79,6 @@ class ParametrizedSchema(GenericSchema[bool]):
     pass
 
 
-# A version change can only be bound to one version bundle, so each app gets its own
 def generic_version_change() -> type[VersionChange]:
     class GenericVersionChange(VersionChange):
         description = "Generic"
@@ -162,7 +161,6 @@ def test__router_generation__using_parametrized_schema_in_body(
 
 
 if TYPE_CHECKING:
-    # They are only used in annotations that Python 3.14 evaluates lazily
     from asyncio import Lock as TypeCheckingOnlyLock  # noqa: TC004
     from builtins import list as type_checking_only_list  # noqa: TC004
 
@@ -249,7 +247,6 @@ class Tree(BaseModel):
 
 class CallbackNode(BaseModel):
     children: Optional[Page["CallbackNode"]] = None
-    # typing.Callable cannot be rebuilt from its origin and args unlike collections.abc.Callable
     callback: typing.Callable = Field(default=lambda: None, exclude=True)
 
 
@@ -293,7 +290,6 @@ class PartialB(BaseModel):
     a: Optional[Page[PartialA]] = None
 
 
-# Only the annotations of its parameters are versioned, like FastAPI only uses them
 def get_dependency_page(page: Optional[Page["DependencyB"]] = None) -> Any:
     raise NotImplementedError("Only its annotations are used")
 
@@ -349,7 +345,6 @@ class UnchangedArgsHolder(BaseModel):
 
 class ItemWithUnusualAnnotations(BaseModel):
     item: Optional[Item] = None
-    # typing.Callable cannot be rebuilt from its origin and args unlike collections.abc.Callable
     callback: typing.Callable = Field(default=lambda: None, exclude=True)
     values: tuple[int, ...] = Field(default_factory=make_values)
     metadata: dict[str, int] = Field(default_factory=functools.partial(dict, count=1))
@@ -391,7 +386,6 @@ class DeferredItem(BaseModel):
 
 
 class ItemWithForwardRef(BaseModel):
-    # Its fields are only resolved when it is rebuilt because DefinedLater does not exist yet
     other: "Optional[DefinedLater]" = None
 
 
@@ -597,7 +591,6 @@ def test__router_generation__generic_from_unimportable_module__should_use_arg_fr
     assert client_2001.get("/items").json() == {"items": [{"fullName": "Ada"}]}
 
 
-# Type args that refer back to the model being generated cannot use its versioned copy yet so they stay head models
 @pytest.mark.parametrize(
     ("response_model", "versioned_models", "body", "old_body"),
     [
@@ -742,7 +735,6 @@ def test__router_generation__cycle_through_two_generics__should_not_depend_on_ro
 
     old_author, old_book, post_result, old_schema_names = behaviors[0]
     assert all(behavior == behaviors[0] for behavior in behaviors)
-    # Both generics in the cycle keep their head args
     assert old_author == {
         "oldName": "a",
         "books": {"items": [{"fullName": "b", "authors": {"items": [{"fullName": "c", "books": None}]}}]},
@@ -752,7 +744,6 @@ def test__router_generation__cycle_through_two_generics__should_not_depend_on_ro
         "authors": {"items": [{"fullName": "a", "books": {"items": [{"fullName": "c", "authors": None}]}}]},
     }
     assert post_result == (HTTP_200_OK, ["a", "b"])
-    # Same as without versioned type args: one schema per generic and both versions of Author and Book
     module_prefix = "tests__test_router_generation_with_generic__"
     assert old_schema_names == [
         "Book-Input",
@@ -798,7 +789,6 @@ def test__router_generation__model_using_self__should_generate_versions(create_v
     app = create_versioned_app(item_alias_version_change(), router=router)
     client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
 
-    # FastAPI itself cannot render OpenAPI for models that use Self so we only check the response
     assert client_2000.get("/nodes").json() == {"value": 1, "children": [{"value": 2, "children": []}]}
 
 
@@ -883,7 +873,6 @@ def test__router_generation__cycle_through_default_factory__should_not_depend_on
 
     old_a, old_b, _ = behaviors[0]
     assert all(behavior == behaviors[0] for behavior in behaviors)
-    # Both Page[A] and Page[B] are in the cycle so they keep their head args
     assert old_a == {"oldName": "a", "count": 0}
     assert old_b == {"oldName": "b", "a": {"items": [{"fullName": "a", "count": 0}]}}
 
@@ -906,13 +895,10 @@ def test__router_generation__unquoted_parametrization_of_cyclic_generic__should_
     client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
 
     assert client_2000.get("/categories").status_code == HTTP_200_OK
-    # Page[Category] keeps its head args like Page["Category"] within Category so the outer and the nested
-    # categories are validated the same way
     body = {"items": [{"fullName": "abc", "subcategories": {"items": [{"fullName": "b"}]}}]}
     assert client_2000.post("/categories", json=body).status_code == HTTP_200_OK
     body = {"items": [{"fullName": "a", "subcategories": {"items": [{"fullName": "bcd"}]}}]}
     assert client_2000.post("/categories", json=body).status_code == HTTP_200_OK
-    # Same schema names as without versioned type args
     assert sorted(unversioned_client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]) == [
         "Category-Input",
         "Category-Output",
@@ -941,7 +927,6 @@ def test__router_generation__generic_args_without_versioned_models__should_be_le
     for version in ("2000-01-01", "2001-01-01"):
         client = TestClient(app, headers={app.router.api_version_parameter_name: version})
         assert client.post("/holders", json=body).json()["kind_items"] == {"items": [{"name": "b"}]}
-        # The same names as without Cadwyn because none of the args refer to versioned models
         assert sorted(unversioned_client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]) == (
             expected_schema_names
         )
@@ -970,7 +955,6 @@ def test__migrate_response_body__concurrently_for_generics__should_generate_mode
                 Version("2001-01-01", version_change(*(old_name_description(leaf) for leaf in leaves))),
                 Version("2000-01-01"),
             )
-            # Like in an app that has already started and generates the rest of the models lazily
             generate_versioned_models(versions)
             barrier = threading.Barrier(len(middles))
 
@@ -1050,7 +1034,6 @@ def test__router_generation__generic_args_with_annotations_only_defined_for_type
 ):
     version_changes = [version_change(old_name_description(Item))] if has_instructions else []
 
-    # These annotations would fail before Python 3.14 because they are evaluated when the class is created
     class ItemWithLock(BaseModel):
         name: str = "a"
         _lock: ClassVar[TypeCheckingOnlyLock | None] = None
@@ -1168,7 +1151,6 @@ def test__router_generation__untouched_generic_arg_referring_to_deferred_model__
 def test__generate_versioned_models__untouched_generic_arg_with_unresolvable_forward_ref__should_stay_unresolved():
     class ItemWithUnresolvableRef(BaseModel):
         name: str = "a"
-        # Cadwyn's own local variables must not be used to resolve forward refs
         unresolvable: "Optional[model]" = None  # noqa: F821  # ty: ignore[unresolved-reference]
 
     versions = VersionBundle(
@@ -1276,13 +1258,11 @@ def test__generate_versioned_models__generic_arg_looked_at_before_its_names_are_
         Version("2000-01-01"),
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
-    # Looks at X while Later is not defined yet
     generator[module.Box[module.W] if look_through_other_generic else module.Page[module.X]]
     module.define_later(refer_back_to_page=refer_back_to_page)
 
     page_copy = generator[module.Page[module.X]]
 
-    # Whatever Later turned out to be, the generator keeps the decision that it made without it, as on main
     page = page_copy.model_validate({"items": [{"other": {"value": 3}}]})
     assert page.model_dump()["items"][0]["other"] == {"value": 3}
 
@@ -1315,7 +1295,6 @@ def test__generate_versioned_models__generic_whose_own_args_have_names_defined_l
         Version("2000-01-01"),
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
-    # Looks at Ref[Union[Other, "Later"]] while Later is not defined yet
     generator[module.Box[module.W]]
     module.define_later(refer_back_to_page=False, refer_back_to_ref_of_later=True)
 
@@ -1467,7 +1446,6 @@ def test__router_generation__generic_args_with_strings_that_are_not_types__shoul
 
     assert client_2000.get("/events").json() == old_body
     assert client_2000.get("/items").json() == {"items": [{"oldName": "b"}]}
-    # Both routes use the same old Item instead of the head one and the old one side by side
     schema_names = client_2000.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
     assert "Item" in schema_names
     assert not [name for name in schema_names if name.endswith(("__1", "__2"))]
@@ -1524,7 +1502,6 @@ def test__migrate_response_body__head_instances_in_versioned_generic_args__shoul
         Version("2000-01-01"),
     )
 
-    # Like in versioned models that are not generic, the versioned args only accept data
     with pytest.raises(ValidationError):
         migrate_response_body(versions, Page[Item], latest_body={"items": [Item(fullName="a")]}, version=version)
     migrated_body = migrate_response_body(
@@ -1539,7 +1516,6 @@ def test__get_head_model_references__model_with_unresolved_annotated_field__shou
     assignment = module.Parent.__pydantic_fields__["child"]._original_assignment
     metadata = list(assignment.metadata)
 
-    # Once per version, which pydantic 2.11 would turn into one more validator each time
     for _ in range(3):
         assert _get_head_model_references(module.Parent).is_complete
 
@@ -1568,7 +1544,6 @@ class StrictItemWithState(BaseModel):
             OneItemBox[StrictItemWithState](item=StrictItemWithState(state=ItemState.active)),
             id="generic_arg",
         ),
-        # This failed on main too
         pytest.param(StrictItemWithState, StrictItemWithState(state=ItemState.active), id="model"),
     ],
 )
@@ -1690,7 +1665,6 @@ HolderWithExplicitForwardRef.model_rebuild()
     ("response_model", "body"),
     [
         pytest.param(NodeWithExplicitForwardRef, {"name": "a", "parent": {"name": "b", "parent": None}}, id="self"),
-        # Main keeps explicit forward refs as they are so the head Item is used, unlike for quoted annotations
         pytest.param(HolderWithExplicitForwardRef, {"item": {"fullName": "a"}}, id="changed_model"),
     ],
 )
@@ -1726,7 +1700,7 @@ def make_tags_with_callback(callback: Any = None) -> list[str]:
 
 
 def make_more_tags_with_callback(callback: Any = make_tags_with_callback) -> list[str]:  # pragma: no cover
-    return []  # Only its default is used
+    return []
 
 
 make_tags_with_callback.__defaults__ = (make_more_tags_with_callback,)
@@ -1822,7 +1796,6 @@ def test__router_generation__request_body_with_unchanged_enum__should_validate_i
 
     app = create_versioned_app(version_change(schema(Unrelated).field("value").had(description="Old")), router=router)
 
-    # This raised CadwynHeadRequestValidationError on main because the head body rejected the copy's enum member
     for version in app.router.versioned_routers:
         client = TestClient(app, headers={app.router.api_version_parameter_name: version})
         assert client.post("/items", json={"state": "active"}).json() == {"is_head_member": True}
@@ -1859,7 +1832,6 @@ def test__router_generation__generic_with_renamed_arg_field__should_version_arg(
     async def post_page(page: Page[RenamedItem]) -> Page[RenamedItem]:
         return page
 
-    # The usual converters of the model, which do not run for the items of the generic
     @convert_response_to_previous_version_for(RenamedItem)
     def rename_name_to_title(response: ResponseInfo) -> None:
         response.body["title"] = response.body.pop("name")
@@ -1889,7 +1861,6 @@ def test__router_generation__generic_with_renamed_arg_field__should_version_arg(
     assert head_shape_response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
     assert head_shape_response.json()["detail"][0]["loc"] == ["body", "items", 0, "title"]
     assert old_schema_names == ["RenamedItem"]
-    # The generic uses the old RenamedItem, so it needs converters of its own to migrate the items
     with pytest.raises(ResponseValidationError):
         old_client.get("/page")
     with pytest.raises(CadwynHeadRequestValidationError):
@@ -1938,7 +1909,6 @@ def test__router_generation__generic_arg_changed_in_head_version__should_change_
         schema_names = get_schema_names(app, version)
         assert client.get("/page").json() == {"items": [{"id": 1}]}
         assert client.get("/quoted").json() == {"items": [[{"id": 1}]]}
-        # The quoted arg is evaluated to version it
         assert "Page_list_ItemWithInternalField__" in schema_names
         assert [name for name in schema_names if "ItemWithInternalField" in name] == [
             "ItemWithInternalField",
@@ -1977,7 +1947,6 @@ def test__migrate_response_body__generic_args_referring_to_changed_models__shoul
         latest_body = {"items": [RenamedItem(id=1, name="a")]}
         with pytest.raises(ValidationError):
             migrate_response_body(versions, Page[RenamedItem], latest_body=latest_body, version=version)
-        # Copying the arg needs a deep copy of its validator, which cannot be copied
         with pytest.raises(TypeError, match="pickle"):
             migrate_response_body(
                 versions, Page[ItemWithStripWithLock], latest_body={"items": [{"name": " a "}]}, version=version
@@ -2070,7 +2039,6 @@ class _PageMeta(BaseModel):
     total: int
 
 
-# Sibling bases reuse the same TypeVar, as most codebases do
 class _ItemsPageWithMeta(_WithMeta[_PageMeta], _ItemsPage[_InheritedT], Generic[_InheritedT]):
     pass
 
@@ -2129,7 +2097,6 @@ class _IntGenericRoot(_GenericRoot[int]):
         pytest.param(_M[str], _M[str], "b", {"a": 1, "b": "s"}, {"a": 1, "b": 5}, id="sibling_parametrization"),
         pytest.param(_MS, _MS, "b", {"a": 1, "b": "s"}, {"a": 1, "b": 5}, id="subclass_with_sibling_parametrization"),
         pytest.param(_M2[str], _M2[str], "b", {"a": 1, "b": "s"}, {"a": 1, "b": 5}, id="sibling_with_other_type_var"),
-        # Pydantic leaves the type var of the bare generic base as it is, so the field accepts anything
         pytest.param(_M3, _M3, "b", {"a": 1, "b": "s"}, None, id="bare_generic_next_to_parametrization"),
         pytest.param(_IntsRoot, _IntsRoot, "root", [1], ["zz"], id="root_model_subclass"),
         pytest.param(_GenericRoot[int], _GenericRoot[int], "root", [1], ["zz"], id="generic_root_model"),
@@ -2162,7 +2129,6 @@ def test__router_generation__instruction_on_field_inherited_through_other_bases_
         else:
             assert client.post("/models", json=invalid_body).status_code == HTTP_422_UNPROCESSABLE_CONTENT
 
-    # The field has the same schema in the older version as in the newer one, except for its description
     old_openapi, new_openapi = (
         TestClient(app).get(f"/openapi.json?version={version}").json() for version in ("2000-01-01", "2001-01-01")
     )
@@ -2267,8 +2233,6 @@ def test__router_generation__generic_built_before_parametrization_with_instructi
     class Box(BaseModel, Generic[_T]):
         pair: Pair[_T, int]
 
-    # E.g. the routes are defined before the version changes. Pydantic 2.11 then builds a Pair[str, int] for Box[str]
-    # that is a different class from the Pair[str, int] of the instructions.
     box_model = Box[str]
     clients = _create_app_with_instructions_for_parametrization_reached_through_generic(
         create_versioned_app, box_model, Pair[str, int], {"pair": {"first": "a", "second": 1}}
@@ -2297,7 +2261,6 @@ def test__generate_versioned_models__fields_with_unhashable_parts_reaching_param
 
         class Box(BaseModel, Generic[_T]):
             pair: Pair[_T, int]
-            # The args of Callable are a list
             callback: SkipJsonSchema[Optional[Callable[[Pair[_T, int]], None]]] = None
 
     old_box = create_runtime_schemas(
@@ -2401,7 +2364,6 @@ def test__generate_versioned_models__parametrization_with_undefined_names__shoul
     )
     reference_cycles = generate_versioned_models(versions)["2000-01-01"]._reference_cycles
 
-    # We cannot know what copying the fields of a generic with undefined names would request
     assert reference_cycles.get_redefined_field_names(Box[str]) == ()
 
 
@@ -2414,8 +2376,6 @@ class _RecursivePair(BaseModel, Generic[_T, _U]):
     second: _U
 
 
-# Pydantic refers to _RecursiveNode[_RecursiveItem] within itself by a reference that does not lead to its copy.
-# The models are defined here because Pydantic 2.11 cannot resolve such a model defined within a function.
 class _RecursiveNode(BaseModel, Generic[_T]):
     items: "list[Union[_RecursivePair[_T, int], _RecursiveNode[_T]]]" = []
 
@@ -2444,7 +2404,6 @@ def test__router_generation__parametrization_with_instructions_within_recursive_
         assert client.get("/node").json() == body
         schemas = TestClient(app).get(f"/openapi.json?version={version}").json()["components"]["schemas"]
         schema_names.append(sorted(schemas))
-    # One schema per model in both versions, as on main
     assert schema_names[0] == schema_names[1]
     assert len([name for name in schema_names[0] if "Pair" in name or "Node" in name]) == 2
 
@@ -2469,8 +2428,6 @@ def test__generate_versioned_models__parametrizations_that_refer_to_each_other__
     trunk_model = Trunk[str]
     Limb.model_rebuild()
     limb_model.model_rebuild()
-    # Pydantic builds them separately so they refer to each other by the classes themselves. If their copies defined
-    # the fields that pydantic otherwise builds itself, copying them would never finish
     assert trunk_model.model_fields["limb"].annotation == Optional[limb_model]
     assert limb_model.model_fields["trunk"].annotation == Optional[trunk_model]
 
@@ -2482,5 +2439,4 @@ def test__generate_versioned_models__parametrizations_that_refer_to_each_other__
 
     assert reference_cycles.get_redefined_field_names(trunk_model) == ()
     assert reference_cycles.get_redefined_field_names(limb_model) == ()
-    # Stump[str] only leads to the cycle so it is not in it
     assert reference_cycles.get_redefined_field_names(Stump[str]) == ("limb",)

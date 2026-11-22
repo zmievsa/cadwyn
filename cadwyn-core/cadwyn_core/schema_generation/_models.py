@@ -1,4 +1,4 @@
-import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
+import collections.abc  # noqa: TC003
 import copy
 import dataclasses
 import functools
@@ -114,7 +114,6 @@ def _get_head_model_references(
     """
     fields = _get_rebuilt_model_fields(model)
     if fields is None or _has_undefined_names_in_lazy_annotations(model):
-        # The models that it refers to are unknown until the missing names get defined
         return _ModelReferences(frozenset(), frozenset(), frozenset(), is_complete=False)
     collector = _ReferencedModelCollector()
     _change_version_of_model_references(
@@ -148,17 +147,13 @@ def _change_version_of_model_references(
             for name, attributes in field_attributes.items():
                 with transformer.describing(f"the field '{name}' of {model.__qualname__}"):
                     versioned_field_attributes[name] = transformer.change_version_of_annotation(attributes)
-        # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
         orig_bases = tuple(
             generator.change_version_of_base(base) if isinstance(base, type) else base
             for base in model.__dict__.get("__orig_bases__", model.__bases__)
         )
         if generator.schema_generator is None:
             _change_version_of_model_bases(generator, model, orig_bases)
-        # The TypeVars that are not the model's parameters validate values as their bounds, constraints, or defaults
         if transformer.versioned_parameters:
-            # Quoted references such as "Node[T]" must not reach pydantic, which would parametrize the copy with
-            # the original parameters. In the model's namespace, they are the model itself (see _BareGenericCopier)
             annotations = {name: _eval_forward_refs(annotation, model) for name, annotation in annotations.items()}
         with transformer.typevar_namespace(model):
             transformer.typevar_copies.update(
@@ -183,15 +178,11 @@ def _change_version_of_model_bases(
     original_bases = model.__dict__.get("__orig_bases__", model.__bases__)
     if "__orig_bases__" not in model.__dict__:
         return orig_bases
-    # Python has replaced every base that isn't a class through its __mro_entries__. Typing aliases such as
-    # Generic[T] or Mixin[int] resolve the same way every time, so only the other objects are the user's hooks.
-    # Annotated[Parent, ...] resolves to Parent, which we version from __bases__ just like the results of hooks.
     has_user_hooks = any(
         not isinstance(base, type) and get_origin(base) in (None, Annotated) for base in original_bases
     )
     if not has_user_hooks:
         return orig_bases if generator.schema_generator is None else types.resolve_bases(orig_bases)
-    # Python has already run the user's hooks and put their results into __bases__, so we never run them again
     return tuple(
         generator.change_version_of_base(base) if issubclass(base, BaseModel) else base for base in model.__bases__
     )
@@ -280,8 +271,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         for k, annotation in self.annotations.items():
             if get_origin(annotation) == Annotated:
                 sub_annotations = get_args(annotation)
-                # Annotated cannot be copied and is cached based on "==" and "hash", while annotated_types.Interval are
-                # frozen and so are consistently hashed
                 self.annotations[k] = _AnnotatedAlias(
                     copy.deepcopy(sub_annotations[0]), tuple(copy.deepcopy(sub_ann) for sub_ann in sub_annotations[1:])
                 )
@@ -394,7 +383,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             parent = _get_parent_that_renamed_field(self.cls, name, field, schemas)
             if parent is not None:
                 renamed_fields[name] = field
-                # The annotation that the model would inherit
                 renamed_field_annotations[name] = schemas[parent].annotations[name]
         fields = renamed_fields | self.fields
         field_attributes = {name: field.get_field_attributes(self.cls) for name, field in fields.items()}
@@ -404,9 +392,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 if _sets_default_attribute(attributes, attr_name) and not _sets_default_attribute(
                     attributes, other_attr_name
                 ):
-                    # The Field() in the annotation can still set the other one and pydantic would fail with both,
-                    # e.g. with `Annotated[int, Field(default=0)]` (pydantic<2.12 also fills it with the declared
-                    # default) after `had(default=..., default_factory=f)` or after a sibling deleted the default
                     annotations[name] = _change_annotated_metadata(
                         annotations[name],
                         lambda metadata, other_attr_name=other_attr_name: (
@@ -441,7 +426,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if defined_fields[name].keys_renamed_by_alias
         }
         if keys_renamed_by_alias:
-            # Pydantic makes it a classmethod because its first parameter is "cls"
             root_validators[_REJECT_KEYS_RENAMED_BY_ALIAS] = pydantic.model_validator(mode="wrap")(
                 _reject_keys_renamed_by_alias
             )
@@ -466,10 +450,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[missing-attribute]
         typed_model_copy = cast("type[_T_PYDANTIC_MODEL]", model_copy)
-        # Pydantic took the namespace of this function. Quoted names that are still unresolved, such as the bound
-        # of a TypeVar that names a class defined in a function, resolve in the model's own namespace instead
         typed_model_copy.__pydantic_parent_namespace__ = self.cls.__pydantic_parent_namespace__
-        # The copies of reference cycles get rebuilt once all of them exist (see _CycleCopier)
         if (
             not typed_model_copy.__pydantic_complete__
             and not typed_model_copy.model_config.get("defer_build")
@@ -500,7 +481,6 @@ def _set_keys_renamed_by_alias(
         for name, renamed_keys in getattr(base, _KEYS_RENAMED_BY_ALIAS, {}).items()
         if name not in defined_field_names
     } | keys_by_field
-    # The model also inherits the check and the keys of its bases, so it needs keys of its own if they have any
     if keys_by_field or hasattr(model, _KEYS_RENAMED_BY_ALIAS):
         setattr(model, _KEYS_RENAMED_BY_ALIAS, keys_by_field)
 
@@ -526,12 +506,10 @@ def _get_subclasses_that_can_be_versioned(model: type[Union[BaseModel, Enum]]) -
             classes_to_visit.extend(subclass.__subclasses__())
         else:
             subclasses.append(subclass)
-    # E.g. SQLAlchemy models are never versioned
     return [subclass for subclass in subclasses if _is_versionable_model(subclass)], are_all_known
 
 
 _BUILTIN_CONTAINER_TYPES = (list, dict, set, tuple, frozenset)
-# The functions behind pydantic's own constructors, which create instances of the class that they are bound to
 _PYDANTIC_CONSTRUCTORS = frozenset(
     vars(cls)[name].__func__
     for cls in (BaseModel, RootModel)
@@ -577,8 +555,6 @@ def _only_changes_fields(instruction: Any, field_names: "collections.abc.Set[str
 def _get_models_in_field(field: FieldInfo) -> Union[frozenset[type[Union[BaseModel, Enum]]], None]:
     """Return the models that copying the field requests (see _change_version_of_model_references), if we know them"""
     if _contains_pydantic_recursive_refs(field.annotation):
-        # Pydantic refers to the parametrizations that it is still building (e.g. `children: list[Node[T]]` within
-        # `Node[str]`) by their pydantic references, which do not lead to the copies, so we do not know the models
         return None
     collector = _ReferencedModelCollector()
     transformer = collector.annotation_transformer
@@ -591,6 +567,5 @@ def _get_models_in_field(field: FieldInfo) -> Union[frozenset[type[Union[BaseMod
 def _contains_pydantic_recursive_refs(annotation: Any) -> bool:
     if isinstance(annotation, PydanticRecursiveRef):
         return True
-    # E.g. the list of args in Callable[[Item], None]
     args = annotation if isinstance(annotation, list) else get_args(annotation)
     return any(_contains_pydantic_recursive_refs(arg) for arg in args)

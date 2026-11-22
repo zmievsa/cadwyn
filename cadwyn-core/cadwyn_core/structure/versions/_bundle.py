@@ -1,6 +1,6 @@
 import functools
 from collections.abc import (
-    Callable,  # Needed by runtime annotation introspection.
+    Callable,
     Iterator,
 )
 from contextvars import ContextVar
@@ -10,7 +10,7 @@ from typing import (
     Union,
 )
 
-from pydantic import BaseModel  # noqa: TC002 # Needed by runtime annotation introspection.
+from pydantic import BaseModel  # noqa: TC002
 
 from cadwyn_core._utils import is_enum_looked_up_by_value
 from cadwyn_core.exceptions import (
@@ -23,14 +23,14 @@ from cadwyn_core.structure.data import ResponseInfo
 from ._changes import HeadVersion, IdentifierPythonPath, Version, VersionChange, get_cls_pythonpath
 from ._migration_targets import (
     _get_models_of_schema,
-    _SchemaMigrationTarget,  # Needed by runtime annotation introspection.
+    _SchemaMigrationTarget,
 )
 from ._migrations import _migrate_response
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 else:
-    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001
 
 
 class VersionBundle:
@@ -99,7 +99,6 @@ class VersionBundle:
             for instruction in list(version_change.alter_schema_instructions)
         }
 
-        # Migrations for a union (e.g. `Union[A, B]`) are migrations for its members
         migrated_schemas = {
             get_cls_pythonpath(model): model
             for version in self._all_versions

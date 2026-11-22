@@ -9,14 +9,11 @@ def update_links(section, content, sections):
     for line in content:
         matches = re.findall(r'\[([^\]]+)\]\(#([^\)]+)\)', line)
         for text, anchor in matches:
-            # Check if this link points to a section within the same file
             if any(s for s in sections if anchor.replace('-', ' ') == s.lower()):
                 target_section = next(s for s in sections if anchor.replace('-', ' ') == s.lower())
                 if target_section.lower() == section.lower():
-                    # Link within the same file, no change
                     continue
                 else:
-                    # Link to another section/file, update link
                     new_link = f'[{text}](./{snake_case(target_section)}.md#{anchor})'
                     line = line.replace(f'[{text}](#{anchor})', new_link)
         updated_content.append(line)
@@ -41,13 +38,12 @@ def process_markdown(file_path):
     section_titles = list(sections.keys())
 
     for section, content in sections.items():
-        if section != "index":  # Skip creating a file for the index itself
+        if section != "index":
             content = update_links(section, content, sections)
             file_name = f"{snake_case(section)}.md"
             with open(file_name, "w", encoding="utf-8") as file:
                 file.write(f"# {section}\n{''.join(content).replace('## ', '# ').strip()}")
 
-    # Optionally, modify the index file to remove all sections and keep only the links
     with open(file_path, "w", encoding="utf-8") as file:
         for section in section_titles:
             if section != "index":

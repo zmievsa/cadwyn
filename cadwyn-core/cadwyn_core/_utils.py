@@ -24,11 +24,9 @@ Sentinel: Any = object()
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
-# Pydantic's `DecoratedType`, which is only a string at runtime
 if TYPE_CHECKING:
     DecoratedType: TypeAlias = Union[classmethod[Any, Any, _R], staticmethod[Any, _R], Callable[..., _R], property]
 else:
-    # Before Python 3.14, `classmethod` and `staticmethod` can't be subscripted at runtime
     DecoratedType = Union[classmethod, staticmethod, Callable[..., _R], property]
 _SourceSelf = TypeVar("_SourceSelf")
 
@@ -36,10 +34,6 @@ _SourceSelf = TypeVar("_SourceSelf")
 _P_T = TypeVar("_P_T")
 _P_R = TypeVar("_P_R")
 
-# Match FastAPI's version-dependent coroutine detection. Before Python 3.13,
-# asyncio also recognizes the legacy _is_coroutine marker. Using inspect instead
-# would make Cadwyn treat some dependencies as synchronous while FastAPI awaits them.
-# Keep this split aligned with FastAPI, even while ty reports asyncio's API as deprecated.
 if sys.version_info >= (3, 13):  # pragma: no cover
     from inspect import iscoroutinefunction
 else:  # pragma: no cover
@@ -101,12 +95,10 @@ def fully_unwrap_decorator(
 _SubclassT = TypeVar("_SubclassT")
 
 
-# Unlike issubclass, accepts non-class annotations (unions, generic aliases, etc.) and returns False for them
 def lenient_issubclass(
     cls: object, other: Union[type[_SubclassT], tuple[type[_SubclassT], ...]]
 ) -> "TypeIs[type[_SubclassT]]":
     try:
-        # Non-class annotations raise TypeError, which is handled below
         return issubclass(cls, other)  # ty: ignore[invalid-argument-type]
     except TypeError:  # pragma: no cover
         return False
@@ -133,7 +125,7 @@ def present_private_submodules_as_package(package_name: str) -> None:
                 continue
             if _is_module_level_definition(value) and value.__module__ == submodule.__name__:
                 _move_definition(value, submodule.__name__, package_name)
-            if namespace.setdefault(name, value) is not value:  # pragma: no cover # Guards future module splits
+            if namespace.setdefault(name, value) is not value:  # pragma: no cover
                 raise ImportError(f"{package_name}.{name} differs from {submodule.__name__}.{name}")
 
 
@@ -167,14 +159,10 @@ def _callable_name(call: Callable[..., object]) -> str:
 
 
 def is_sqlalchemy_model(model: type) -> bool:
-    # __mapper__ covers imperative mappings; _sa_registry also covers declarative
-    # bases and SQLModel classes without table=True. Avoid importing optional dependencies.
     return hasattr(model, "__mapper__") or hasattr(model, "_sa_registry")
 
 
 def _get_type_alias_value(alias: Any) -> Any:
-    # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
-    # can contain names that are only imported for type checking
     if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
         from annotationlib import Format, call_evaluate_function
 
@@ -182,11 +170,7 @@ def _get_type_alias_value(alias: Any) -> Any:
     return alias.__value__
 
 
-# We look types up by their ids in tables built here, because hashing or comparing a type, or reading its attributes,
-# can run the code of the user's metaclass
 _SCALAR_TYPE_IDS = frozenset(map(id, (type(None), bool, int, float, complex, str, bytes, Decimal)))
-# The dataclasses of pydantic and annotated_types that can be in field attributes and endpoint attributes, with the
-# fields that hold all of their state. `_get_allowed_type_fields()` adds the ones of FastAPI.
 _ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
     id(cls): tuple(field.name for field in dataclasses.fields(cls))
     for cls in (
@@ -212,7 +196,6 @@ _ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
 }
 
 
-# FastAPI's dataclasses that can be in field attributes and endpoint attributes, by their modules
 _FASTAPI_DATACLASSES = (("fastapi.params", "Depends"), ("fastapi.params", "Security"))
 
 
@@ -226,7 +209,6 @@ def _get_allowed_type_fields(type_id: int) -> Union[tuple[str, ...], None]:
     if fields is not None:
         return fields
     for module_name, class_name in _FASTAPI_DATACLASSES:
-        # A module that is still being imported might not have defined the class yet
         cls: Union[type[DataclassInstance], None] = getattr(sys.modules.get(module_name), class_name, None)
         if cls is not None and id(cls) == type_id:
             fields = tuple(field.name for field in dataclasses.fields(cls))
@@ -237,15 +219,11 @@ def _get_allowed_type_fields(type_id: int) -> Union[tuple[str, ...], None]:
 
 _TYPE_VAR_TUPLE = typing.TypeVarTuple("_TYPE_VAR_TUPLE")
 _PARAM_SPEC = typing.ParamSpec("_PARAM_SPEC")
-# Type hints implemented in C, such as list[int], *tuple[int, ...], and int | str, with the attributes that hold all of
-# their state
 _C_TYPE_HINT_ATTRIBUTES: dict[int, tuple[str, ...]] = {
     id(types.GenericAlias): ("__origin__", "__args__", "__unpacked__"),
     id(type(collections.abc.Callable[[int], str])): ("__origin__", "__args__", "__unpacked__"),
     id(types.UnionType): ("__args__",),
 }
-# Type hints of the typing module, such as List[int], Literal[1], and Annotated[int, Gt(1)], whose instance __dict__
-# holds all of their state
 _PYTHON_TYPE_HINT_TYPE_IDS = frozenset(
     id(hint_type)
     for hint_type in {
@@ -284,7 +262,6 @@ def is_same_value(left: Any, right: Any) -> bool:
     try:
         return _is_same_value(left, right, set())
     except Exception:  # noqa: BLE001  # pragma: no cover
-        # We run no user code, so only a value nested too deeply to compare (RecursionError) can get here
         return False
 
 
@@ -298,7 +275,6 @@ def _is_same_value(left: Any, right: Any, pairs_being_compared: set[tuple[int, i
         return _are_same_scalars(left, right)
     pair = (id(left), id(right))
     if pair in pairs_being_compared:
-        # The values refer to themselves, e.g. a dict that contains itself
         return False
     pairs_being_compared.add(pair)
     try:
@@ -310,12 +286,10 @@ def _is_same_value(left: Any, right: Any, pairs_being_compared: set[tuple[int, i
 def _are_same_scalars(left: Any, right: Any) -> bool:
     value_type = type(left)
     if value_type is float:
-        # -0.0 == 0.0. NaN is never equal to another NaN
         return left == right and math.copysign(1.0, left) == math.copysign(1.0, right)
     if value_type is complex:
         return _are_same_scalars(left.real, right.real) and _are_same_scalars(left.imag, right.imag)
     if value_type is Decimal:
-        # Decimal("1.0") == Decimal("1") and a signaling NaN raises in ==
         return not left.is_nan() and left.as_tuple() == right.as_tuple()
     return left == right
 
@@ -325,15 +299,12 @@ def _have_same_contents(left: Any, right: Any, pairs_being_compared: set[tuple[i
     if value_type is list or value_type is tuple:
         return _are_same_sequences(left, right, pairs_being_compared)
     if value_type is dict:
-        # The order of the keys matters because it is the order of the keys in JSON
         return _are_same_sequences(list(left.items()), list(right.items()), pairs_being_compared)
     if value_type is set or value_type is frozenset:
-        # Hashing and comparing builtin values never runs the user's code
         if not all(map(_is_builtin_hashable, left)) or not all(map(_is_builtin_hashable, right)):
             return False
         if len(left) != len(right) or left != right:
             return False
-        # The sets are equal, so each item has an equal item (e.g. 1 for True) in the other set
         right_items = {item: item for item in right}
         return all(_is_same_value(item, right_items[item], pairs_being_compared) for item in left)
     type_id = id(value_type)
@@ -364,7 +335,6 @@ def _are_same_sequences(left: Any, right: Any, pairs_being_compared: set[tuple[i
 
 def _read_attribute_statically(value: Any, name: str) -> Any:
     attribute = inspect.getattr_static(value, name)
-    # A slot of the instance
     return attribute.__get__(value) if type(attribute) is types.MemberDescriptorType else attribute
 
 
@@ -396,14 +366,13 @@ def get_member_with_same_value(enum_cls: type[Enum], member: Enum) -> Union[Enum
     try:
         try:
             candidate = enum_cls._value2member_map_.get(value)
-        except TypeError:  # Enums keep the members with unhashable values only in their member map
+        except TypeError:
             candidate = next((other for other in enum_cls._member_map_.values() if other._value_ == value), None)
         if candidate is None and issubclass(enum_cls, Flag) and type(value) is int:
-            # Flags create the combinations of their members on lookup
             candidate = Flag._missing_.__func__(enum_cls, value)
         is_same_value = (
             type(candidate) is enum_cls and type(candidate._value_) is type(value) and candidate._value_ == value
         )
-    except Exception:  # noqa: BLE001 # E.g. a value whose `__eq__` fails, or a flag boundary that rejects the bits
+    except Exception:  # noqa: BLE001
         return None
     return candidate if is_same_value else None

@@ -18,7 +18,6 @@ from typing_extensions import override
 
 from cadwyn_core.exceptions import CadwynError
 
-# The stand-ins, with the modules and names of the classes they stand for
 _STOOD_FOR: dict[type, tuple[str, str]] = {}
 
 
@@ -78,7 +77,6 @@ class _HeadersWithoutStarlette:
     __getitem__ = __setitem__ = __delitem__ = __contains__ = __iter__ = __len__ = __bool__ = _fail
 
     def __getattr__(self, name: str) -> NoReturn:
-        # Copying and pickling look up special methods, e.g. when a migration copies the request
         if name.startswith("__"):
             raise AttributeError(name)
         self._fail()
@@ -105,7 +103,7 @@ try:
     from starlette.responses import Response
     from starlette.routing import BaseRoute
 except ModuleNotFoundError as exc:
-    if exc.name is None or exc.name.partition(".")[0] != "starlette":  # pragma: no cover # A broken Starlette
+    if exc.name is None or exc.name.partition(".")[0] != "starlette":  # pragma: no cover
         raise
     MutableHeaders = _HeadersWithoutStarlette
     Response = _ResponseWithoutStarlette

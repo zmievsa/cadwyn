@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from fastapi.routing import APIRoute
     from starlette.routing import BaseRoute
 else:
-    from cadwyn_core._stand_ins import (  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import (  # noqa: TC001
         APIRoute,
         BaseRoute,
         Depends,
@@ -24,26 +24,10 @@ HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
 @dataclass(**DATACLASS_SLOTS)
 class EndpointAttributesPayload:
-    # FastAPI API routes also have "endpoint" and "dependency_overrides_provider" fields.
-    # We do not use them because:
-    #   1. "endpoint" must not change -- otherwise this versioning is doomed
-    #   2. "dependency_overrides_provider" is taken from router's attributes
-    #   3. "response_model" must not change for the same reason as endpoint
-    # The following for the same reason as endpoint:
-    # * response_model_include: SetIntStr | DictIntStrAny
-    # * response_model_exclude: SetIntStr | DictIntStrAny
-    # * response_model_by_alias: bool
-    # * response_model_exclude_unset: bool
-    # * response_model_exclude_defaults: bool
-    # * response_model_exclude_none: bool
     path: str
     response_model: Any
     status_code: int
     tags: list[Union[str, Enum]]
-    # Adding/removing dependencies between versions seems like a bad choice.
-    # It makes the system overly complex. Instead, we allow people to
-    # overwrite all dependencies of a route at once. Hence you always know exactly
-    # which dependencies have been specified, no matter how many migrations you have.
 
     dependencies: "Sequence[Depends]"
     summary: str

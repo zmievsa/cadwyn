@@ -81,7 +81,6 @@ def test__cadwyn_init__removed_changelog_argument_that_turns_it_off__should_warn
 ):
     with pytest.warns(DeprecationWarning, match=f"`{argument}={value!r}` does nothing"):
         app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), **{argument: value})
-    # FastAPI 0.162 dropped `**extra` and `app.extra`; before that, unknown arguments ended up there
     assert argument not in getattr(app, "extra", {})
     assert "/changelog" not in [cast("APIRoute", route).path for route in app.routes]
 
@@ -112,15 +111,10 @@ def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_retur
     app.generate_and_include_versioned_routers(versioned_router)
     with TestClient(app) as client:
         assert client.get("/openapi.json?version=2021-01-01").status_code == 200
-        # - Nonexisting version
         assert client.get("/openapi.json?version=2019-01-01").status_code == 404
-        # - Nonexisting but compatible version
         assert client.get("/openapi.json?version=2024-01-01").status_code == 404
-        # - version = null
         assert client.get("/openapi.json?version=").status_code == 404
-        # - version not passed at all
         assert client.get("/openapi.json").status_code == 404
-        # - Unversioned when we haven't added any
         assert client.get("/openapi.json?version=unversioned").status_code == 404
 
         @app.post("/my_unversioned_route")
@@ -454,7 +448,6 @@ def test__strict_content_type__should_propagate_from_app_and_routers_to_routes_l
         async def create_item(item: Item):
             return item
 
-        # FastAPI's route decorators don't accept strict_content_type
         child_router.add_api_route("/items", create_item, methods=["POST"], **route_kwargs)
         return router
 
@@ -468,7 +461,6 @@ def test__strict_content_type__should_propagate_from_app_and_routers_to_routes_l
         cadwyn_app.generate_and_include_versioned_routers(make_router())
         headers = {"x-api-version": "2022-11-16"}
 
-    # No Content-Type header
     with TestClient(fastapi_app) as fastapi_client, TestClient(cadwyn_app) as cadwyn_client:
         fastapi_response = fastapi_client.post("/items", content=b'{"a": 1}')
         cadwyn_response = cadwyn_client.post("/items", content=b'{"a": 1}', headers=headers)
@@ -571,7 +563,6 @@ def test__openapi_customizer__version_selected__should_receive_version_and_final
 ):
     def customize(schema: dict[str, Any], selected_version: str | None) -> dict[str, Any]:
         schema["x-selected-version"] = selected_version
-        # This would be undone if Cadwyn's required-header adjustment ran after the callback.
         parameter = schema["paths"]["/items"]["get"]["parameters"][0]
         schema["x-original-required"] = parameter["required"]
         parameter["required"] = False
@@ -1158,7 +1149,6 @@ def test__file_cleanup__additional_fastapi_callback__should_keep_arguments_ident
     @app.get("/test")
     async def endpoint(request: Request):
         context.set("endpoint")
-        # FastAPI's file stack is also an AsyncExitStack for application-registered cleanup.
         registered = request.scope["fastapi_middleware_astack"].push_async_callback(cleanup, "closed")
         assert registered is cleanup
         return "unchanged"
@@ -1206,7 +1196,6 @@ def test__file_cleanup__context_manager_on_fastapi_file_stack__should_exit_like_
                 raise KeyError("exit failed")
 
     async def endpoint(request: Request):
-        # FastAPI's file stack is an ordinary AsyncExitStack, so apps can enter their own context managers on it
         await request.scope["fastapi_middleware_astack"].enter_async_context(transaction())
         if behavior in ("endpoint_error", "exit_suppresses", "exit_raises"):
             raise ValueError("endpoint failed")
@@ -1476,9 +1465,6 @@ def _client_of(
     return TestClient(app, headers=BASIC_HEADERS)
 
 
-# Tests treat warnings as errors, so the tests below also check that Cadwyn doesn't warn unless they expect it
-
-
 @pytest.mark.parametrize("dependency", _DEPENDENCIES_THAT_ADD_BACKGROUND_TASKS)
 def test__background_tasks__added_by_dependencies_of_endpoint_without_background_tasks__should_drop_the_tasks_of_the_latest_version_and_warn_once_per_route(  # noqa: E501
     background_task_calls: list[str], dependency: Callable[..., Any]
@@ -1729,7 +1715,6 @@ def test__background_tasks__dropped_while_future_warnings_are_errors__should_log
     async def handler():
         return "ok"
 
-    # Tests turn every warning into an error
     with _client_of(router) as client:
         assert client.post("/test").json() == "ok"
         assert client.post("/test").json() == "ok"
@@ -1794,7 +1779,6 @@ def test__background_tasks__added_only_after_yield_of_function_scoped_dependency
     async def handler():
         return "ok"
 
-    # A documented limitation: Cadwyn decides whether to warn when the endpoint returns, before the teardown
     with _client_of(router) as client:
         assert client.post("/test").json() == "ok"
     assert background_task_calls == ["dependency of fastapi"]
@@ -1903,7 +1887,6 @@ def test__background_tasks__dropped_while_warnings_are_errors_and_logging_fails_
     async def handler():
         return "ok"
 
-    # Tests turn every warning into an error, so Cadwyn falls back to logging, which fails too
     with _client_of(router) as client:
         assert client.post("/test").json() == "ok"
     assert background_task_calls == ["user task"]
@@ -2009,7 +1992,6 @@ def test__background_tasks__dropped_in_concurrent_requests__should_warn_once(bac
 
     @router.post("/test", dependencies=[Depends(_add_background_task)])
     async def handler():
-        # Both requests return before either of them warns
         await both_requests_have_arrived.wait()
         return "ok"
 
@@ -2037,7 +2019,6 @@ def test__background_tasks__dropped_without_fastapi_request_exit_stack__should_w
 
     @router.post("/test", dependencies=[Depends(_add_background_task)])
     async def handler(request: Request):
-        # Every supported FastAPI version sets it, so we remove it to see what Cadwyn does without it
         request.scope.pop("fastapi_inner_astack")
         return "ok"
 
@@ -2155,14 +2136,12 @@ def test__openapi_tags__unversioned_should_only_include_tags_used_by_routes():
         raise NotImplementedError
 
     with TestClient(app) as client:
-        # Versioned schema should only include "users" tag (the only tag used by versioned routes)
         resp = client.get("/openapi.json?version=2022-11-16")
         versioned_tags = resp.json().get("tags", [])
         versioned_tag_names = [t["name"] for t in versioned_tags]
         assert "users" in versioned_tag_names
         assert "settings" not in versioned_tag_names
 
-        # Unversioned schema should only include "settings" tag (the only tag used by unversioned routes)
         resp = client.get("/openapi.json?version=unversioned")
         unversioned_tags = resp.json().get("tags", [])
         unversioned_tag_names = [t["name"] for t in unversioned_tags]
@@ -2258,7 +2237,6 @@ def test__api_version_default_value_with_path_location__should_raise_error():
         )
 
 
-# The pinned uvicorn calls `asyncio.iscoroutinefunction` while loading the app, which is deprecated on Python 3.14
 @pytest.mark.filterwarnings("ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning")
 def test__cadwyn__loaded_by_uvicorn__should_not_be_mistaken_for_an_app_factory():
     import uvicorn
@@ -2290,7 +2268,6 @@ def test__cadwyn__reassigned_dependency_overrides__should_be_applied_in_all_vers
     app.dependency_overrides[dependency] = lambda: "initial"
 
     with TestClient(app) as client:
-        # Cadwyn generates the versioned routers on the first request
         assert client.get("/versioned", headers={"x-api-version": "2000-01-01"}).json() == "initial"
         app.dependency_overrides = {dependency: lambda: "overridden"}
 

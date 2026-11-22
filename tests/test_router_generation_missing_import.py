@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated  # Note: _no_ runtime import of Literal. This triggers the bug!
+from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -64,7 +64,6 @@ def test__missing_an_import_used_in_annotations_with_from_future_import_annotati
         client_2000.post("/test", json={"foo": 1})
 
 
-# The lock pins an older pydantic so only the daily tests with the newest dependencies run this test
 @pytest.mark.skipif(PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY, reason="Needs pydantic 2.14.3 or later")
 def test__missing_an_import_used_in_annotations__behaves_like_fastapi():  # pragma: no cover
     """Without the RecursionError, Cadwyn handles unresolved annotations the same way FastAPI does"""

@@ -13,13 +13,11 @@ jobs:
     environment:
       name: pypi
       url: https://pypi.org/p/cadwyn
-    if: startsWith(github.ref, 'refs/tags/') # only publish to PyPI on tag pushes
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-uv
       - run: uv build --all-packages
-      # cadwyn needs the same version of cadwyn-core, so cadwyn-core goes first. A rerun after a failed upload skips the
-      # files that PyPI already has.
       - run: uv publish --check-url https://pypi.org/simple/ dist/cadwyn_core-*
       - run: uv publish --check-url https://pypi.org/simple/ dist/cadwyn-[0-9]*

@@ -53,7 +53,6 @@ def render_module_by_path(module_path: str, app_path: str, version: str):
 
 
 def render_model_by_path(model_path: str, app_path: str, version: str) -> str:
-    # cadwyn render model schemas:MySchema --app=run:app --version=2000-01-01
     model: type[Union[BaseModel, Enum]] = import_attribute_from_string(model_path)
     app: Cadwyn = import_attribute_from_string(app_path)
     return render_model(model, app.versions, version)
@@ -85,7 +84,6 @@ def _render_model_from_ast(
 
 
 def _render_enum_model(wrapper: _EnumWrapper[Enum], original_cls_node: ast.ClassDef):
-    # This is for possible schema renaming
     original_cls_node.name = wrapper.cls.__name__
 
     new_body = [
@@ -111,13 +109,9 @@ def _render_enum_model(wrapper: _EnumWrapper[Enum], original_cls_node: ast.Class
 def _render_pydantic_model(
     wrapper: _PydanticModelWrapper[BaseModel], original_cls_node: ast.ClassDef, generator: SchemaGenerator
 ):
-    # This is for possible schema renaming
     original_cls_node.name = wrapper.name
 
-    # The same fields as in the copies of the model
     field_attributes, annotations = wrapper.get_field_attributes_and_annotations(generator.model_bundle.schemas)
-    # Without config instructions `cadwyn render` omits model_config, so we render the aliases that an alias
-    # generator gives the fields whose alias an instruction changed. We only generate the model for such fields
     if wrapper.cls.model_config.get("alias_generator") is not None:
         defined_fields = wrapper.fields_renamed_by_parents | wrapper.fields
         if names := [name for name in field_attributes if defined_fields[name].keys_renamed_by_alias]:
@@ -154,7 +148,6 @@ def _render_pydantic_model(
         )
     ]
     docstring = pop_docstring_from_cls_body(old_body)
-    # We keep the docstring from the source unless an instruction changed it
     if wrapper.doc != wrapper.cls.__doc__:
         docstring = [ast.Expr(ast.Constant(wrapper.doc))] if wrapper.doc else []
     config_definitions = []
@@ -165,7 +158,7 @@ def _render_pydantic_model(
         for key, value in config.items():
             try:
                 config_values.append(_render_config_value(key, value, namespace, wrapper.name))
-            except Exception as error:  # User reprs can fail in arbitrary ways.
+            except Exception as error:
                 raise CadwynRenderError(f"Cannot render config {wrapper.name}.{key}: {error}") from error
         config_definitions = [
             ast.Assign(
@@ -176,8 +169,6 @@ def _render_pydantic_model(
         ]
     body = config_definitions + field_definitions + validator_definitions + old_body
     if not docstring:
-        # A string at the start of the body would become the docstring, e.g. the documentation of a ClassVar
-        # whose definition we do not render, so we skip such strings
         while pop_docstring_from_cls_body(body):
             pass
     original_cls_node.body = docstring + body
@@ -211,9 +202,7 @@ def _validate_config_lambda(value: FunctionType, namespace: dict[str, Any], mode
     while codes:
         code = codes.pop()
         codes.extend(constant for constant in code.co_consts if isinstance(constant, CodeType))
-        # co_names also has attribute names, which are missing from both namespaces unless they shadow a global
         for name in code.co_names:
-            # The rendered module binds the model's (possibly new) name to the rendered model
             if name == model_name or _lookup(value.__globals__, name) is not _lookup(namespace, name):
                 raise CadwynRenderError(
                     f"Cannot inline a config lambda that uses {name!r}, which is a different object "

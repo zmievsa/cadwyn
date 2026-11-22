@@ -22,7 +22,6 @@ _TEST_OF_CADWYN_CORE = Path(__file__).parents[1] / "cadwyn-core" / "tests" / "te
 @pytest.mark.parametrize("first_import", ["cadwyn", "cadwyn_core"])
 def test__type_hints_of_cadwyn_core__should_resolve(first_import: str):
     result = subprocess.run(
-        # Pytest imports the package first, as a plugin
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", first_import, str(_TEST_OF_CADWYN_CORE)],
         capture_output=True,
         text=True,

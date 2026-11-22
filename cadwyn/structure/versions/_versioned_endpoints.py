@@ -2,8 +2,8 @@
 
 import functools
 from collections.abc import (
-    Callable,  # noqa: TC003 # Needed by runtime annotation introspection.
-    Coroutine,  # noqa: TC003 # Needed by runtime annotation introspection.
+    Callable,  # noqa: TC003
+    Coroutine,  # noqa: TC003
 )
 from contextlib import AsyncExitStack
 from typing import (
@@ -21,7 +21,7 @@ from typing_extensions import ParamSpec, TypeVar
 
 from cadwyn_core._utils import Sentinel
 from cadwyn_core.exceptions import CadwynError
-from cadwyn_core.structure.common import Endpoint  # noqa: TC001 # Needed by runtime annotation introspection.
+from cadwyn_core.structure.common import Endpoint  # noqa: TC001
 from cadwyn_core.structure.versions._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME
 from cadwyn_core.structure.versions._migration_targets import (
     _get_request_body_target,
@@ -40,7 +40,6 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
-# TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
 def _versioned(
     versions: "VersionBundle",
     head_body_field: object,
@@ -57,7 +56,6 @@ def _versioned(
 ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
     request_target = _get_request_body_target(head_body_field, head_route)
     response_target = _get_schema_migration_target(head_route.response_model)
-    # Routes whose union members have no migrations don't need to tell which member a body or a response is
     if not _has_union_member_migrations(
         request_target, (change.alter_request_by_schema_instructions for change in versions._all_changes)
     ):
@@ -72,14 +70,11 @@ def _versioned(
         async def decorator(*args: Any, **kwargs: Any) -> _R:
             request_param: FastapiRequest = kwargs[request_param_name]
             response_param: FastapiResponse = kwargs[response_param_name]
-            # FastAPI runs these background tasks after the response
             if hidden_background_tasks_param_name is not None:
                 background_tasks_of_latest_version = kwargs.pop(hidden_background_tasks_param_name)
             elif background_tasks_param_name is not None:
                 background_tasks_of_latest_version = kwargs[background_tasks_param_name]
             else:
-                # Cadwyn 8.x behavior: the endpoint doesn't declare BackgroundTasks, so the tasks that the
-                # dependencies add in the solve of the latest version are dropped
                 background_tasks_of_latest_version = BackgroundTasks()
             method = request_param.method
             response = Sentinel
@@ -88,8 +83,6 @@ def _versioned(
                     versions,
                     head_body_field,
                     module_body_field_name,
-                    # Dependant must be from the version of the finally migrated request,
-                    # not the version of endpoint
                     dependant_for_request_migrations,
                     request_param_name,
                     kwargs,
@@ -122,8 +115,6 @@ def _versioned(
                     "docs: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/"
                     "#dependencies-with-yield-and-except"
                 )
-            # FastAPI only runs the background tasks of the dependencies if the response has no background of its
-            # own. We don't warn about the tasks that dependencies add after this point, e.g. in their teardown.
             if (
                 hidden_background_tasks_param_name is None
                 and background_tasks_param_name is None

@@ -1,7 +1,7 @@
-import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
+import collections.abc  # noqa: TC003
 import contextlib
 import copy
-from collections.abc import Mapping  # Needed by runtime annotation introspection.
+from collections.abc import Mapping
 from datetime import date
 from enum import Enum
 from functools import cache
@@ -30,7 +30,7 @@ from cadwyn_core.structure.data import (
 from cadwyn_core.structure.schemas import (
     SchemaHadInstruction,
 )
-from cadwyn_core.structure.versions import (  # noqa: TC001 # Needed by runtime annotation introspection.
+from cadwyn_core.structure.versions import (  # noqa: TC001
     HeadVersion,
     Version,
     VersionBundle,
@@ -82,7 +82,7 @@ from ._schema_generator import (
 if TYPE_CHECKING:
     from fastapi.routing import APIRouter
 else:
-    from cadwyn_core._stand_ins import APIRouter  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import APIRouter  # noqa: TC001
 
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -102,7 +102,6 @@ def migrate_request(
 ) -> "MigratedRequest[_ModelT]": ...
 
 
-# The body is a copy of the model in an older version, which isn't the head model
 @overload
 def migrate_request(
     versions: "VersionBundle",
@@ -151,9 +150,6 @@ def migrate_request(
                 )
             target_model = versioned_models[to_version][latest_request_model]
             get_target_enum = versioned_models[to_version].__getitem__
-        # Like routes, we migrate the data that the client has sent, so the body has the keys of
-        # `model_dump(by_alias=True)` and only the fields that the client has set. A route validates the JSON that the
-        # client has sent, so objects only pass if they are of the model of the version, not by their attributes.
         _check_that_request_body_is_of_version(body, versioned_models[version], version)
         validated_body = versioned_request_model.__pydantic_validator__.validate_python(body)
         json_values_plan = _get_json_values_plan(target_model, versioned_request_model)
@@ -176,7 +172,6 @@ def migrate_request(
         )
         if has_run_migrations:
             client_json_strings.forget_shared_strings()
-        # A migration that sets the body to None omits it, which a route rejects because the head requires the body
         if request_info.body is None and request_info._body_is_assigned:
             raise CadwynHeadRequestValidationError(
                 [{"type": "missing", "loc": (), "msg": "Field required", "input": None}], body=None, version=version
@@ -248,8 +243,6 @@ def migrate_response(
     with _api_version_set_to(versions, version):
         content = _prepare_response_content(body, exclude_unset=False)
         if from_version is not None and versions._has_versioned_plain_enums:
-            # Response migrations get the members of head enums, as in routes, instead of those of the copies of
-            # a version. We leave lazy iterators as they are: the version gets their items after the migrations.
             content = _to_head_values(
                 content, replace_enum_members=True, replay_lazy_iterators=False, walk_lazy_item=None
             )
@@ -261,7 +254,6 @@ def migrate_response(
         if response_info.status_code >= 300:
             return MigratedResponse(body=migrated_body, status_code=response_info.status_code, headers=migrated_headers)
         if from_version is not None and versions._has_versioned_plain_enums:
-            # The head might not have the members of the older versions, so we give the version its own ones
             get_target_enum = generate_versioned_models(versions)[version].__getitem__
             migrated_body = _to_head_values(
                 migrated_body,
@@ -304,14 +296,9 @@ def migrate_response_body(
     versioned_response_model, migrated_body = _run_response_migrations(
         versions,
         latest_response_model,
-        # The migrations are written for routes, so they get a response. It's successful, as the body is, and
-        # it's only there for them: we return only the body.
         ResponseInfo(Response(status_code=200), body=latest_body),
         version,
     )
-    # The body has the keys of `model_dump(by_alias=True)`, like the bodies that routes migrate. Like routes, we only
-    # restore its validation aliases if it surely fails as it is, and we validate it once, whichever body it is,
-    # because validators can have side effects.
     return versioned_response_model.model_validate(_rescue_model_data(versioned_response_model, migrated_body))
 
 
@@ -389,8 +376,6 @@ def _is_of_version(cls: type[BaseModel], generator: Union[SchemaGenerator, None]
     if generator is None:
         return head_model is None
     head_model = origin if head_model is None else head_model
-    # A generic used without type args can have a copy of its own if its type params use the models of the version
-    # (e.g. in their bounds), but its parametrizations come from its template
     return issubclass(origin, generator[head_model]) or issubclass(origin, generator._get_template(head_model))
 
 
@@ -458,7 +443,6 @@ def _get_version_to_migrate(versions: "VersionBundle", version: Union[VersionTyp
 
 def get_models_that_routes_request(routers: "collections.abc.Iterable[APIRouter]") -> set[type[Any]]:
     """Return the models that versioning the routes of the routers requests from a generator directly"""
-    # Only route generation versions routes, so FastAPI is there
     import fastapi.routing
 
     collector = _ReferencedModelCollector()
@@ -482,7 +466,6 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     field_identities_before_version = _get_field_identities(models.schemas)
     changes = _migrate_classes(context)
     first_renames = _get_first_renames(changes.renames)
-    # The renames of the newer versions, which every older version must not undo by inheriting the old field
     renames_of_newer_versions = list(first_renames)
     parent_renames_of_newer_versions: list[_ParentRename] = []
     instructions_that_differ_from_head = _get_instructions_by_model(versions.head_version, {})
@@ -504,7 +487,6 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
         _check_that_deleted_fields_are_not_inherited(changes.deleted_fields, generator, str(version.value))
         version_to_context_map[str(version.value)] = generator
         parent_renames_of_newer_versions += parent_renames
-        # note that the last migration will not contain any version changes so we don't need to save the results
         field_identities_before_version = _get_field_identities(models.schemas)
         changes = _migrate_classes(context)
         first_renames = _get_first_renames(changes.renames)

@@ -343,11 +343,9 @@ def _websocket_version(client: TestClient, location: str, version: str | None) -
             socket.receive_json()
             return picked
     except WebSocketDisconnect as exc:
-        # Any close code other than 1008 makes the comparison with HTTP fail
         return _REJECTED if exc.code == 1008 else f"closed with {exc.code}"
 
 
-# Path versioning does not support default versions
 @pytest.mark.parametrize(
     ("location", "default"), [("custom_header", None), ("custom_header", "2024-01-15"), ("path", None)]
 )

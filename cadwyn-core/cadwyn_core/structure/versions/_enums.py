@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
     from fastapi.routing import APIRoute
 else:
-    from cadwyn_core._stand_ins import (  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import (  # noqa: TC001
         APIRoute,
         Dependant,
         ModelField,
@@ -45,15 +45,12 @@ def _can_lazy_items_be_plain_enum_copies(route: "APIRoute") -> bool:
 
 
 _CAN_LAZY_ITEMS_BE_PLAIN_ENUM_COPIES: "dict[int, tuple[ModelField, bool]]" = {}
-# The core schemas that only make values of builtin types
 _SCHEMAS_OF_BUILTIN_VALUES = frozenset(
     (
         *("none", "bool", "int", "float", "decimal", "complex", "str", "bytes"),
         *("date", "time", "datetime", "timedelta", "uuid", "url", "multi-host-url"),
     )
 )
-# The keys of the child schemas of the core schemas that only make what their children make. Any other schema,
-# such as `any`, validators, or custom ones, can make anything.
 _PASS_THROUGH_SCHEMA_KEYS = {
     **dict.fromkeys(("list", "set", "frozenset", "generator", "tuple"), ("items_schema",)),
     "dict": ("keys_schema", "values_schema"),
@@ -87,15 +84,13 @@ def _can_schema_make_members_of_plain_enum_copies(schema: dict[str, Any]) -> boo
             if head_enum is not None and not is_enum_looked_up_by_value(head_enum):
                 return True
         elif kind == "definition-ref":
-            if node["schema_ref"] not in _CORE_SCHEMA_DEFINITIONS:  # pragma: no cover # Pydantic registers them all
+            if node["schema_ref"] not in _CORE_SCHEMA_DEFINITIONS:  # pragma: no cover
                 return True
             stack.append(_CORE_SCHEMA_DEFINITIONS[node["schema_ref"]])
         elif (
             kind not in _PASS_THROUGH_SCHEMA_KEYS
-            # Custom `__init__` and `__post_init__` run code of users
             or node.get("custom_init")
             or node.get("post_init")
-            # Extra values of models and dataclasses are not validated
             or node.get("config", {}).get("extra_fields_behavior") == "allow"
             or node.get("extra_behavior") == "allow"
         ):
@@ -103,13 +98,11 @@ def _can_schema_make_members_of_plain_enum_copies(schema: dict[str, Any]) -> boo
         else:
             for key in _PASS_THROUGH_SCHEMA_KEYS[kind]:
                 if key not in node:
-                    # Containers without the schemas of their items take anything
                     return True
                 child = node[key]
                 if key not in ("fields", "choices") and not isinstance(child, list):
                     stack.append(child)
                     continue
-                # Fields and tagged union choices are keyed, and union choices can be `(schema, label)` tuples
                 children = child.values() if isinstance(child, dict) else child
                 stack.extend(item[0] if isinstance(item, tuple) else item for item in children)
     return False
@@ -131,7 +124,6 @@ def _can_body_have_lazy_iterators(route: "APIRoute", *, in_lazy_items: bool) -> 
             _has_generator_schema(cast("dict[str, Any]", field._type_adapter.core_schema), in_items=in_lazy_items)
             for field in _iter_body_params(dependant)
         )
-    # E.g. a forward ref that is never defined, which FastAPI never resolves for routes that get no body
     except PydanticUserError:
         result = True
     _CAN_BODY_HAVE_LAZY_ITERATORS[id(dependant), in_lazy_items] = dependant, result
@@ -167,12 +159,11 @@ def _has_generator_schema(schema: dict[str, Any], *, in_items: bool = False) -> 
         if isinstance(value, dict):
             kind = value.get("type")
             if kind == "generator":
-                # A generator schema without the schema of its items takes what the client has sent
                 if not in_items or ("items_schema" in value and _has_generator_schema(value["items_schema"])):
                     return True
                 continue
             if kind == "definition-ref":
-                if value["schema_ref"] not in _CORE_SCHEMA_DEFINITIONS:  # pragma: no cover # Pydantic registers them
+                if value["schema_ref"] not in _CORE_SCHEMA_DEFINITIONS:  # pragma: no cover
                     return True
                 stack.append(_CORE_SCHEMA_DEFINITIONS[value["schema_ref"]])
             stack.extend(value.values())
@@ -222,7 +213,6 @@ def _to_head_values(
     children = _get_children_to_walk(data)
     if children is None:
         return to_head_value(data)
-    # Each frame is [container, iterator over its children, its children with head values, whether any changed]
     stack: list[list[Any]] = [[data, iter(children), [], False]]
     containers_on_stack = {id(data)}
     while True:
@@ -249,11 +239,8 @@ def _to_head_values(
 
 
 _NO_CHILD = object()
-# The containers that pydantic makes when it validates a field (see `GenerateSchema` and `MAPPING_ORIGIN_MAP`)
 _MAPPINGS_THAT_PYDANTIC_MAKES = (dict, OrderedDict, defaultdict, Counter)
 _COLLECTIONS_THAT_PYDANTIC_MAKES = (list, tuple, set, frozenset, deque)
-# Pydantic doesn't export these iterator classes. Obtain their exact types through its public core schema API,
-# rather than matching class names or wrapping user iterators (including ones that migrations put into the body).
 _PYDANTIC_ITERATOR_TYPES = (
     type(SchemaValidator(core_schema.generator_schema()).validate_python(())),
     type(SchemaSerializer(core_schema.generator_schema()).to_python(iter(()))),
@@ -315,7 +302,6 @@ def _to_head_value(
 def _get_children_to_walk(value: Any) -> Union[list[Any], None]:
     """Return the children of a container, with the keys and values of mappings in turn, or None"""
     if type(value) in _MAPPINGS_THAT_PYDANTIC_MAKES:
-        # Unlike the type's own `items` (and iterating an `OrderedDict`), `dict.items` never hashes the keys again
         return [child for item in dict.items(value) for child in item]
     if type(value) in _COLLECTIONS_THAT_PYDANTIC_MAKES:
         return list(value)
@@ -332,8 +318,6 @@ def _copy_container_with_children(container: Any, children: list[Any]) -> Any:
             elif type(container) is Counter:
                 copied = Counter(dict(items))
             elif type(container) is OrderedDict:
-                # The children have the order of the dict, while `move_to_end` only changes the order of the
-                # `OrderedDict`. Iterating it hashes the keys, so we only do it here, where a copy hashes them anyway.
                 index_by_key_id = {id(key): index for index, key in enumerate(dict.keys(container))}
                 copied = OrderedDict(items[index_by_key_id[id(key)]] for key in container)
             else:
@@ -342,9 +326,8 @@ def _copy_container_with_children(container: Any, children: list[Any]) -> Any:
             copied = deque(children, maxlen=container.maxlen)
         else:
             copied = type(container)(children)
-    except Exception:  # noqa: BLE001 # E.g. a key whose `__hash__` fails
+    except Exception:  # noqa: BLE001
         return container
-    # Members of the copies don't equal the head members, so two distinct keys or items can become one
     return copied if len(copied) == len(container) else container
 
 
@@ -360,7 +343,6 @@ class _ReplayableIterable:
 
     def __init__(self, iterator: Iterator[Any]) -> None:
         self._iterator: Union[Iterator[Any], None] = iterator
-        # Each item of the iterator, or the error that it raised instead, in order
         self._outcomes: list[tuple[Any, Union[Exception, None]]] = []
 
     def __iter__(self) -> "_ReplayIterator":
@@ -375,7 +357,7 @@ class _ReplayableIterable:
             except StopIteration:
                 self._iterator = None
                 raise
-            except Exception as error:  # noqa: BLE001 # Each iterator raises it when it gets to it
+            except Exception as error:  # noqa: BLE001
                 self._outcomes.append((None, error))
         return self._outcomes[index]
 

@@ -24,8 +24,6 @@ from cadwyn_core.structure.versions import _bundle
 exceptions.APIRoute = APIRoute
 exceptions.APIWebSocketRoute = APIWebSocketRoute
 
-# Every module of Cadwyn that has a stand-in gets the class it stands for, the stand-ins' own module too, so that the
-# modules that are imported later get the classes as well
 for _module in [module for name, module in sys.modules.items() if name.partition(".")[0] in {"cadwyn", "cadwyn_core"}]:
     for _name, _value in list(vars(_module).items()):
         _stood_for = _stand_ins.get_class_stood_for(_value)
@@ -35,13 +33,9 @@ for _module in [module for name, module in sys.modules.items() if name.partition
 _utils.same_method_definition_as_in(Response.set_cookie)(data.ResponseInfo.set_cookie)
 _utils.same_method_definition_as_in(Response.delete_cookie)(data.ResponseInfo.delete_cookie)
 
-# The submodules that migrate requests and responses in routes refer back to the bundle in annotations
 _requests.VersionBundle = _bundle.VersionBundle
 _responses.VersionBundle = _bundle.VersionBundle
 _versioned_endpoints.VersionBundle = _bundle.VersionBundle
-# The FastAPI names that are bound above are in the namespaces of the packages too, where
-# `typing.get_type_hints()` looks for the objects that report the package as their module
 present_private_submodules_as_package("cadwyn_core.structure.versions")
 keep_names_of_moved_package("cadwyn.structure.versions", cadwyn_core.structure.versions)
-# `cadwyn.structure.versions` used to be a single module, which had their objects too
 present_private_submodules_as_package("cadwyn.structure.versions")

@@ -36,10 +36,9 @@ def _get_strict_content_type(request: FastapiRequest) -> bool:
         strict_content_type = effective_route_context.strict_content_type
     else:
         strict_content_type = served_route.strict_content_type
-    # E.g. a router that a mounted router includes keeps the placeholder, because no app gives it a bool
     if isinstance(strict_content_type, DefaultPlaceholder):
         strict_content_type = strict_content_type.value
-    if not isinstance(strict_content_type, bool):  # pragma: no cover # FastAPI only has bools here
+    if not isinstance(strict_content_type, bool):  # pragma: no cover
         raise CadwynError(
             f"Cadwyn can't tell how FastAPI has read the request body: the route that serves the request has "
             f"strict_content_type={strict_content_type!r} instead of True or False. Please, open an issue on Cadwyn's "
@@ -48,17 +47,14 @@ def _get_strict_content_type(request: FastapiRequest) -> bool:
     return strict_content_type
 
 
-# We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
 async def _get_body(
     request: FastapiRequest, body_field: Union[ModelField, None], *, strict_content_type: bool
-):  # pragma: no cover # This is from FastAPI
+):  # pragma: no cover
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
         body: Any = None
         if body_field:
             if is_body_form:
-                # FastAPI has already parsed this form, so this returns its cached form. We close its files after the
-                # response (`_UploadsToClose`), so background tasks can still read them
                 body = await request.form()
             else:
                 body_bytes = await request.body()
@@ -66,7 +62,6 @@ async def _get_body(
                     json_body: Any = PydanticUndefined
                     content_type_value = request.headers.get("content-type")
                     if not content_type_value:
-                        # Like FastAPI, we parse a body without a content type as JSON only if it's not strict
                         if not strict_content_type:
                             json_body = await request.json()
                     else:

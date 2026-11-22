@@ -59,13 +59,11 @@ class _DroppedBackgroundTasksWarning:
             return
         request_stack = request.scope.get("fastapi_inner_astack")
         if not isinstance(request_stack, AsyncExitStack):
-            # Every supported FastAPI version sets it. Without it, we warn right away rather than not at all
             await run_in_threadpool(self._warn, is_deferred=False)
             return
 
         async def warn_unless_the_request_has_failed(exc_type: Union[type[BaseException], None], *_: object) -> None:
             if exc_type is None:
-                # Warning filters and log handlers can block, so we keep them off the event loop
                 await run_in_threadpool(self._warn)
 
         request_stack.push_async_exit(warn_unless_the_request_has_failed)
@@ -87,7 +85,6 @@ class _DroppedBackgroundTasksWarning:
         with self._lock:
             if self.has_warned:
                 return
-            # Nothing here may break the request, even if warnings are errors or logging fails
             try:
                 warnings.warn(message, FutureWarning, stacklevel=1)
             except Exception:  # noqa: BLE001

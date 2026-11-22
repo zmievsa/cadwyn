@@ -13,26 +13,14 @@ _PYDANTIC_VERSION = tuple(map(int, re.findall(r"\d+", PYDANTIC_VERSION)[:3]))
 # so that handling needs a test that doesn't depend on the version of pydantic
 PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY = _PYDANTIC_VERSION < (2, 14, 3)
 
-# Like Cadwyn, we only take the numbers, so that pre-releases such as 0.163.0rc1 parse too
 _FASTAPI_VERSION = tuple(map(int, re.findall(r"\d+", fastapi.__version__)[:3]))
 _FASTAPI_MINOR_VERSION = _FASTAPI_VERSION[:2]
-# Before FastAPI 0.148.0, FastAPI validates the defaults of omitted query, header, cookie, and form params.
-# Since FastAPI 0.148.0, it only validates them when they set `validate_default=True`
 FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS = _FASTAPI_MINOR_VERSION < (0, 148)
-# Before FastAPI 0.151.0, FastAPI treats a body that is None as an omitted one, so it can't tell it from a JSON null
 FASTAPI_DISTINGUISHES_NULL_BODIES = _FASTAPI_MINOR_VERSION >= (0, 151)
-# Before FastAPI 0.157.0, FastAPI reads the uploaded files of `bytes` params to the end, so other params get them empty.
-# Since FastAPI 0.157.0, it puts them back where they were, which requires their streams to be seekable
 FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES = _FASTAPI_MINOR_VERSION >= (0, 157)
-# Before FastAPI 0.158.2, FastAPI embeds `Optional` form models, so it looks their fields up under the param's alias
 FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS = _FASTAPI_VERSION >= (0, 158, 2)
-# Before FastAPI 0.158.0, FastAPI validates the whole form against a form field that only a dependency override declares
 FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES = _FASTAPI_MINOR_VERSION >= (0, 158)
-# Since FastAPI 0.158.2, FastAPI also looks the dict body of a form model up under the param's aliases
 FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS = FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS
-# Before FastAPI 0.161.0, a union of form models isn't a form model
 FASTAPI_SUPPORTS_FORM_MODEL_UNIONS = _FASTAPI_MINOR_VERSION >= (0, 161)
-# Since FastAPI 0.153.0, FastAPI validates every model of a union of form models from the body as if it were form data
 FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA = _FASTAPI_MINOR_VERSION >= (0, 153)
-# Since FastAPI 0.157.0, a form field takes the first of its aliases that has a value, not the values of all of them
 FASTAPI_TAKES_FIRST_ALIAS_OF_FORM_FIELDS_WITH_VALUE = _FASTAPI_MINOR_VERSION >= (0, 157)

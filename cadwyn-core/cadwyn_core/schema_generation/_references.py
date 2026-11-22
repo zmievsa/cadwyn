@@ -1,4 +1,4 @@
-import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
+import collections.abc  # noqa: TC003
 import itertools
 import threading
 import types
@@ -16,7 +16,7 @@ from typing import (
 from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata
 from pydantic._internal._model_construction import build_lenient_weakvaluedict, unpack_lenient_weakvaluedict
-from pydantic.fields import FieldInfo  # noqa: TC002 # Needed by runtime annotation introspection.
+from pydantic.fields import FieldInfo  # noqa: TC002
 from typing_extensions import (
     TypeVar,
 )
@@ -88,7 +88,6 @@ def _find_strongly_connected_components(
                 stack.append(successor)
                 nodes_to_visit.append((successor, iter(get_successors(successor))))
                 break
-            # The node is still on the stack because the nodes that are not are in finished components
             lowest_indices[current_node] = min(lowest_indices[current_node], indices[successor])
         else:
             nodes_to_visit.pop()
@@ -129,21 +128,14 @@ class _ReferenceCycles:
     )
 
     def __init__(self, changed_models: "frozenset[type[Union[BaseModel, Enum]]]") -> None:
-        # The generators of different versions can ask at the same time
         self._lock = threading.Lock()
         self._models_in_cycles: dict[type[Union[BaseModel, Enum]], bool] = {}
         self._requested_models: dict[type[Union[BaseModel, Enum]], frozenset[type[Union[BaseModel, Enum]]]] = {}
-        # The references of the head models are the same in every version so the generators share them
         self._head_references: dict[type[BaseModel], _ModelReferences] = {}
-        # The models with schema or enum instructions in any version
         self._changed_models = changed_models
-        # The parametrizations with instructions, which also apply where pydantic builds them in the fields of other
-        # generics, e.g. `schema(Pair[str, int])` in `Box[str]` with `pair: Pair[T, int]` (see
-        # get_redefined_field_names). Without them, nothing is redefined.
         self._changed_parametrizations = frozenset(
             model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
         )
-        # See get_redefined_field_names
         self._parametrizations_built_by_pydantic: dict[
             type[Union[BaseModel, Enum]], dict[str, frozenset[type[BaseModel]]]
         ] = {}
@@ -179,7 +171,6 @@ class _ReferenceCycles:
             if not redefined_fields:
                 return self._get_head_references(model)
             if model not in self._head_references_with_redefined_fields:
-                # They are complete because the fields are only redefined if we know what copying them requests
                 self._head_references_with_redefined_fields[model] = _get_head_model_references(model, redefined_fields)
             return self._head_references_with_redefined_fields[model]
 
@@ -215,7 +206,6 @@ class _ReferenceCycles:
         if not redefined_field_names:
             return _NO_REDEFINED_FIELDS
         if model not in self._redefined_fields:
-            # The fields are only redefined if they are known (see _get_parametrizations_built_by_pydantic)
             fields = cast("dict[str, FieldInfo]", _get_rebuilt_model_fields(model))
             self._redefined_fields[model] = types.MappingProxyType(
                 {
@@ -229,7 +219,6 @@ class _ReferenceCycles:
 
     def _get_changed_parametrization(self, annotation: Any) -> Any:
         """Return the parametrization with instructions that is the same as the annotation, or the annotation"""
-        # The type positions can hold anything, including unhashable values such as the list of args of Callable
         if not (lenient_issubclass(annotation, BaseModel) and _is_parametrization(annotation)) or (
             annotation in self._changed_parametrizations
         ):
@@ -269,7 +258,6 @@ class _ReferenceCycles:
         if model in self._parametrizations_built_by_pydantic:
             return self._parametrizations_built_by_pydantic[model]
         parametrizations: dict[str, frozenset[type[BaseModel]]] = {}
-        # E.g. enums, which the cycles can have
         if not lenient_issubclass(model, BaseModel):
             return parametrizations
         if not self._can_redefine_fields(model):
@@ -279,13 +267,10 @@ class _ReferenceCycles:
         origin_fields = _get_rebuilt_model_fields(origin)
         references = self._get_head_references(model)
         if fields is not None and origin_fields is not None and references.is_complete:
-            # A parametrization inherits all of its fields from its generic
             for name, field in fields.items():
                 models = _get_models_in_field(field)
                 origin_models = _get_models_in_field(origin_fields[name])
                 if models is None or origin_models is None:
-                    # E.g. a recursive type alias: we cannot know what copying the field would request so the copy
-                    # inherits it as on main
                     continue
                 field_parametrizations = frozenset(
                     referenced_model
@@ -347,7 +332,6 @@ class _ReferenceCycles:
         if model in self._head_references:
             return self._head_references[model]
         references = _get_head_model_references(model)
-        # The references that are not complete can change once the missing names get defined
         if references.is_complete:
             self._head_references[model] = references
         return references
@@ -377,8 +361,6 @@ def _get_latest_generic_args_error(cycle: frozenset[type[BaseModel]]) -> SchemaG
     )
 
 
-# Unique across all versions and all attempts so that the names of different copies never get mixed up, e.g.
-# through the caches of typing: Optional[ForwardRef("X")] is cached so its ForwardRef("X") is shared.
 _reference_cycle_member_ids = itertools.count()
 
 
@@ -429,7 +411,7 @@ class _CycleCopier:
         return self[model]
 
     def _get_copy(self, model: Any) -> type[BaseModel]:
-        if model not in self.copies:  # pragma: no cover # The order of creation makes sure that it exists
+        if model not in self.copies:  # pragma: no cover
             raise CadwynError(f"The copy of {model.__qualname__} was needed before it was created")
         return self.copies[model]
 
@@ -441,19 +423,13 @@ class _CycleCopier:
             self._forward_refs[model].__forward_arg__: model_copy for model, model_copy in self.copies.items()
         }
         for model_copy in self.copies.values():
-            # The parent namespace stays with the copy, unlike the namespace passed to model_rebuild, so pydantic
-            # can also resolve the forward refs when it rebuilds the copy or parametrizes it later
             parent_namespace = unpack_lenient_weakvaluedict(model_copy.__pydantic_parent_namespace__) or {}
             model_copy.__pydantic_parent_namespace__ = build_lenient_weakvaluedict(parent_namespace | copies_by_name)
         for model in creation_order:
-            # Pydantic resolves the models nested in a model with the namespace of the outermost model so we cannot
-            # leave it to pydantic to build the copies when they are first used (even with defer_build=True)
             self.copies[model].model_rebuild(raise_errors=True, _types_namespace={})
-            if not self.copies[model].__pydantic_complete__:  # pragma: no cover # raise_errors=True raises before
+            if not self.copies[model].__pydantic_complete__:  # pragma: no cover
                 raise SchemaGenerationError(f"Cadwyn could not build the versioned copy of {model.__qualname__}")
         for model_copy in self.copies.values():
-            # Pydantic has already resolved the forward refs so the annotations can refer to the copies themselves,
-            # e.g. for typing.get_type_hints
             annotations = vars(model_copy)["__annotations__"]
             for name, annotation in annotations.items():
                 annotations[name] = _replace_forward_refs(annotation, copies_by_name)
@@ -484,7 +460,7 @@ class _BareGenericCopies:
             model_copy.__pydantic_parent_namespace__ = build_lenient_weakvaluedict(parent_namespace | copies_by_name)
         for model, model_copy in self.copies.items():
             model_copy.model_rebuild(force=True, raise_errors=True, _types_namespace={})
-            if not model_copy.__pydantic_complete__:  # pragma: no cover # raise_errors=True raises before
+            if not model_copy.__pydantic_complete__:  # pragma: no cover
                 raise SchemaGenerationError(f"Cadwyn could not build the versioned copy of {model.__qualname__}")
         for model_copy in self.copies.values():
             annotations = vars(model_copy)["__annotations__"]
@@ -533,11 +509,9 @@ class _BareGenericCopier:
                 "refers to itself in metadata that pydantic uses, which needs the class itself. Use explicit "
                 "type arguments."
             )
-        # Like in Cadwyn 8.2.0, e.g. default factories and the metadata that pydantic ignores get the template
         return self.schema_generator._get_template(member)
 
     def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
-        # The bases that share the parameters of the model, e.g. `Page` of `class ItemPage(Page)`, validate them too
         if self.annotation_transformer._is_template_reference(base):
             return cast("type[_T_ANY_MODEL]", self[base])
         return self.schema_generator.change_version_of_base(base)
@@ -552,7 +526,6 @@ class _BareGenericCopier:
         }
 
     def _get_template(self, model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
-        # The nested generics that share the parameters of the model, e.g. `page: Page[T]` in `Outer[T]`
         if self.annotation_transformer._is_template_reference(model):
             return cast("type[_T_ANY_MODEL]", self[model])
         return self.schema_generator._get_template(model)

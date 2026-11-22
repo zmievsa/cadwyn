@@ -98,7 +98,6 @@ class ChildThatDeclaresFooHiddenByAliasedClassVar(ParentWithFooAsAliasedClassVar
     foo: str  # ty: ignore[incompatible-attribute-override]
 
 
-# Pydantic warns that it will treat such a name as a field in V3, and that the child's field shadows the class var
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", PydanticDeprecatedSince211)
     warnings.filterwarnings("ignore", 'Field name "foo" in "ChildThatDeclaresFooOverFinal" shadows', UserWarning)
@@ -118,7 +117,6 @@ with warnings.catch_warnings():
         pytest.param(
             ChildThatDeclaresFooOverFinal,
             id="final_with_default",
-            # The copies of the models get the same warnings as the models
             marks=[
                 pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince211"),
                 pytest.mark.filterwarnings('ignore:Field name "foo" in "ChildThatDeclaresFooOverFinal" shadows'),
@@ -142,7 +140,6 @@ class ItemOfModelWithSpecialForms(BaseModel):
 
 
 with warnings.catch_warnings():
-    # Pydantic treats `Final` with a default as a class variable, and warns that it will become a field in pydantic v3
     warnings.filterwarnings("ignore", "Annotation .* is marked as final and has a default value")
 
     class ModelWithSpecialForms(BaseModel):

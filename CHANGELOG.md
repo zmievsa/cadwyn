@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- For contributors: Cadwyn's code no longer has comments, and `make lint` fails when a change adds one. The reasons behind surprising decisions that the comments held are now in [Design decisions and trade-offs](https://github.com/zmievsa/cadwyn/blob/main/docs/theory/design_decisions.md), which also gained a "Development setup" section. The contribution guide explains the rule and the baseline of the few comments that are left.
+
 ## [9.1.0]
 
 These are the changes since 9.0.0. The release candidate 9.1.0rc1 had all of them except the last two entries under Changed and the last entry under Fixed.
@@ -871,7 +875,9 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 - When a class-based dependency was used, its dependant was incorrectly generated, causing all affected endpoints to completely stop functioning
 
-## [3.6.4] <!-- Test release -->
+## [3.6.4]
+
+A test release without changes.
 
 ## [3.6.3]
 

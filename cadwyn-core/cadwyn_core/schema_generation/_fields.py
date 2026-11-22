@@ -62,10 +62,10 @@ if TYPE_CHECKING:
     )
 
 PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP: dict[type[_decorators.DecoratorInfo], Callable[..., Any]] = {
-    ValidatorDecoratorInfo: pydantic.validator,  # ty: ignore[deprecated]  # Preserve Pydantic v1 migrations.
+    ValidatorDecoratorInfo: pydantic.validator,  # ty: ignore[deprecated]
     FieldValidatorDecoratorInfo: pydantic.field_validator,
     FieldSerializerDecoratorInfo: pydantic.field_serializer,
-    RootValidatorDecoratorInfo: pydantic.root_validator,  # ty: ignore[deprecated]  # Preserve Pydantic v1 migrations.
+    RootValidatorDecoratorInfo: pydantic.root_validator,  # ty: ignore[deprecated]
     ModelValidatorDecoratorInfo: pydantic.model_validator,
     ModelSerializerDecoratorInfo: pydantic.model_serializer,
     ComputedFieldInfo: pydantic.computed_field,
@@ -106,21 +106,13 @@ class PydanticFieldWrapper:
     annotation: Any
     name_from_newer_version: str
 
-    # The attributes after the changes of every model that shares this field: the model that defines it and the
-    # subclasses that changed it. We keep using them to validate the instructions so that we accept the same ones.
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
-    # The model of the last instruction that changed the type of the field
     type_changed_by: Union[type[BaseModel], None] = dataclasses.field(init=False, default=None)
     declared_field_attributes: dict[str, Any] = dataclasses.field(init=False)
-    # The aliases that Field() copied from alias (or that are equal to it). Like in Field(), they follow alias
     aliases_derived_from_alias: frozenset[str] = dataclasses.field(init=False)
-    # The keys that the field got from its alias where it was declared (in head or in its existed_as()), which
-    # can differ from the alias itself, e.g. if an alias generator overrides it
     keys_from_alias: frozenset[str] = dataclasses.field(init=False)
-    # The keys from alias that a copy of the field doesn't have anymore because its derived aliases followed alias
     keys_renamed_by_alias: frozenset[str] = dataclasses.field(init=False, default=frozenset())
     changes: list[_FieldAttributeChange] = dataclasses.field(init=False)
-    # The same for all copies of the field
     identity: int = dataclasses.field(init=False)
     models_that_changed_it: set[type[BaseModel]] = dataclasses.field(init=False)
     _field_attributes_by_model: dict[type[BaseModel], dict[str, Any]] = dataclasses.field(init=False, repr=False)
@@ -145,8 +137,6 @@ class PydanticFieldWrapper:
         Each model gets its own copy of the field (and of its default values) in every version, as before.
         """
         if _has_default_and_default_factory(self.passed_field_attributes):
-            # pydantic would fail to create the field, as it did when every model shared these attributes
-            # Pydantic rejects declarations with both, so an instruction has set one of them
             changed_by = next(
                 change.changed_by for change in reversed(self.changes) if change.name in {"default", "default_factory"}
             )
@@ -165,7 +155,6 @@ class PydanticFieldWrapper:
                 description = f"{reprlib.repr(attr_value)} in the field '{name}' of {model.__qualname__}"
                 raise _get_deep_copy_error(description, error) from error
         field_copy.declared_field_attributes = field_copy.passed_field_attributes
-        # Its attributes already have the aliases that followed alias
         field_copy.aliases_derived_from_alias = frozenset()
         field_copy.keys_renamed_by_alias = self._get_keys_renamed_by_alias(model)
         field_copy.changes = []
@@ -207,14 +196,12 @@ class PydanticFieldWrapper:
         return [change for change in self.changes if applies[change.changed_by]]
 
     def _get_derived_aliases(self, changes: "list[_FieldAttributeChange]") -> frozenset[str]:
-        # The aliases that were changed explicitly don't follow alias anymore
         return self.aliases_derived_from_alias.difference(change.name for change in changes)
 
     def _get_keys_renamed_by_alias(self, model: type[BaseModel]) -> frozenset[str]:
         """Return the keys from alias that the field loses in the model because its derived aliases follow alias"""
         changes = self._get_changes(model)
         if not self._get_derived_aliases(changes):
-            # E.g. a copy of the field, whose attributes already have the aliases that followed alias
             return self.keys_renamed_by_alias
         alias = self.get_field_attributes(model).get("alias")
         return frozenset() if alias == self.declared_field_attributes["alias"] else self.keys_from_alias
@@ -264,7 +251,6 @@ def _keep_last_of_default_and_default_factory(
     """
     if not _has_default_and_default_factory(attributes):
         return attributes
-    # Pydantic rejects declarations with both, so a change has set one of them
     last_set = next(
         change.name
         for change in reversed(changes)
@@ -283,7 +269,6 @@ def _sets_default_attribute(attributes: dict[str, Any], attr_name: str) -> bool:
     if attr_name not in attributes:
         return False
     value = attributes[attr_name]
-    # Identity checks because user defaults can compare in any way (e.g. numpy arrays compare element-wise)
     if attr_name == "default":
         return value is not PydanticUndefined and value is not Ellipsis
     return value is not None
@@ -319,7 +304,6 @@ def _wrap_validator(
     is_pydantic_v1_style_validator: Any,
     decorator_info: _decorators.DecoratorInfo,
 ):
-    # This is only for pydantic v1 style validators
     func = fully_unwrap_decorator(func, is_pydantic_v1_style_validator)
     is_classmethod = False
     if inspect.ismethod(func):
@@ -328,18 +312,16 @@ def _wrap_validator(
     kwargs = dataclasses.asdict(decorator_info)
     decorator_fields = kwargs.pop("fields", None)
 
-    # wrapped_property is not accepted by computed_field()
     if isinstance(decorator_info, ComputedFieldInfo):
         kwargs.pop("wrapped_property", None)
 
     actual_decorator = PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP[type(decorator_info)]
     if is_pydantic_v1_style_validator:
-        # There's an inconsistency in their interfaces so we gotta resort to this
         mode = kwargs.pop("mode", "after")
         kwargs["pre"] = mode != "after"
         if (
             isinstance(decorator_info, RootValidatorDecoratorInfo) and decorator_info.mode == "after"
-        ):  # pragma: no cover # TODO
+        ):  # pragma: no cover
             kwargs["skip_on_failure"] = True
     if decorator_fields is not None:
         return _PerFieldValidatorWrapper(
@@ -365,7 +347,6 @@ def _change_field(
         if is_same_value(field.annotation, alter_schema_instruction.type) and (
             field.type_changed_by is None
             or issubclass(model.cls, field.type_changed_by)
-            # Another model that shares the field (e.g. a sibling) could have changed its type only for itself
             or is_same_value(annotation, alter_schema_instruction.type)
         ):
             raise InvalidGenerationInstructionError(
@@ -393,7 +374,6 @@ def _change_field(
     for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
         attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
         if attr_value is not Sentinel:
-            # Another model that shares the field (e.g. a sibling) could have set the value only for itself
             if is_same_value(field.passed_field_attributes.get(attr_name, Sentinel), attr_value) and is_same_value(
                 field.get_field_attributes(model.cls).get(attr_name, Sentinel), attr_value
             ):
@@ -403,9 +383,6 @@ def _change_field(
                     f'of "{model.name}" to {attr_value!r} in "{version_change_name}" '
                     "but it already has that value.",
                 )
-            # Like Cadwyn always did, we don't change the annotation's metadata, so a constraint from it (e.g. from
-            # `Annotated[str, Field(min_length=1)]`) still wins over the new value. Changing it would make the older
-            # versions reject the requests and responses that they have always accepted whenever it is stricter.
             field.update_attribute(name=attr_name, value=attr_value, changed_by=model.cls)
 
 
@@ -433,9 +410,7 @@ def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
     if isinstance(metadata, FieldInfo):
         return hasattr(metadata, attr_name) or attr_name in _extract_passed_field_attributes(metadata)
     if inspect.isclass(metadata):
-        # pydantic also allows constraint classes such as `Annotated[int, Strict]`
         return attr_name in collect_known_metadata([metadata])[0]
-    # Only attributes that can be set on the object itself, so not str.title from `Annotated[str, "Some doc"]`
     return hasattr(metadata, attr_name) and (
         hasattr(metadata, "__dict__")
         or any(attr_name in getattr(cls, "__slots__", ()) for cls in type(metadata).__mro__)
@@ -444,29 +419,22 @@ def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
 
 def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
     if isinstance(metadata, FieldInfo):
-        # We only delete the attributes of FieldInfo itself (never its constraints), and they get the values of an
-        # empty Field()
         field_info = _copy_field_info(metadata)
         field_info._attributes_set.pop(attr_name, None)
         setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
         return field_info
     unset_value = _get_unset_metadata_attribute_value(metadata, attr_name)
     if inspect.isclass(metadata):
-        # We never change the class itself and use its instance with the same constraints instead
         constraint = metadata.__new__(metadata)
         for name, value in collect_known_metadata([metadata])[0].items():
             object.__setattr__(constraint, name, value)
     else:
-        # We don't use dataclasses.replace because it would call __init__ that subclasses can override
         constraint = copy.copy(metadata)
     object.__setattr__(constraint, attr_name, unset_value)
     return constraint
 
 
 def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
-    # Grouped metadata can become invalid with None (e.g. annotated_types.Len(min_length=None) fails to iterate)
-    # so we use the default value of its attribute from the library class that defines it because
-    # the default of a user's subclass can be a constraint itself (e.g. `min_length: int = 2`)
     if isinstance(metadata, annotated_types.GroupedMetadata):
         library_dataclasses = (
             cls
@@ -482,17 +450,9 @@ def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
             ),
             None,
         )
-    # pydantic ignores other constraints that are None
     return None
 
 
-# The attributes that field().didnt_have() removes from a Field() in the annotation's metadata, such as
-# `Annotated[str, Field(description="...")]`. Cadwyn 7.4.0 left that Field() unchanged, so we only remove the
-# attributes that only document the field: removing any other one could make the older versions reject or change
-# the data that they have always accepted or returned. E.g. removing a default makes the field required, removing an
-# alias renames it, removing exclude returns a hidden field, and even removing a constraint such as max_length can
-# make a model-wide limit (`ConfigDict(str_max_length=...)`) or an older had() apply, or change the member that a
-# `left_to_right` union picks. json_schema_extra holds arbitrary data that validators can read, so it stays as well.
 _FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE = frozenset(("title", "description", "examples", "deprecated"))
 
 
@@ -512,10 +472,8 @@ def _delete_field_attributes(
     for attr_name in alter_schema_instruction.attributes:
         deleted = False
 
-        # Another model that shares the field (e.g. a sibling) could have already deleted it from the shared attributes
         if attr_name in field.passed_field_attributes or attr_name in field.get_changed_field_attributes(model.cls):
             deleted = True
-        # Any metadata with such an attribute counts (even if it is None) to keep accepting the same instructions
         if get_origin(annotation) == Annotated and any(
             _metadata_has_attribute(sub_ann, attr_name) for sub_ann in get_args(annotation)[1:]
         ):
@@ -532,7 +490,6 @@ def _delete_field_attributes(
                 f'from "{model.name}" in "{version_change_name}" '
                 "but it already doesn't have that attribute.",
             )
-        # Even if only the annotation has it because the subclasses that share the field could still have it
         field.delete_attribute(name=attr_name, changed_by=model.cls)
 
 
@@ -557,9 +514,7 @@ def _delete_field_from_model(model: "_PydanticModelWrapper[BaseModel]", field_na
         model.validators[field_name].is_deleted = True
         model.annotations.pop(field_name, None)
     elif field_name in model.annotations and get_origin(model.annotations[field_name]) is ClassVar:
-        # Handle ClassVar fields - they exist in annotations but not in model.fields
         model.annotations.pop(field_name)
-        # Also remove the attribute from other_attributes if it exists there
         model.other_attributes.pop(field_name, None)
     else:
         raise InvalidGenerationInstructionError(

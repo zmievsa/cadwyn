@@ -1,6 +1,4 @@
 name: Publish documentation
-# Each release gets its own docs at docs.cadwyn.dev/<major.minor>/ (via mike).
-# "latest" points at the newest release and is the default page; "dev" tracks main.
 on:
   push:
     branches:

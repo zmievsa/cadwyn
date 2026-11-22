@@ -31,20 +31,13 @@ from cadwyn_core.structure.versions._core_schema import (
 
 from ._dependencies import _get_dependency_overrides, _iter_dependants_that_fastapi_solves
 
-# How the head validates the data of a body schema, as far as the models of the request's version in it go:
-# `("model", cls, head_cls)` for a model of the request's version and the head's model at the same place,
-# `("items", plan)` for the items of a list, `("values", plan)` for the values of a dict, and `("union", plans)` for
-# the members of a union. None means that the data stays as it is.
 _InputPlan: TypeAlias = Union[tuple[Any, ...], None]
-# The plans of the pairs of a body field of a version and the head's body field, by the ids of the fields
 _BODY_INPUT_PLANS: dict[tuple[int, int], tuple[ModelField, ModelField, _InputPlan]] = {}
 
 
 @dataclasses.dataclass(frozen=True)
 class _ModelInputPlan:
-    # (name, key, plan) of the fields: the key that the head validates the field from, and the plan of its value
     fields: tuple[tuple[str, str, _InputPlan], ...] = ()
-    # The keys of the data that any field validates, which the extra keys must not have
     validated_keys: frozenset[Union[str, int]] = frozenset()
 
 
@@ -74,11 +67,9 @@ def _to_head_input(
     plan = _get_body_input_plan(body_field, head_dependant.body_params[0])
     if plan is None or not _do_body_readers_share_plan(body_field, head_dependant, head_route, plan):
         return body
-    # Recursive schemas let the data be as deep as pydantic accepts. Nothing here has side effects, so we can just
-    # leave such a body as it is.
     try:
         return _to_input_by_plan(body, plan)
-    except RecursionError:  # pragma: no cover # Python 3.12+ raises it only for bodies that pydantic rejects
+    except RecursionError:  # pragma: no cover
         return body
 
 
@@ -110,7 +101,7 @@ def _get_body_input_plan(body_field: ModelField, head_body_field: ModelField) ->
             _register_core_schema_definitions(cast("dict[str, Any]", body_field._type_adapter.core_schema)),
             _register_core_schema_definitions(cast("dict[str, Any]", head_body_field._type_adapter.core_schema)),
         )
-    except _CORE_SCHEMA_ERRORS:  # pragma: no cover # FastAPI and Pydantic don't build such schemas
+    except _CORE_SCHEMA_ERRORS:  # pragma: no cover
         plan = None
     _BODY_INPUT_PLANS[id(body_field), id(head_body_field)] = (body_field, head_body_field, plan)
     return plan
@@ -179,7 +170,6 @@ def _get_input_union_members(
     choices = schema["choices"].values() if schema["type"] == "tagged-union" else schema["choices"]
     members: list[tuple[dict[str, Any], frozenset[str]]] = []
     for choice in choices:
-        # Union choices can be `(schema, label)` tuples
         unwrapped = _unwrap_input_schema(choice[0] if isinstance(choice, tuple) else choice, visiting)
         if unwrapped is not None:
             members.extend(_get_input_union_members(*unwrapped))
@@ -194,18 +184,15 @@ def _unwrap_input_schema(
     The own core schema of a model becomes the model schema itself.
     """
     while True:
-        # References carry the serializers of `Annotated[Model, PlainSerializer(...)]`
         if _is_custom_serialization(schema.get("serialization")):
             return None
         if schema["type"] == "definition-ref":
             ref = schema["schema_ref"]
-            # A recursive type alias of containers, e.g. `type Items = list[Union[Item, Items]]`
             if ref in visiting:
                 return None
             visiting |= {ref}
             schema = _CORE_SCHEMA_DEFINITIONS[ref]
             continue
-        # The own core schema of a model has its ref, and wraps it in the "after" validators of the model
         if schema.get("ref") is not None:
             model_schema = schema
             while model_schema["type"] == "function-after":
@@ -223,7 +210,6 @@ def _to_input_by_plan(data: Any, plan: _InputPlan) -> Any:
         return data
     kind = plan[0]
     if kind == "union":
-        # We only walk into the member that the data surely belongs to
         matching_plans = [member for member in plan[1] if _plan_matches(member, data)]
         return _to_input_by_plan(data, matching_plans[0]) if len(matching_plans) == 1 else data
     if not _plan_matches(plan, data):
@@ -249,7 +235,6 @@ def _plan_matches(plan: tuple[Any, ...], data: Any) -> bool:
 
 def _model_to_input(model: BaseModel, plan: _ModelInputPlan) -> Any:
     extra = model.__pydantic_extra__
-    # The head would take an extra key that a field validates as the field's value
     if extra and not plan.validated_keys.isdisjoint(extra):
         return model
     fields_set = model.model_fields_set
@@ -283,7 +268,6 @@ def _get_model_input_plan(model: type[BaseModel], head_model: type[BaseModel]) -
     """
     if (
         not hasattr(model, "__cadwyn_original_model__")
-        # The head's model is a root model too, because both are versions of the same model
         or issubclass(model, RootModel)
         or not _has_fields_of_head_model(model, head_model)
     ):
@@ -293,7 +277,6 @@ def _get_model_input_plan(model: type[BaseModel], head_model: type[BaseModel]) -
         if inner_schema is None or head_inner_schema is None:
             return None
         field_schemas, head_field_schemas = inner_schema["fields"], head_inner_schema["fields"]
-        # A custom `__get_pydantic_core_schema__` can validate other fields or keys than the field infos say
         if not _do_compiled_fields_match(model, field_schemas) or not _do_compiled_fields_match(  # pragma: no cover
             head_model, head_field_schemas
         ):
@@ -313,7 +296,7 @@ def _get_model_input_plan(model: type[BaseModel], head_model: type[BaseModel]) -
             keys_of_fields[name] = frozenset(path[0] for path in paths)
             plan = _get_input_plan(field_schemas[name]["schema"], head_field_schemas[name]["schema"])
             fields.append((name, key, plan))
-    except _CORE_SCHEMA_ERRORS:  # pragma: no cover # FastAPI and Pydantic don't build such schemas
+    except _CORE_SCHEMA_ERRORS:  # pragma: no cover
         return None
     if any(
         key in other_keys
@@ -341,7 +324,6 @@ def _has_fields_of_head_model(model: type[BaseModel], head_model: type[BaseModel
             (field.serialization_alias or name) != (head_field.serialization_alias or name)
             or _get_validation_paths(model, name, field) != _get_validation_paths(head_model, name, head_field)
             or _unwrap_default_factory(field.default_factory) is not _unwrap_default_factory(head_field.default_factory)
-            # Defaults can be equal but different, e.g. `Decimal("1.00")` and `Decimal("1.0")`
             or not is_same_value(field.default, head_field.default)
         ):
             return False
@@ -349,7 +331,6 @@ def _has_fields_of_head_model(model: type[BaseModel], head_model: type[BaseModel
 
 
 def _unwrap_default_factory(factory: object) -> object:
-    # Copies of models wrap the default factories of the head's models. `schema_generation` imports this module.
     from cadwyn_core.schema_generation._callables import _CallableWrapper
 
     return factory._original_callable if isinstance(factory, _CallableWrapper) else factory

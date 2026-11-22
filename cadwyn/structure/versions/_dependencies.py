@@ -13,7 +13,7 @@ from fastapi.dependencies.utils import get_dependant
 from fastapi.routing import APIRoute
 
 
-def _iter_dependants_that_fastapi_solves(  # pragma: no cover # FastAPI >= 0.158.2
+def _iter_dependants_that_fastapi_solves(  # pragma: no cover
     dependant: Dependant, route: APIRoute
 ) -> Iterator[Dependant]:
     """Yield the dependant and every sub-dependant in the tree that FastAPI solves for the route.
@@ -54,7 +54,6 @@ def _iter_dependencies(
     for sub_dependant in dependant.dependencies:
         call = sub_dependant.call
         scopes = tuple(sorted({*(sub_dependant.parent_oauth_scopes or ()), *(sub_dependant.own_oauth_scopes or ())}))
-        # Same lookup as in FastAPI, which only looks up overrides when there are any
         if dependency_overrides and (override := dependency_overrides.get(call, call)) is not call:
             yield (_OVERRIDE_KEY, call, id(override), scopes, sub_dependant.scope), None
         else:
@@ -62,7 +61,6 @@ def _iter_dependencies(
             yield from _iter_dependencies(sub_dependant, dependency_overrides)
 
 
-# Overrides stay alive in the overrides dict, so their ids identify them while we compare the trees
 _OVERRIDE_KEY = object()
 
 

@@ -21,11 +21,9 @@ from .common import _validate_schema_is_versionable
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
 else:
-    # What they are in Pydantic 1, which had them
     AbstractSetIntStr = AbstractSet[Union[int, str]]
     MappingIntStrAny = Mapping[Union[int, str], Any]
 
-# Before Python 3.14, `classmethod` can't be subscripted at runtime
 if TYPE_CHECKING:
     _AnyClassMethod: TypeAlias = classmethod[Any, Any, Any]
 else:
@@ -76,7 +74,6 @@ _ValidatorReturnT = TypeVar("_ValidatorReturnT")
 _ValidatorReference: TypeAlias = Union[Callable[..., object], PydanticDescriptorProxy[object]]
 
 
-# TODO: Add json_schema_extra as a breaking change in a major version
 @dataclass(**DATACLASS_SLOTS)
 class FieldChanges:
     default: Any
@@ -147,7 +144,6 @@ class FieldExistedAsInstruction:
     field: FieldInfo
 
 
-# TODO (https://github.com/zmievsa/cadwyn/issues/112): Add an ability to add extras
 @dataclass(**DATACLASS_SLOTS)
 class AlterFieldInstructionFactory:
     schema: type[BaseModel]
@@ -311,7 +307,6 @@ def _get_validator_names(model: type[BaseModel], func: object) -> list[str]:
 def _get_registered_callable(decorator: "Decorator[Any]") -> object:
     if decorator.shim is None:
         return decorator.func
-    # Pydantic wraps V1-style validators in a shim whose only closure cell is the registered callable
     shim: Any = decorator.func
     (cell,) = shim.__closure__
     return cell.cell_contents
@@ -390,7 +385,6 @@ AlterSchemaSubInstruction = Union[
 class SchemaHadInstruction:
     schema: type[BaseModel]
     name: str = Sentinel
-    # The docstring of the model (`__doc__`), which pydantic uses as its description. None means no description
     description: Union[str, None] = Sentinel
     config: Union[ConfigDict, None] = None
 
@@ -435,13 +429,11 @@ class AlterSchemaInstructionFactory:
             if func not in _get_validators(self.schema):
                 raise CadwynStructureError(f'"{self.schema.__name__}" has no field or model validator named "{func}".')
             return AlterValidatorInstructionFactory(self.schema, func)
-        # Match the registered callable before unwrapping partials or descriptors
         names = _get_validator_names(self.schema, func)
         cadwyn_8_reference = _resolve_like_cadwyn_8(func)
         if len(names) == 1:
             return AlterValidatorInstructionFactory(self.schema, names[0])
         if names:
-            # Cadwyn 8 removed the validator named after the function, so keep that choice when it is one of them
             name = getattr(cadwyn_8_reference, "__name__", None)
             if cadwyn_8_reference is None or name not in names:
                 _raise_for_ambiguous_validator(self.schema, names)
@@ -459,7 +451,6 @@ class AlterSchemaInstructionFactory:
                 f"You must pass at least one of the arguments of schema({self.schema.__name__}).had()"
             )
         if isinstance(description, str) and not description.strip():
-            # Pydantic and Python treat such docstrings differently so `cadwyn render` could not render them
             raise CadwynStructureError(
                 f"The description that you passed to schema({self.schema.__name__}).had() is blank. "
                 "Pass description=None to remove the description instead."

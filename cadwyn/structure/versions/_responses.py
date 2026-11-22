@@ -87,14 +87,8 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
     if api_version is None:
         return response_or_response_body
 
-    # Whether Cadwyn decoded the body of the returned response as JSON. Only such a body can be encoded back as JSON,
-    # so the body of any other response that stays text reaches the client as the bytes that the endpoint returned.
     body_is_json = False
     if isinstance(response_or_response_body, FastapiResponse):
-        # TODO (https://github.com/zmievsa/cadwyn/issues/125): Add support for migrating `StreamingResponse`
-        # TODO (https://github.com/zmievsa/cadwyn/issues/126): Add support for migrating `FileResponse`
-        # Starlette breaks Liskov Substitution principle and
-        # doesn't define `body` for `StreamingResponse` and `FileResponse`
         if isinstance(response_or_response_body, StreamingResponse | FileResponse):
             body = None
         elif response_or_response_body.body:
@@ -109,7 +103,6 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
                 body = response_or_response_body.body
         else:
             body = None
-            # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
 
         response_info = ResponseInfo(response_or_response_body, body)
     else:
@@ -151,18 +144,7 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
     )
 
     if isinstance(response_or_response_body, FastapiResponse):
-        # a webserver (uvicorn for instance) calculates the body at the endpoint level.
-        # if an endpoint returns no "body", its content-length will be set to 0
-        # json.dumps(None) results into "null", and content-length should be 4,
-        # but it was already calculated to 0 which causes
-        # `RuntimeError: Response content longer than Content-Length` or
-        # `Too much data for declared Content-Length`, based on the protocol
-        # which is why we skip the None case.
-
-        # We skip cases without "body" attribute because of StreamingResponse and FileResponse
-        # that do not have it. We don't support it too.
         if response_info.body is not None and hasattr(response_info._response, "body"):
-            # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
             if isinstance(response_info.body, str) and (
                 not body_is_json or response_info._response.headers.get("content-type") != "application/json"
             ):
@@ -176,8 +158,6 @@ async def _convert_endpoint_response_to_version(  # noqa: C901
                     separators=(",", ":"),
                 ).encode("utf-8")
             if response_info.headers.get("content-length") is not None:
-                # It makes sense to re-calculate content length because the previously calculated one
-                # might slightly differ. If it differs -- uvicorn will break.
                 response_info.headers["content-length"] = str(len(response_info._response.body))
 
         if raised_exception is not None and response_info.status_code >= 400:

@@ -35,13 +35,11 @@ from ._dependencies import _get_dependency_overrides, _iter_dependencies
 class _UploadReadByFastapi:
     form_key: str
     is_sequence: bool
-    upload: UploadFile  # Keeps `id(upload)` valid
+    upload: UploadFile
     file: BinaryIO
     position: int
 
 
-# Maps `id(upload)` to the upload with its form key, the kind of the param that read it, its file,
-# and its position right after FastAPI has read it
 _UploadPositions: TypeAlias = dict[int, _UploadReadByFastapi]
 
 
@@ -58,14 +56,12 @@ def _get_uploads_read_by_fastapi(
     files that starlette creates.
     """
     uploads: _UploadPositions = {}
-    # The endpoint's own params come first and in their order, and the files they read are recorded as before
     own_params = _get_bytes_file_params_of_fields(route.dependant.body_params)
     for alias, is_sequence in own_params:
         for value in _get_form_values(form, alias, is_sequence=is_sequence):
             if isinstance(value, UploadFile) and isinstance(value.file, tempfile.SpooledTemporaryFile):
                 uploads[id(value)] = _UploadReadByFastapi(alias, is_sequence, value, value.file, value.file.tell())
     dependency_params = _get_bytes_file_params_of_dependencies(route, head_route, head_dependant) - set(own_params)
-    # If a scalar and a sequence param read the same file, the head must pick it as the scalar to get it rewound
     for alias, is_sequence in sorted(dependency_params, key=lambda param: param[1]):
         for upload, position in _iter_uploads_read_to_the_end(form, alias, is_sequence=is_sequence):
             uploads.setdefault(id(upload), _UploadReadByFastapi(alias, is_sequence, upload, upload.file, position))
@@ -117,11 +113,7 @@ def _get_bytes_file_params_of_dependencies(
         if dependant is not None
         for param in _get_bytes_file_params_of_fields(dependant.body_params)
     }
-    # Counted, so that a versioned route that runs a dependency more often than the head also counts as adding it
     head_call_keys = Counter(call_key for call_key, _ in head_dependencies)
-    # A dependency that only the versioned route has won't run again for the head, so a rewind would undo what it
-    # did with a file. It can reach any file, e.g. through `Request.form()` or a sub-dependency that the head also
-    # has, so we leave the files of all dependencies as they are
     if Counter(call_key for call_key, _ in dependencies) - head_call_keys:
         return set()
     return bytes_file_params
@@ -155,7 +147,6 @@ async def _rewind_uploads_read_by_fastapi(
     Files that migrations replaced, shadowed, reused, moved under other keys, closed, seeked, swapped for other
     streams, or whose streams they shared with other uploads are passed on exactly as the migrations left them.
     """
-    # A single pass over the form, so that forms with many files take linear time
     uploads_per_stream: Counter[int] = Counter()
     last_value_ids: dict[str, int] = {}
     value_ids: defaultdict[str, set[int]] = defaultdict(set)
@@ -168,7 +159,6 @@ async def _rewind_uploads_read_by_fastapi(
         if read.is_sequence:
             is_picked = id(read.upload) in value_ids[read.form_key]
         else:
-            # Like FastAPI, the head takes the last value of the key
             is_picked = last_value_ids.get(read.form_key) == id(read.upload)
         if (
             is_picked
@@ -181,8 +171,6 @@ async def _rewind_uploads_read_by_fastapi(
 
 
 _UPLOADS_TO_CLOSE_SCOPE_KEY = "cadwyn.uploads_to_close"
-# How long we wait for uploads to close. It doesn't limit the close of a file on disk: Starlette runs it in a worker
-# thread that can't be cancelled
 _UPLOAD_CLOSE_TIMEOUT_SECONDS = 3
 
 
@@ -199,7 +187,6 @@ class _UploadsToClose:
 
     def __init__(self) -> None:
         super().__init__()
-        # Keyed by id, so that we close every upload once. The values keep the ids valid
         self._uploads: dict[int, UploadFile] = {}
 
     def add(self, form: Iterable[tuple[str, Union[UploadFile, str]]]) -> None:
@@ -208,8 +195,6 @@ class _UploadsToClose:
                 self._uploads.setdefault(id(value), value)
 
     async def close(self) -> None:
-        # Background tasks and streams have finished by now, so nothing reads the uploads anymore. If FastAPI closes
-        # its uploads after us, closing them again does nothing
         for upload in self._uploads.values():
             if getattr(upload.file, "closed", False):
                 continue
@@ -226,8 +211,6 @@ class _UploadsToClose:
 def _get_uploads_to_close(request: FastapiRequest) -> _UploadsToClose:
     uploads: Union[_UploadsToClose, None] = request.scope.get(_UPLOADS_TO_CLOSE_SCOPE_KEY)
     if uploads is None:
-        # Outside of a Cadwyn app (e.g. with the routers of `generate_versioned_routers()`), we close them with the
-        # stack that FastAPI closes its forms with
         uploads = _UploadsToClose()
         request.scope[_UPLOADS_TO_CLOSE_SCOPE_KEY] = uploads
         request.scope["fastapi_middleware_astack"].push_async_callback(uploads.close)

@@ -195,7 +195,6 @@ def test__render_module__from_directory_not_on_sys_path__should_import_modules_f
     args = _write_project_with_render_cli_args(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "path", sys.path.copy())
-    # `main` and `data` are imported into this process, so they must not leak into other tests
     try:
         result = CliRunner().invoke(app, args)
     finally:

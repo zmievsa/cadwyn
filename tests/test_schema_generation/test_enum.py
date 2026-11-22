@@ -234,7 +234,6 @@ def test__enum_didnt_have__flag_enum_with_custom_boundary__should_keep_the_bound
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     models = create_runtime_schemas(version_change(enum(FlagWithKeepBoundary).didnt_have("write")))
-    # With the default boundary of Flag, 8 would raise a ValueError because it isn't a combination of members
     assert models["2000-01-01"][FlagWithKeepBoundary](8).value == 8
 
 
@@ -1150,7 +1149,7 @@ def test__enum_didnt_have__metaclass_requires_class_arguments__should_keep_exist
 ):
     class Meta(EnumType):
         @override
-        def __new__(  # ty: ignore[incompatible-method-override] # Python accepts required metaclass keywords.
+        def __new__(  # ty: ignore[incompatible-method-override]
             mcls, cls: str, bases: tuple[type, ...], classdict: Any, *, labels: dict[str, str], **kwargs: Any
         ) -> Any:
             result: Any = super().__new__(mcls, cls, bases, classdict, **kwargs)
@@ -1290,7 +1289,6 @@ def test__generate_versioned_models__slotted_enum_after_cache_is_cleared__should
     generate_versioned_models.cache_clear()
     gc.collect()
 
-    # The enum, its copies, and the enums that Cadwyn builds again to compare their members
     assert [o for o in gc.get_objects() if isinstance(o, EnumType) and o.__name__ == "CollectableSlottedEnum"] == []
 
 
@@ -1431,7 +1429,6 @@ def test__enum_didnt_have__custom_core_schema__should_keep_existing_validation_a
             adapter.validate_python(EnumWithCoreSchemaHook.a, strict=True)
         with pytest.raises(ValidationError, match="b is forbidden"):
             adapter.validate_python(EnumWithCoreSchemaHook.b)
-        # Adding a validation hook must not change the OpenAPI shape of the enum.
         expected = TypeAdapter(EnumWithCoreSchemaHook).json_schema()
         if version == "2000-01-01":
             expected["enum"].append("c")
@@ -1489,7 +1486,6 @@ class EnumWithJsonSchemaHookInCoreMetadata(EnumJsonSchemaMixin, Enum):
     def __get_pydantic_core_schema__(cls, source: type, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         schema = handler(source)
         assert schema["type"] == "enum"
-        # Hooks can also be registered on the original node by a custom core schema.
         schema.setdefault("metadata", {}).setdefault("pydantic_js_functions", []).append(
             cls.__get_pydantic_json_schema__
         )
@@ -1519,7 +1515,6 @@ def test__enum_didnt_have__custom_json_schema_hook__should_keep_openapi_and_stri
             expected_model["$defs"][original.__name__]["enum"].remove("b")
         assert TypeAdapter(models[version][Envelope]).json_schema() == expected_model
 
-        # Lax validation and strict validation of the copy's own members still work as before.
         adapter = TypeAdapter(copied)
         assert adapter.validate_python(original.a) is copied.a
         assert adapter.validate_python(copied.a, strict=True) is copied.a

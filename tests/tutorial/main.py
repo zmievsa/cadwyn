@@ -57,7 +57,6 @@ class ReplaceUserAddressWithListOfAddresses(VersionChange):
 
     @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_single_item(response: ResponseInfo) -> None:
-        # Need to assert addresses length somewhere in business logic
         response.body["address"] = response.body["addresses"][0]
 
 
@@ -75,7 +74,6 @@ class MoveUserAddressesToSubresource(VersionChange):
     @convert_request_to_next_version_for(UserCreateRequest)
     def change_addresses_to_default_address(request: RequestInfo):
         request.body["default_address"] = request.body["addresses"].pop(0)
-        # Save data to still be able to keep the old behavior of creating addresses
         request.body["addresses_to_create"] = request.body.pop("addresses")
 
     @convert_response_to_previous_version_for(UserResource)

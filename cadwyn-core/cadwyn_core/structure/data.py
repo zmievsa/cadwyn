@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from cadwyn_core._utils import same_method_definition_as_in
 else:
-    from cadwyn_core._stand_ins import (  # For runtime annotation introspection
+    from cadwyn_core._stand_ins import (
         MutableHeaders,
         Request,
         Response,
@@ -34,12 +34,10 @@ class RequestInfo:
     __slots__ = ("_body", "_body_is_assigned", "_cookies", "_form", "_headers", "_query_params", "_request")
 
     def __init__(self, request: "Request", body: Any) -> None:
-        # Routes make it, so FastAPI is there. `migrate_request()` makes it with `_get_standalone_request_info()`.
         from starlette.datastructures import FormData
 
         super().__init__()
         self._body = body
-        # Whether a request migration has assigned the body, so that `None` means an omitted body
         self._body_is_assigned = False
         self.headers = request.headers.mutablecopy()
         self._cookies = request.cookies
@@ -80,7 +78,6 @@ class RequestInfo:
         return self._form
 
 
-# The headers that a caller passes: a mapping, or a list of pairs of names and values, which can repeat names
 _HeadersInput: TypeAlias = Union[Mapping[str, str], list[tuple[str, str]], None]
 
 
@@ -91,7 +88,6 @@ def _get_standalone_request_info(
     request_info = RequestInfo.__new__(RequestInfo)
     request_info._body = body
     request_info._body_is_assigned = False
-    # Without Starlette, there are no headers, and the caller can't pass any
     starlette_headers = _get_starlette_headers(headers)
     request_info._headers = cast(
         "MutableHeaders", _HeadersWithoutStarlette() if starlette_headers is None else starlette_headers
@@ -108,7 +104,6 @@ class MigratedRequest(Generic[_ModelT]):
     """A request that `migrate_request()` has migrated up to head"""
 
     body: _ModelT
-    # None without Starlette, which the headers need
     headers: Union[list[tuple[str, str]], None]
     cookies: dict[str, str]
     query_params: dict[str, str]
@@ -118,14 +113,11 @@ class MigratedRequest(Generic[_ModelT]):
 class MigratedResponse:
     """A response that `migrate_response()` has migrated down to a version"""
 
-    # The version's model, or the body as the migrations have left it if they have made the response an error
     body: Any
     status_code: int
-    # None without Starlette, which the headers and the cookies need
     headers: Union[list[tuple[str, str]], None]
 
 
-# TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background
 class ResponseInfo:
     __slots__ = ("_response", "body")
 
@@ -146,7 +138,6 @@ class ResponseInfo:
     def headers(self) -> "MutableHeaders":
         return self._response.headers
 
-    # The FastAPI integration gives them the signatures of the methods of `Response` at runtime
     if TYPE_CHECKING:
 
         @same_method_definition_as_in(Response.set_cookie)
@@ -168,11 +159,9 @@ def _get_standalone_response_info(body: Any, status_code: int, headers: _Headers
     """Return the `ResponseInfo` of a response that `migrate_response()` migrates without FastAPI"""
     starlette_headers = _get_starlette_headers(headers)
     if starlette_headers is None:
-        # Without Starlette, a response is only its status code. Migrations get None for its headers.
         return ResponseInfo(cast("Response", _ResponseWithoutStarlette(status_code)), body)
     from starlette.responses import Response
 
-    # Like the response that FastAPI gives to the dependencies of a route
     response = Response()
     del response.headers["content-length"]
     response.status_code = status_code
@@ -193,7 +182,7 @@ def _get_starlette_headers(headers: _HeadersInput) -> "Union[MutableHeaders, Non
     try:
         from starlette.datastructures import MutableHeaders
     except ModuleNotFoundError as exc:
-        if exc.name is None or exc.name.partition(".")[0] != "starlette":  # pragma: no cover # A broken Starlette
+        if exc.name is None or exc.name.partition(".")[0] != "starlette":  # pragma: no cover
             raise
         if headers is not None:
             raise CadwynError(
@@ -232,11 +221,9 @@ class _BaseAlterBySchemaInstruction:
     check_usage: bool = True
 
 
-# A schema of a migration: a model, or a union of models, such as `Union[A, B]`, `A | B`, or `Optional[A]`
 _Schema: TypeAlias = Union[type, types.UnionType]
 
 ##########
-# Requests
 ##########
 
 
@@ -314,7 +301,6 @@ def convert_request_to_next_version_for(
 
 
 ###########
-# Responses
 ###########
 
 
@@ -382,7 +368,6 @@ def convert_response_to_previous_version_for(
         transformer: Callable[[ResponseInfo], None],
     ) -> Union[_AlterResponseBySchemaInstruction, _AlterResponseByPathInstruction]:
         if isinstance(schema_or_path, str):
-            # The validation above checks that methods is not None
             return _AlterResponseByPathInstruction(
                 path=schema_or_path,
                 methods=set(cast("list[str]", methods_or_second_schema)),

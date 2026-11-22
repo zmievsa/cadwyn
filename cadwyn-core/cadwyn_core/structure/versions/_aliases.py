@@ -45,9 +45,8 @@ from ._migration_targets import _get_schema_migration_key
 if TYPE_CHECKING:
     from fastapi._compat import ModelField
 else:
-    from cadwyn_core._stand_ins import ModelField  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import ModelField  # noqa: TC001
 
-# Whether the last restoration renamed a key without which the data surely fails validation
 _RESTORATION = threading.local()
 
 
@@ -61,7 +60,6 @@ def _rescue_body(body_field: "ModelField", data: Any) -> Any:
     gets its default instead of its value. Anything that the restoration plans of the models don't cover is left as is.
     """
     annotation = body_field.field_info.annotation
-    # Most bodies have no fields without which they fail, so they aren't walked at all
     if not _annotation_reaches_models_with(annotation, _get_failing_renames, all_fields=False):
         return data
     spec = _get_restorer_spec(annotation)
@@ -75,9 +73,6 @@ def _rescue_model_data(model: type[BaseModel], data: Any) -> Any:
 
     It's what `_rescue_body` does for a body field, for data that the model itself validates.
     """
-    # Like `_rescue_body`, we go by the failing keys of `_get_failing_keys`, which come from the field infos even for
-    # fields that the core schemas of their types give defaults to: such a field wouldn't fail without its value,
-    # but it would silently get its default instead of the value in the body
     if not _annotation_reaches_models_with(model, _get_failing_renames, all_fields=False):
         return data
     return _restore_surely_failing_data(("model", model), data)
@@ -120,7 +115,6 @@ def _is_dumped_from_models(content: Any, spec: "_RestorerSpec") -> bool:
             return False
         elif (kind == "list" and isinstance(content, list)) or (kind == "dict" and isinstance(content, dict)):
             items = content if kind == "list" else content.values()
-            # Most containers only hold the models themselves, so we check their types in bulk
             item_types = set(map(type, items))
             if inner[0] == "model" and all(_dumps_like(item_type, inner[1]) for item_type in item_types):
                 has_models = has_models or bool(item_types)
@@ -146,7 +140,6 @@ def _dumps_like(cls: type, model: type[BaseModel]) -> bool:
         or _get_validation_settings(cls)[2] == "allow"
     ):
         return False
-    # The keys that the fields of the model are dumped to or validated from
     model_keys: set[Union[str, int]] = {cf.alias or name for name, cf in model.model_computed_fields.items()}
     for name, field in model.model_fields.items():
         model_keys.add(field.serialization_alias or name)
@@ -214,7 +207,6 @@ def _is_body_field_safe(body_field: "ModelField", spec: "_RestorerSpec") -> bool
     try:
         schema = _register_core_schema_definitions(cast("dict[str, Any]", body_field._type_adapter.core_schema))
         while True:
-            # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
             while (
                 schema["type"] in ("definition-ref", "nullable", "default", "function-after")
                 or _is_renamed_key_check(schema)
@@ -225,22 +217,18 @@ def _is_body_field_safe(body_field: "ModelField", spec: "_RestorerSpec") -> bool
                     else schema["schema"]
                 )
             kind, inner = spec
-            # The model's own validators and serializers are covered by its restoration plan,
-            # and the keys of dicts are never renamed
             if kind == "model" or schema["type"] != kind:
                 is_safe = kind == schema["type"] == "model"
                 break
             schema = schema["items_schema" if kind == "list" else "values_schema"]
             spec = inner
-    except _CORE_SCHEMA_ERRORS:  # pragma: no cover # FastAPI and Pydantic don't build such schemas
+    except _CORE_SCHEMA_ERRORS:  # pragma: no cover
         is_safe = False
     _IS_BODY_FIELD_SAFE[id(body_field)] = (body_field, is_safe)
     return is_safe
 
 
-# What the restoration does with a value: `("list", item_spec)`, `("dict", value_spec)`, or `("model", model)`
 _RestorerSpec: TypeAlias = tuple[str, Any]
-# Marks the root of a root model, which replaces the model's data instead of a key in it
 _ROOT_KEY = object()
 
 
@@ -265,7 +253,6 @@ def _needs_restoring(spec: _RestorerSpec, data: Any, *, look_ahead: bool = True)
     plan = _get_restore_plan(inner)
     if plan.root_spec is not None:
         return _needs_restoring(plan.root_spec, data, look_ahead=look_ahead)
-    # Most bulk items have none of the keys, so they only cost this check
     return (
         isinstance(data, dict)
         and not data.keys().isdisjoint(plan.keys)
@@ -278,7 +265,6 @@ def _model_needs_restoring(plan: "_RestorePlan", data: dict[str, Any], *, look_a
 
     We look at most one level deep, so that checking deep bodies stays cheap and never recurses deeply.
     """
-    # Plain loops instead of `any()` because this runs for every bulk item that has one of the plan's keys
     for rename in plan.renames:
         if _does_rename_apply(rename, data):
             return True
@@ -292,7 +278,6 @@ def _does_rename_apply(rename: "_Rename", data: dict[str, Any]) -> bool:
     dumped_key, _, validation_paths, validation_keys = rename
     if dumped_key not in data:
         return False
-    # The head already finds a value for the field if a migration has set one of its validation paths
     if validation_keys is not None:
         return data.keys().isdisjoint(validation_keys)
     return all(path.search_dict_for_path(data) is PydanticUndefined for path in validation_paths)
@@ -311,7 +296,6 @@ def _iter_children_to_restore(spec: _RestorerSpec, data: Any) -> Iterator[tuple[
         )
     items = enumerate(data) if kind == "list" else data.items()
     if inner[0] == "model" and (item_plan := _get_restore_plan(inner[1])).root_spec is None:
-        # Most bulk items have none of the keys, so they only cost this check
         keys = item_plan.keys
         return (
             (key, inner, item)
@@ -332,8 +316,6 @@ def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
         return data
     if _get_spec_height(spec) is not None:
         return _restore_shallow_data(spec, data, is_validated=True)
-    # Each frame is [spec, data, children to restore, restored copy of data or None, key of the child being restored,
-    # whether the head validates the data of the frame]. It doesn't validate what's under a dumped key.
     stack: list[list[Any]] = [[spec, data, _iter_children_to_restore(spec, data), None, None, True]]
     while True:
         frame = stack[-1]
@@ -377,10 +359,7 @@ def _set_restored_child(parent: list[Any], key: Any, child_data: Any, restored_c
     parent[3][key] = restored_child
 
 
-# The greatest number of nested models, lists and dicts that we restore with recursion.
-# Each of them costs a frame or two, so restoring with recursion stays far from the recursion limit.
 _MAX_SHALLOW_HEIGHT = 8
-# The number of nested models, lists and dicts in the data of each model, or None if it can be deeper than the maximum
 _SHALLOW_HEIGHTS: dict[type[BaseModel], Union[int, None]] = {}
 
 
@@ -410,7 +389,6 @@ def _get_model_height(root: type[BaseModel]) -> Union[int, None]:
     """
     if root in _SHALLOW_HEIGHTS:
         return _SHALLOW_HEIGHTS[root]
-    # Each frame is [model, the (containers, model) of its nested fields, its height so far, containers of the child]
     stack: list[list[Any]] = [[root, _iter_nested_models(root), 1, 0]]
     models_on_stack = {root}
     child_height: Union[int, None] = 0
@@ -421,7 +399,6 @@ def _get_model_height(root: type[BaseModel]) -> Union[int, None]:
             containers, model = child
             if model in _SHALLOW_HEIGHTS:
                 child_height = _SHALLOW_HEIGHTS[model]
-            # A model that is being computed refers to itself through the frame's model
             elif model in models_on_stack:
                 child_height = None
             else:
@@ -439,7 +416,6 @@ def _get_model_height(root: type[BaseModel]) -> Union[int, None]:
             frame = stack[-1]
             containers = frame[3]
         if child_height is None or containers + child_height + 1 > _MAX_SHALLOW_HEIGHT:
-            # The model is as deep as its child, so we finish it right away
             frame[1] = iter(())
             frame[2] = None
         else:
@@ -448,7 +424,6 @@ def _get_model_height(root: type[BaseModel]) -> Union[int, None]:
 
 def _iter_nested_models(model: type[BaseModel]) -> Iterator[tuple[int, type[BaseModel]]]:
     plan = _get_restore_plan(model)
-    # Root models are always walked
     if plan.root_spec is not None:
         return iter([(0, model)])
     return (_split_spec(child_spec) for _, child_spec in plan.nested)
@@ -479,9 +454,7 @@ def _restore_shallow_data(spec: _RestorerSpec, data: Any, *, is_validated: bool)
         elif not isinstance(item, dict):
             continue
         elif not plan.nested:
-            # Most bodies are lists of models without nested models to restore, so their items only cost the renames
             restored_item = _rename_keys(plan, item, is_validated=is_validated)
-        # Most bulk items have none of the keys, so they only cost this check
         elif item.keys().isdisjoint(plan.keys):
             continue
         else:
@@ -498,7 +471,6 @@ def _restore_shallow_model_data(plan: "_RestorePlan", data: dict[str, Any], *, i
     for key, child_spec in plan.nested:
         if key in data:
             child = data[key]
-            # The head doesn't validate what's under a dumped key, or under a key that another key of its field shadows
             restored_child = _restore_shallow_data(
                 child_spec, child, is_validated=is_validated and _is_nested_key_validated(plan, key, data)
             )
@@ -522,7 +494,6 @@ def _rename_keys(plan: "_RestorePlan", data: dict[str, Any], restored: Any = Non
     Only the renames in data that the head validates can make it surely fail.
     """
     for rename in plan.renames:
-        # This runs for every bulk item, so it inlines the common case of `_does_rename_apply`
         dumped_key, target_key, _, validation_keys = rename
         if dumped_key in data and (
             data.keys().isdisjoint(validation_keys) if validation_keys is not None else _does_rename_apply(rename, data)
@@ -545,7 +516,6 @@ def _get_restorable_node(annotation: object) -> Union[tuple[str, Any], None]:
     origin, args = get_origin(annotation), get_args(annotation)
     if isinstance(annotation, UnionType):
         options = [arg for arg in args if arg is not type(None)]
-        # With several options, we can't know which one is going to validate the data so we leave it as is
         return _get_restorable_node(options[0]) if len(options) == 1 else None
     if origin is list and len(args) == 1:
         return "list", args[0]
@@ -556,29 +526,18 @@ def _get_restorable_node(annotation: object) -> Union[tuple[str, Any], None]:
     return None
 
 
-# Marks computed fields among the owners of dumped keys, apart from the regular fields
 _COMPUTED_FIELD = object()
-# (dumped_key, target_key, validation_paths, validation_keys): the keys are None unless all paths are plain keys
 _Rename: TypeAlias = tuple[str, str, tuple[AliasPath, ...], Union[frozenset[str], None]]
 
 
 @dataclasses.dataclass(frozen=True)
 class _RestorePlan:
-    # The fields to rename
     renames: tuple["_Rename", ...] = ()
-    # (dumped_key, spec) of the fields to walk into
     nested: tuple[tuple[str, _RestorerSpec], ...] = ()
-    # What to restore in the root of root models
     root_spec: Union[_RestorerSpec, None] = None
-    # The dumped keys of `renames` and `nested`
     keys: frozenset[str] = frozenset()
-    # The dumped keys of `renames` without which the data of the model surely fails validation:
-    # the keys of required fields, or all of them if the model forbids extra keys
     failing_keys: frozenset[str] = frozenset()
-    # The dumped keys of `renames`
     renamed_keys: frozenset[str] = frozenset()
-    # The other keys that the fields of `nested` validate, by their dumped keys. The model ignores the dumped key of
-    # such a field if the data has one of them, e.g. a key of `AliasChoices` that comes before it.
     other_validation_keys: dict[str, frozenset[Union[str, int]]] = dataclasses.field(
         default_factory=dict, compare=False
     )
@@ -586,7 +545,6 @@ class _RestorePlan:
 
 @functools.cache
 def _get_restore_plan(model: type[BaseModel]) -> _RestorePlan:
-    # Most apps have no fields to rename, so they don't need to pay for reading core schemas at all
     if not _reaches_models_with(model, _get_rename_candidates, all_fields=True):
         return _RestorePlan()
     renames, traversable = _get_renames_and_traversable_fields(model)
@@ -637,8 +595,6 @@ def _is_nested_key_validated(plan: _RestorePlan, key: object, data: dict[str, An
 def _get_failing_keys(model: type[BaseModel], renames: tuple["_Rename", ...]) -> frozenset[str]:
     if _get_validation_settings(model)[2] == "forbid":
         return frozenset(dumped_key for dumped_key, *_ in renames)
-    # We go by the field infos even for fields that the core schemas of their types give defaults to: such a field
-    # wouldn't fail without its value, but it would silently get its default instead of the client's value
     required_dumped_keys = {
         field.serialization_alias or name for name, field in model.model_fields.items() if field.is_required()
     }
@@ -662,7 +618,6 @@ _RESTORABLE_MODELS: dict[object, tuple[type[BaseModel], ...]] = {}
 
 
 def _get_restorable_models(annotation: object) -> tuple[type[BaseModel], ...]:
-    # Unhashable annotations (e.g. with dicts in `Annotated`) are rare, so we don't cache them
     cache_key = _get_schema_migration_key(annotation)
     if cache_key is None:
         return tuple(_iter_restorable_models(annotation))
@@ -681,7 +636,6 @@ def _iter_restorable_models(annotation: object) -> Iterator[type[BaseModel]]:
 
 
 def _get_renames(model: type[BaseModel]) -> tuple[object, ...]:
-    # Models without rename candidates don't need their core schemas read
     return _get_renames_and_traversable_fields(model)[0] if _get_rename_candidates(model) else ()
 
 
@@ -707,7 +661,6 @@ def _reaches_models_with(
         if model in explored or _REACHES_MODELS_WITH.get((get_items, all_fields, model)) is False:
             continue
         if _REACHES_MODELS_WITH.get((get_items, all_fields, model)) or get_items(model):
-            # Everything on the way from the root reaches it too
             while True:
                 _REACHES_MODELS_WITH[get_items, all_fields, model] = True
                 if model is root:
@@ -719,7 +672,6 @@ def _reaches_models_with(
         elif _reaches_models_with(model, _get_rename_candidates, all_fields=True):
             annotations = [annotation for _, annotation in _get_renames_and_traversable_fields(model)[1]]
         else:
-            # Nothing below this model has rename candidates, so there's no need to read its core schema
             annotations = []
         for nested in (nested for annotation in annotations for nested in _get_restorable_models(annotation)):
             parents.setdefault(nested, model)
@@ -750,7 +702,6 @@ def _get_renames_and_traversable_fields(
     that can only be validated through an `AliasPath`, is left as on main.
     """
     inner_schema = _get_model_inner_core_schema(model)
-    # A client's extra key can't be told apart from a dumped key
     if inner_schema is None or model.model_config.get("extra") == "allow":
         return (), ()
     if issubclass(model, RootModel):
@@ -758,8 +709,6 @@ def _get_renames_and_traversable_fields(
             return (), ()
         return (), (("root", model.model_fields["root"].annotation),)
     field_schemas = inner_schema["fields"]
-    # The keys of every field decide which renames are unambiguous, so we only trust the field infos if the compiled
-    # schema validates and dumps all fields by the same aliases. `__get_pydantic_core_schema__` can change them.
     if set(field_schemas) != set(model.model_fields) or not all(
         _do_compiled_aliases_match(field, field_schemas[name]) for name, field in model.model_fields.items()
     ):
@@ -774,7 +723,6 @@ def _get_renames_and_traversable_fields(
         dumped_key_owners[dumped_key].add(name)
         for path in paths:
             validated_key_owners[path[0]].add(name)
-    # Computed fields are dumped too, so their keys are ambiguous as well
     for name, computed_field_info in model.model_computed_fields.items():
         dumped_key_owners[computed_field_info.alias or name].add((_COMPUTED_FIELD, name))
     renames = []
@@ -783,11 +731,9 @@ def _get_renames_and_traversable_fields(
         annotation = model.model_fields[name].annotation
         keys = [path[0] for path in paths if len(path) == 1]
         is_validated = [dumped_key] in paths
-        # A key that belongs to several fields is ambiguous, e.g. another field might read into it via `AliasPath`
         if (
             dumped_key_owners[dumped_key] != {name}
             or not validated_key_owners.get(dumped_key, set()) <= {name}
-            # Fields that neither need a rename nor lead to one don't need their core schemas read
             or (
                 is_validated
                 and not _annotation_reaches_models_with(annotation, _get_rename_candidates, all_fields=True)

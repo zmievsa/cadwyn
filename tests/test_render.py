@@ -33,10 +33,10 @@ class RecursivePoint(NamedTuple):
     values: list[Any]
 
 
-EmptyPoint = namedtuple("EmptyPoint", ())  # noqa: PYI024 # Cover collections.namedtuple as well as typing.NamedTuple
+EmptyPoint = namedtuple("EmptyPoint", ())  # noqa: PYI024
 
 
-class PointSubclass(namedtuple("PointBase", "x y")):  # noqa: PYI024 # Cover subclasses of collections.namedtuple
+class PointSubclass(namedtuple("PointBase", "x y")):  # noqa: PYI024
     __slots__ = ()
 
 
@@ -374,7 +374,6 @@ def test__render_model__container_with_qualified_or_custom_items__should_render_
 
 
 class ModelWithSwappingPointDefault(BaseModel):
-    # Instructions deep-copy their defaults, and deepcopy reads named tuples through their own __iter__
     value: Any = SwappingPoint(1, [None, int])
 
 
@@ -406,7 +405,6 @@ def make_deque_backed_list() -> DequeBackedList:
 
 
 class ModelWithDequeBackedListDefault(BaseModel):
-    # Instructions deep-copy their defaults, which would already turn this one into a deque
     value: Any = make_deque_backed_list()
 
 
@@ -756,7 +754,6 @@ class RenderedDiamond(RenderedLeftChild, RenderedRightChild):
     pass
 """
     )
-    # The rendered models behave like the ones that Cadwyn generates
     rendered_namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
     generated_models = generate_versioned_models(versions)["2000-01-01"]
     for model in (RenderedParent, RenderedLeftChild, RenderedRightChild, RenderedDiamond):
@@ -898,7 +895,6 @@ class RemoveDescriptionOfRenderedModel(VersionChange):
     )
 
 
-# Version changes can only belong to one version bundle
 VERSIONS_WITH_REMOVED_DESCRIPTIONS = VersionBundle(
     Version("2001-01-01", RemoveDescriptionOfRenderedModel), Version("2000-01-01")
 )
@@ -955,7 +951,6 @@ class RenderedDocumentedModel(BaseModel):
 def test__render_model__schema_had_description_none__with_documented_class_var__should_not_render_docstring():
     versions = VERSIONS_WITH_REMOVED_DESCRIPTIONS
 
-    # The documentation of the class var would become the docstring of the class if it was first
     assert code(render_model(RenderedModelWithDocumentedClassVar, versions, "2000-01-01")) == code(
         """
 class RenderedModelWithDocumentedClassVar(BaseModel):
@@ -988,7 +983,6 @@ def test__render_model__didnt_have_description_in_annotated__should_render_annot
         Version("2000-01-01"),
     )
 
-    # Like the generated model. Before, `cadwyn render` kept the description in the annotation
     assert (
         generate_versioned_models(versions)["2000-01-01"][RenderedModelWithDescriptionInAnnotated]
         .model_fields["foo"]
@@ -1053,7 +1047,6 @@ class ModelWithAliasGenerator(BaseModel):
 @pytest.mark.parametrize(
     ("instruction", "expected_fields", "key_of_name"),
     [
-        # `cadwyn render` doesn't render model_config, so it passes the aliases from the generator explicitly
         pytest.param(
             schema(ModelWithAliasGenerator).field("name").didnt_have("alias"),
             """

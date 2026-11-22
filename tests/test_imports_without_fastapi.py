@@ -96,7 +96,6 @@ _BLOCK_OTHER_INSTALLED_PACKAGES = textwrap.dedent(
 )
 
 
-# The modules of Cadwyn that need FastAPI, which the modules that standalone use is built from must not import
 _MODULES_OF_FASTAPI_INTEGRATION = frozenset(
     (
         "cadwyn.__main__",
@@ -140,7 +139,6 @@ _PATHS_OF_MODULES_OF_STANDALONE_USE = {
         (
             _CADWYN_DIR.parent,
             (
-                # The old names of the modules that moved to cadwyn-core
                 _CADWYN_DIR / "_utils.py",
                 _CADWYN_DIR / "_asts.py",
                 _CADWYN_DIR / "_internal" / "old_names.py",
@@ -167,14 +165,12 @@ def test__module_of_standalone_use__should_not_import_the_fastapi_integration_ev
             base = (
                 importlib.util.resolve_name("." * node.level + (node.module or ""), package)
                 if node.level
-                # Only relative imports, such as `from . import name`, have no module
                 else str(node.module)
             )
             imported.add(base)
             imported.update(f"{base}.{alias.name}" for alias in node.names)
 
     assert not imported & _MODULES_OF_FASTAPI_INTEGRATION
-    # cadwyn-core is installed without cadwyn
     if module_name.partition(".")[0] == "cadwyn_core":
         assert not {name for name in imported if name.partition(".")[0] == "cadwyn"}
 
