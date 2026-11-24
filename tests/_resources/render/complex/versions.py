@@ -12,7 +12,6 @@ from .classes import A, AlmostEmptyEnum, ModelWithWeirdFields, MyEnum
 
 class MyVersionChange(VersionChange):
     description = ""
-    # Keep inspect.getsource() starting with `.had`.
     # fmt: off
     instructions_to_migrate_to_previous_version = (
         enum(MyEnum).didnt_have("baz"),

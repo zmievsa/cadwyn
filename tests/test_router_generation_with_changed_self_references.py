@@ -202,7 +202,7 @@ class Note(BaseModel):
     text: str
 
 
-def make_aliases():  # Cadwyn cannot know what default factories without annotations return
+def make_aliases():
     return []
 
 
@@ -265,12 +265,9 @@ def get_schema_names(client: TestClient, version: str) -> list[str]:
 
 
 def assert_no_duplicate_schemas(schema_names: list[str]) -> None:
-    # Pydantic disambiguates the different classes with the same name by their full paths and numbers
     assert not [name for name in schema_names if name.startswith("tests__") or re.search(r"__\d+$", name)]
 
 
-# The model of the route, the changed model (whose names are at most 3 characters long in the old version) or
-# the instruction, a body that is valid in every version, and a body that only the old version rejects
 CHANGED_CYCLE_CASES = [
     pytest.param(
         Category,
@@ -481,7 +478,6 @@ def test__issue_419_reproduction__renamed_field_of_self_referencing_model__shoul
     assert old_category is not Category
     assert set(old_category.model_fields) == {"title", "children"}
     assert old_category.model_fields["children"].annotation == list[old_category]  # ty: ignore[invalid-type-form]
-    # The copies refer to each other by their classes, not by the names that Cadwyn resolves them with
     assert typing.get_type_hints(old_category) == {"title": str, "children": list[old_category]}  # ty: ignore[invalid-type-form]
     old_openapi = old_client.get("/openapi.json?version=2000-01-01").json()
     old_response = old_openapi["paths"]["/categories"]["get"]["responses"]["200"]["content"]["application/json"]
@@ -716,7 +712,6 @@ class ValueBox(BaseModel, Generic[ValueT]):
 
 
 class BoxOverridingTypeArgField(ValueBox[int]):
-    # Overrides the field typed by the type arg, so CategoryWithItem does not come from a type arg
     value: list["CategoryWithItem"]  # ty: ignore[incompatible-attribute-override]
 
 
@@ -731,7 +726,6 @@ class OtherBox(BaseModel, Generic[ValueT]):
 
 
 class BoxWithSerializerOfOtherBaseTypeArgField(ValueBox[int], OtherBox[CategoryWithItem]):
-    # `value` comes from ValueBox[int], so CategoryWithItem from OtherBox[CategoryWithItem] is not its type arg
     @field_serializer("value", return_type=CategoryWithItem)
     def serialize_value(self, value: int) -> Any:
         raise NotImplementedError
@@ -969,7 +963,6 @@ def test__router_generation__route_with_unresolvable_dependency_annotation__shou
     async def create_page(page: Page[LazyTree]) -> dict[str, bool]:
         return {"ok": True}
 
-    # The newest version versions the head routes, whose annotations are the hardest to resolve
     app = create_versioned_app(head_version_changes=[version_change(short_name(LazyItem))], router=router)
     client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
 
@@ -1092,7 +1085,6 @@ def test__router_generation__description_of_self_referencing_model_changed__shou
 
     old_schemas = client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
     new_schemas = client.get("/openapi.json?version=2001-01-01").json()["components"]["schemas"]
-    # FastAPI separates the request and the response schemas because "children" has a default
     for name in ("DocumentedCategory-Input", "DocumentedCategory-Output"):
         assert old_schemas[name]["description"] == "A category."
         assert old_schemas[name]["properties"]["children"]["items"] == {"$ref": f"#/components/schemas/{name}"}
@@ -1208,9 +1200,6 @@ def test__router_generation__nested_quoted_self_reference__should_work_as_before
         assert old_client.post("/categories", json=invalid_body).status_code == HTTP_422_UNPROCESSABLE_CONTENT
     valid_body = {"name": "abc", "children": [{"name": "abc", "children": []}]}
     assert old_client.post("/categories", json=valid_body).json() == valid_body
-
-
-# Shapes that Cadwyn cannot copy
 
 
 class Box:
@@ -1366,7 +1355,6 @@ class SafeFactoriesCategory(BaseModel):
 
 class UnrelatedOrder(BaseModel):
     status: Status = Status.new
-    # Cadwyn cannot know what the lambda returns but this field does not use the cycle
     items: list[ChangedItem] = Field(default_factory=lambda: [])  # noqa: PIE807
 
 
@@ -1420,14 +1408,13 @@ class RootConstructorFactory(RootModel[int], ConstructorOverride):
 
 
 class InheritedConstructorNode(BaseModel):
-    settings: Settings = Field(  # ty: ignore[invalid-assignment] # The constructor is overridden to return Settings
+    settings: Settings = Field(  # ty: ignore[invalid-assignment]
         default_factory=functools.partial(RootConstructorFactory.model_construct, 1)
     )
     children: "list[InheritedConstructorNode]" = []
 
 
 class UntypedDefaultHolder(BaseModel):
-    # Cadwyn cannot know what the lambda returns and the field does not use the cycle, as for any other model
     meta: Any = Field(default_factory=lambda: None)
     raw: dict[str, Any] = {"category": Category(name="abc")}
 
@@ -1653,7 +1640,6 @@ def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_o
     )
     old_node = generate_versioned_models(versions)["2000-01-01"][StatusNode]
 
-    # As for any other model with such a default, Cadwyn keeps the latest enum member
     assert old_node.model_fields["status"].default is Status.new
     assert old_node().children == []
 
@@ -1779,7 +1765,6 @@ def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied
     )
     app.generate_and_include_versioned_routers(router)
 
-    # Each request initializes the app again until it succeeds, with the versioned models that the bundle cached
     for _ in range(3):
         with pytest.raises(
             SchemaGenerationError,
@@ -1788,7 +1773,6 @@ def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied
             TestClient(app).get("/holder", headers={app.router.api_version_parameter_name: "2000-01-01"})
 
 
-# The generators that HookedItemTree asks for its copy while pydantic creates its subclasses
 HOOK_GENERATORS: list[Any] = []
 
 
@@ -1914,7 +1898,6 @@ def test__router_generation__subclass_of_self_referencing_model_changed_inherite
     long_names = {"name": "long", "children": [{"name": "longer", "children": []}]}
     assert client.post("/nodes", json=long_names).json() == long_names
     assert client.post("/other_nodes", json=long_names).json() == long_names
-    # The children of the subclass are parents, so they don't have the change
     short_named = {"name": "abc", "children": [{"name": "longer", "children": []}], "child": None}
     assert client.post("/short_named_nodes", json=short_named).json() == short_named
     for invalid_body in ({**short_named, "name": "long"}, {**short_named, "child": {"name": "long"}}):
@@ -1963,7 +1946,6 @@ def test__generate_versioned_models__subclass_of_self_referencing_parametrizatio
 
     with pytest.raises(ValidationError):
         old_models[IntTree].model_validate({"value": 1, "label": "long"})
-    # The children of IntTree are parametrizations of its parent, so they don't have the change
     tree: Any = old_models[IntTree].model_validate(
         {"value": 1, "label": "abc", "children": [{"value": 2, "label": "long"}]}
     )

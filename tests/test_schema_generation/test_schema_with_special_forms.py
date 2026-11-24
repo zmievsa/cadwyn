@@ -11,7 +11,6 @@ from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn_core.structure.schemas import schema
 from tests.conftest import CreateRuntimeSchemas, CreateVersionedClients, version_change
 
-# Pydantic treats `Final` with a default as a class variable, and warns that it will become a field in pydantic v3
 _FINAL_WITH_DEFAULT_WARNING = "ignore:Annotation .* is marked as final and has a default value"
 
 
@@ -77,7 +76,6 @@ def test__router_generation__body_with_final_annotations__should_validate_each_v
 
     body = {"item": {"name": "a"}, "other": "a", "child_field": "b"}
     assert clients["2001-01-01"].post("/test", json=body).json() == {"item": {"name": "a"}, "constant": 1}
-    # The older version validates its own Item, whose name is an int
     response = clients["2000-01-01"].post("/test", json=body)
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["body", "item", "name"]
@@ -91,7 +89,6 @@ def test__router_generation__body_with_final_annotations__should_validate_each_v
 
 
 if sys.version_info >= (3, 13):
-    # Type checkers call ClassVar[Final[...]] redundant, but the runtime and pydantic allow it since Python 3.13
     ModelWithFinalClassVar = type(
         "ModelWithFinalClassVar",
         (BaseModel,),

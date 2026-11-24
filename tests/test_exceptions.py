@@ -38,7 +38,6 @@ def test__cadwyn_head_request_validation_error__when_pickled_or_copied__should_r
 ):
     error = make_error()
     error.add_note("in worker 42")
-    # E.g. an attribute that the code that raises the error sets
     error.__dict__["task_id"] = "42"
 
     restored = restore(error)

@@ -307,7 +307,6 @@ def test__schema_had_config__generic_name_validation_disabled__should_apply_to_p
     ValueT = TypeVar("ValueT")
 
     class Bag(BaseModel, Generic[ValueT]):
-        # Pydantic ignores validate_by_alias=False here because of populate_by_name
         model_config = ConfigDict(populate_by_name=True, validate_by_alias=False)
         value: ValueT = Field(alias="wire")
 

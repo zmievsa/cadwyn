@@ -9,11 +9,10 @@ from typing import TYPE_CHECKING, ClassVar, Generic, Optional, TypeVar, Union
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
-# The tests set it before executing this module
 KIND: str = globals()["KIND"]
 
 if TYPE_CHECKING:
-    # Only defined by define_later()
+
     class Later(BaseModel):
         back: Optional[object] = None
 
@@ -36,12 +35,11 @@ class Other(BaseModel):
     value: int = 1
 
 
-# Its fields do not use its type param so pydantic can resolve them while its own arg refers to an undefined name
 RefOfLater = Ref[Union[Other, "Later"]]
 
 
 if KIND == "lazy_default_factory":
-    # Only evaluated lazily since Python 3.14
+
     def make_later_id() -> Later:
         return 1  # ty: ignore[invalid-explicit-return]
 
@@ -58,13 +56,10 @@ class X(BaseModel):
     elif KIND == "generic_arg":
         later: Ref["Later"] = Ref["Later"]()
     elif KIND in {"default_factory", "lazy_default_factory"}:
-        # Typed as object because make_later_id claims to return Later. Only its annotation needs to refer to Later
         later_id: object = Field(default_factory=make_later_id)
     elif KIND == "classvar":
-        # Only evaluated lazily since Python 3.14
         later: ClassVar[Later]
     elif KIND == "type_alias":
-        # The values of type aliases are evaluated lazily since Python 3.12
         exec("type LaterAlias = Optional[Later]")
         later: Optional[LaterAlias] = None
     else:
@@ -76,7 +71,6 @@ class W(BaseModel):
     x: Optional[X] = None
     page: Optional[Page[X]] = None
     ref_of_later: Optional[RefOfLater] = None
-    # A plain self reference makes Box[W] keep its head args after looking at X and Page[X]
     w: "Optional[W]" = None
 
 

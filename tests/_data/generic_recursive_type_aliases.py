@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from typing_extensions import TypeAliasType
 
 T = TypeVar("T")
-# The tests set it before executing this module
 KIND: str = globals()["KIND"]
 
 

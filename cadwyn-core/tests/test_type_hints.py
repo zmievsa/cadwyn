@@ -68,7 +68,7 @@ def test__get_type_hints__on_every_object_of_cadwyn_core__should_resolve_its_ann
     for name, value in _iter_annotated_objects():
         try:
             typing.get_type_hints(value, include_extras=True)
-        except Exception as exc:  # noqa: BLE001  # pragma: no cover # Only when an annotation can't be resolved
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover
             errors[name] = f"{type(exc).__name__}: {exc}"
 
     assert errors == {}

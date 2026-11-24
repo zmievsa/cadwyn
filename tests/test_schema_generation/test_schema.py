@@ -120,7 +120,6 @@ def test__schema_had__without_arguments__should_raise_error():
     ("model", "description"),
     [
         (DocumentedSchema, "INTERNAL: head-only implementation note."),
-        # Pydantic cleans up the indentation of docstrings so this description would be the same
         (IndentedDocumentedSchema, "Public description."),
     ],
 )
@@ -205,7 +204,6 @@ def test__schema_had_description__of_parent__should_not_change_descriptions_of_s
     assert schemas["2000-01-01"][DocumentedParent].model_json_schema()["description"] == "Old parent description"
     assert schemas["2000-01-01"][DocumentedChild].model_json_schema()["description"] == "Child description."
     assert "description" not in schemas["2000-01-01"][UndocumentedChild].model_json_schema()
-    # The subclasses are still copied with the changes of their parent
     assert schemas["2000-01-01"][UndocumentedChild].model_json_schema()["properties"]["foo"]["maxLength"] == 3
 
 

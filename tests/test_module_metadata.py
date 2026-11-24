@@ -2,6 +2,9 @@
 
 Their objects must still report the old modules in error messages, reprs, pickles, and documentation tools, except the
 ones that moved to cadwyn-core, which report the same module there.
+
+`_PRE_SPLIT_METADATA` was generated from commit 63e8609^, the last one before the splits, and must not be regenerated
+from newer code.
 """
 
 import enum
@@ -25,15 +28,11 @@ _SPLIT_MODULES = (
     "cadwyn_core.structure.versions",
 )
 _PRIVATE_SUBMODULE_OF_SPLIT_MODULE = re.compile(r"^cadwyn(_core)?\.(schema_generation|structure\.versions)\._")
-# They moved to cadwyn-core whole. Of `cadwyn.structure.versions`, only the objects that work without FastAPI moved.
 _MOVED_MODULES = {
     "cadwyn.schema_generation",
     *(f"cadwyn.structure.{name}" for name in ("common", "data", "endpoints", "enums", "schemas")),
 }
 
-# `__module__` and `__qualname__` of the objects defined in the split modules, and of everything that
-# `cadwyn` and `cadwyn.structure` exported, generated from commit 63e8609^, the last one before the splits.
-# Cadwyn's code didn't change between that commit and the split of `cadwyn/structure/versions.py`.
 _PRE_SPLIT_METADATA: dict[str, dict[str, tuple[str, Union[str, None]]]] = {
     "cadwyn": {
         "Cadwyn": ("cadwyn.applications", "Cadwyn"),

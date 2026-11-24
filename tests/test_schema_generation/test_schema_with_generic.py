@@ -56,7 +56,7 @@ def test__generate_versioned_routers__metaclass_parent_has_overridden_forward_re
     create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
 ):
     class Parent(BaseModel):
-        value: "NotDefined"  # noqa: F821  # ty: ignore[unresolved-reference]  # Intentionally incomplete; child overrides.
+        value: "NotDefined"  # noqa: F821  # ty: ignore[unresolved-reference]
 
     class Meta(type(BaseModel)):
         def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any], **kwargs: Any):
@@ -172,7 +172,6 @@ ATTR_MAP: tuple[tuple[str, str], list[tuple[PossibleFieldAttributes, Any]]] = (
 )
 
 ###########
-# GENERIC #
 ###########
 
 
@@ -268,12 +267,10 @@ def test__schema_had_description__generic_model__should_only_change_description_
     assert schemas["2000-01-01"][GenericSchema].__doc__ == "Old generic description"
     assert schemas["2000-01-01"][GenericSchema].model_json_schema()["description"] == "Old generic description"
     assert "description" not in schemas["2001-01-01"][GenericSchema].model_json_schema()
-    # Like in pydantic, the subclasses of the generic model do not inherit its description
     assert "description" not in schemas["2000-01-01"][ParametrizedSchema].model_json_schema()
 
 
 ################
-# PARAMETRIZED #
 ################
 
 
@@ -340,7 +337,6 @@ def test__schema_had_description__subclass_of_parametrized_model__should_change_
 
 
 ################################
-# INHERITED FIELDS OF GENERICS #
 ################################
 
 FirstT = TypeVar("FirstT")
@@ -391,7 +387,6 @@ def test__schema_field_had__inherited_field_of_subclass_of_parametrization__shou
         )
     )
 
-    # Before #466, the change of StrIntPair also applied to the generic model, its parametrization and its siblings
     assert _get_constraints(schemas["2000-01-01"][StrIntPair], "second") == [Ge(5)]
     for model in (GenericPair, GenericPair[str, int], OtherStrIntPair):
         assert _get_constraints(schemas["2000-01-01"][model], "second") == []
@@ -414,8 +409,6 @@ def test__schema_field_had__inherited_field_of_parametrization__should_change_it
     assert _get_constraints(old_schemas[StrIntPair], "second") == [Ge(5), Le(100)]
     for model in (GenericPair, GenericPair[int, int]):
         assert _get_constraints(old_schemas[model], "second") == []
-    # The instructions of the parametrization also apply where other generics build it (#420), but not the ones of
-    # its subclasses
     pair_in_box = cast("type[BaseModel]", old_schemas[PairBox[str]].model_fields["pair"].annotation)
     assert _get_constraints(pair_in_box, "second") == [Ge(5)]
     assert old_schemas[PairBox[str]].model_validate({"pair": {"first": "a", "second": 500}}).pair.second == 500

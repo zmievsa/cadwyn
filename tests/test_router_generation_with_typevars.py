@@ -31,7 +31,6 @@ from cadwyn.exceptions import SchemaGenerationError
 from tests._data import typevar_namespace_first, typevar_namespace_second
 from tests.conftest import CreateRuntimeSchemas, CreateVersionedApp, version_change
 
-# Quoted references back to the model resolve in the module, like in its other fields
 _SelfBoundT = TypeVar("_SelfBoundT", bound="SelfBoundNode")
 _SelfDefaultT = ExtensionsTypeVar("_SelfDefaultT", default="SelfDefaultNode")
 _NonGenericSelfBoundT = TypeVar("_NonGenericSelfBoundT", bound="NonGenericSelfBoundNode")
@@ -48,7 +47,7 @@ class SelfDefaultNode(BaseModel, Generic[_SelfDefaultT]):
 
 
 class NonGenericSelfBoundNode(BaseModel):
-    child: Union[_NonGenericSelfBoundT, None] = None  # ty: ignore[unbound-type-variable] # Validated as its bound.
+    child: Union[_NonGenericSelfBoundT, None] = None  # ty: ignore[unbound-type-variable]
     name: str
 
 
@@ -71,8 +70,8 @@ class RecursiveNode(BaseModel, Generic[_RecursiveItemT]):
     children: list["RecursiveNode[_RecursiveItemT]"] = []
 
 
-_FirstT = TypeVar("_FirstT", bound="_SecondT")  # ty: ignore[invalid-type-variable-bound] # Deliberately recursive.
-_SecondT = TypeVar("_SecondT", bound=_FirstT)  # ty: ignore[invalid-type-variable-bound] # Deliberately recursive.
+_FirstT = TypeVar("_FirstT", bound="_SecondT")  # ty: ignore[invalid-type-variable-bound]
+_SecondT = TypeVar("_SecondT", bound=_FirstT)  # ty: ignore[invalid-type-variable-bound]
 _alias_of_recursive_fallbacks = TypeAliasType("_alias_of_recursive_fallbacks", list[_FirstT], type_params=(_FirstT,))
 
 
@@ -97,7 +96,6 @@ class MiddleSelfReferringNode(BaseModel, Generic[_SelfReferringT]):
     name: str
 
 
-# Sorted by name, one of them comes before the node and the other after it. Their fields use the node first and last
 class AOuterWithNodeFirst(BaseModel, Generic[_SelfReferringT]):
     node: MiddleSelfReferringNode[_SelfReferringT]
     item: _SelfReferringT
@@ -108,7 +106,7 @@ class ZOuterWithItemFirst(BaseModel, Generic[_SelfReferringT]):
     node: MiddleSelfReferringNode[_SelfReferringT]
 
 
-_FactoryBoundT = TypeVar("_FactoryBoundT", bound="FirstFactoryModel")  # ty: ignore[invalid-type-form] # A class.
+_FactoryBoundT = TypeVar("_FactoryBoundT", bound="FirstFactoryModel")  # ty: ignore[invalid-type-form]
 
 
 def _make_factory_model() -> Any:
@@ -120,7 +118,6 @@ def _make_factory_model() -> Any:
     return Model
 
 
-# Two models with the same module and qualname
 FirstFactoryModel = _make_factory_model()
 SecondFactoryModel = _make_factory_model()
 FirstFactoryModel.model_rebuild()
@@ -128,11 +125,10 @@ SecondFactoryModel.model_rebuild()
 
 
 class OuterOfFactoryModels(BaseModel, Generic[_FactoryBoundT]):
-    first: FirstFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form] # A class from a factory.
-    second: SecondFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form] # A class from a factory.
+    first: FirstFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form]
+    second: SecondFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form]
 
 
-# The bound and the constraints name both models that use the parameter
 _BoundToBothT = TypeVar("_BoundToBothT", bound=Union["BoundFirst", "BoundSecond"])
 _ConstrainedToBothT = TypeVar("_ConstrainedToBothT", "ConstrainedFirst", "ConstrainedSecond")
 
@@ -266,8 +262,8 @@ def test__router_generation__unparametrized_generic__should_reject_latest_shape_
     }[kind]
     payload_t = type_var("payload_t", *((LocalItem, int) if kind == "constraints" else ()), **kwargs)
 
-    class LocalPage(BaseModel, Generic[payload_t]):  # ty: ignore[invalid-argument-type] # Runtime TypeVar matrix.
-        item: payload_t  # ty: ignore[invalid-type-form] # Runtime TypeVar matrix.
+    class LocalPage(BaseModel, Generic[payload_t]):  # ty: ignore[invalid-argument-type]
+        item: payload_t  # ty: ignore[invalid-type-form]
 
     router = VersionedAPIRouter()
 
@@ -311,14 +307,12 @@ def test__router_generation__unparametrized_generic__should_keep_openapi_names_a
     def create_pair(pair: Pair[int, ItemT]) -> None:
         pass
 
-    # Item only changes in the oldest version, so nothing changes between the two newer ones
     app = create_versioned_app(version_change(schema(Item).field("extra").didnt_exist), version_change(), router=router)
     titles_by_name = None
     for version in ("2002-01-01", "2001-01-01", "2000-01-01"):
         client = TestClient(app, headers={"x-api-version": version})
         schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
         version_titles_by_name = {name: value["title"] for name, value in schemas.items()}
-        # Pydantic names Pair[int, ItemT] after the repr of ItemT, which differs between Python versions
         assert {"Item": "Item", "Page": "Page"}.items() < version_titles_by_name.items()
         assert any(name.startswith("Pair_int_") for name in version_titles_by_name)
         assert version_titles_by_name == (titles_by_name or version_titles_by_name)
@@ -334,7 +328,6 @@ def test__router_generation__unparametrized_generic__should_keep_openapi_names_a
 @pytest.mark.parametrize(
     ("mode", "expected_titles_by_name"),
     [
-        # Cadwyn 8.2.0 gives every version these names and titles
         pytest.param("unchanged", {"Item": "Item", "Outer": "Outer", "Page": "Page"}, id="unchanged_quoted_bound"),
         pytest.param("changed", {"Item": "Item", "Outer": "Outer", "Page": "Page"}, id="nested"),
         pytest.param("recursive", {"Item": "Item", "Node": "Node"}, id="recursive"),
@@ -349,7 +342,6 @@ def test__router_generation__nested_and_recursive_unparametrized_generics__shoul
     class Unrelated(BaseModel):
         count: int
 
-    # A quoted bound needs resolving even when nothing about it changes
     bound: Any = "Item" if mode == "unchanged" else Item
     ItemT = TypeVar("ItemT", bound=bound)
 
@@ -379,8 +371,6 @@ def test__router_generation__nested_and_recursive_unparametrized_generics__shoul
     for version in ("2001-01-01", "2000-01-01"):
         client = TestClient(app, headers={"x-api-version": version})
         schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
-        # Whether pydantic splits a schema into "-Input" and "-Output" ones depends on the versions of FastAPI
-        # and pydantic, just like with Cadwyn 8.2.0
         titles_by_name = {
             name.removesuffix("-Input").removesuffix("-Output"): value["title"]
             for name, value in schemas.items()
@@ -427,7 +417,7 @@ def test__router_generation__nested_unparametrized_generic__should_validate_and_
     router = VersionedAPIRouter()
 
     @router.post("/items")
-    def create_items(payload: payload_type = Body()) -> None:  # ty: ignore[invalid-type-form] # Runtime annotation matrix.
+    def create_items(payload: payload_type = Body()) -> None:  # ty: ignore[invalid-type-form]
         pass
 
     @router.get("/items", response_model=payload_type)
@@ -477,7 +467,7 @@ def test__router_generation__typevar_in_non_generic_model__should_validate_and_d
     ArgT = TypeVar("ArgT")
 
     class Plain(BaseModel):
-        item: ItemT  # ty: ignore[unbound-type-variable] # Pydantic validates the bound of an unbound TypeVar.
+        item: ItemT  # ty: ignore[unbound-type-variable]
 
     class Box(BaseModel, Generic[ArgT]):
         value: ArgT
@@ -496,7 +486,7 @@ def test__router_generation__typevar_in_non_generic_model__should_validate_and_d
         payload_type = Box[Plain] if usage == "generic_arg" else Plain
 
         @router.post("/items")
-        def create_items(payload: payload_type) -> None:  # ty: ignore[invalid-type-form] # Runtime annotation matrix.
+        def create_items(payload: payload_type) -> None:  # ty: ignore[invalid-type-form]
             pass
 
     def wrap(item: dict[str, Any]) -> dict[str, Any]:
@@ -555,7 +545,6 @@ def test__router_generation__unparametrized_generic_with_itself_in_unused_metada
     def migrate_back(response: ResponseInfo) -> None:
         response.body["item"]["name"] = int(response.body["item"]["name"])
 
-    # Pydantic ignores the metadata, as does Cadwyn 8.2.0
     app = create_versioned_app(
         version_change(schema(ShapeItem).field("name").had(type=int), migrate=migrate, migrate_back=migrate_back),
         router=router,
@@ -591,7 +580,7 @@ def test__generate_versioned_models__typed_extras_of_nested_generic__should_vali
 
     class Extra(BaseModel, Generic[ItemT]):
         model_config = ConfigDict(extra="allow")
-        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[incompatible-mutable-override] # Pydantic supports typed extras.
+        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[incompatible-mutable-override]
 
     class Outer(BaseModel, Generic[OtherT, ItemT]):
         other: OtherT
@@ -599,7 +588,6 @@ def test__generate_versioned_models__typed_extras_of_nested_generic__should_vali
 
     old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"]
     if parametrized:
-        # Pydantic versions differ in how they substitute parameters in the typed extras of parametrizations
         with pytest.raises(SchemaGenerationError, match=r"typed extra fields.*Outer.*ItemT.*2000-01-01"):
             old[Outer[int, ItemT]]
     else:
@@ -680,12 +668,11 @@ def test__generate_versioned_models__enum_in_typevar__should_validate_old_member
         new = "new"
 
     kwargs = {"bound": {"bound": Kind}, "constraints": {}, "default": {"default": Kind}}[kind]
-    # Runtime TypeVar matrix that static type checkers cannot follow
     factory: Any = ExtensionsTypeVar
     value_t = factory("ValueT", *((Kind, int) if kind == "constraints" else ()), **kwargs)
 
-    class Payload(BaseModel, Generic[value_t]):  # ty: ignore[invalid-argument-type] # Runtime TypeVar matrix.
-        value: value_t  # ty: ignore[invalid-type-form] # Runtime TypeVar matrix.
+    class Payload(BaseModel, Generic[value_t]):  # ty: ignore[invalid-argument-type]
+        value: value_t  # ty: ignore[invalid-type-form]
 
     schemas = create_runtime_schemas(version_change(enum(Kind).didnt_have("new")))
     old = schemas["2000-01-01"][Payload]
@@ -715,7 +702,6 @@ def test__generate_versioned_models__native_type_params__should_validate_old_mod
     module = types.ModuleType("_cadwyn_test_native_typevars")
     monkeypatch.setitem(sys.modules, module.__name__, module)
     module.__dict__.update(BaseModel=BaseModel, Item=Item)
-    # The syntax of native type params fails to parse on Python 3.11
     exec(f"class Page[{declaration}](BaseModel):\n    item: T", module.__dict__)
     page = module.__dict__["Page"]
     schemas = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))
@@ -754,7 +740,7 @@ def test__generate_versioned_models__parametrizing_copied_generic__should_preser
 def test__generate_versioned_models__unused_typevar_with_unresolved_bound__should_generate_models(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    UnusedT = TypeVar("UnusedT", bound="NeverDefined")  # ty: ignore[unresolved-reference] # noqa: F821 # Intentionally unresolved.
+    UnusedT = TypeVar("UnusedT", bound="NeverDefined")  # ty: ignore[unresolved-reference]  # noqa: F821
 
     class Page(BaseModel, Generic[UnusedT]):
         count: int
@@ -786,7 +772,7 @@ def test__generate_versioned_models__recursive_typevar_bound__should_preserve_de
 def test__generate_versioned_models__unchanged_unresolved_bound__should_preserve_deferred_validation(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    MissingT = TypeVar("MissingT", bound="NeverDefined")  # ty: ignore[unresolved-reference] # noqa: F821 # Intentionally unresolved.
+    MissingT = TypeVar("MissingT", bound="NeverDefined")  # ty: ignore[unresolved-reference]  # noqa: F821
 
     class Page(BaseModel, Generic[MissingT]):
         model_config = ConfigDict(defer_build=True)
@@ -799,7 +785,7 @@ def test__generate_versioned_models__unchanged_unresolved_bound__should_preserve
 def test__generate_versioned_models__unresolved_bare_parameter__should_fail_loudly(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    MissingT = TypeVar("MissingT", bound="Missing")  # ty: ignore[unresolved-reference] # Deliberately unresolved. # noqa: F821
+    MissingT = TypeVar("MissingT", bound="Missing")  # ty: ignore[unresolved-reference]  # noqa: F821
 
     class Page(BaseModel, Generic[MissingT]):
         model_config = ConfigDict(defer_build=True)
@@ -935,8 +921,8 @@ def test__generate_versioned_models__composite_typevar__should_validate_old_nest
     factory: Any = ExtensionsTypeVar
     value_t = factory("value_t", **kwargs)
 
-    class Payload(BaseModel, Generic[value_t]):  # ty: ignore[invalid-argument-type] # Runtime TypeVar matrix.
-        item: value_t  # ty: ignore[invalid-type-form] # Runtime TypeVar matrix.
+    class Payload(BaseModel, Generic[value_t]):  # ty: ignore[invalid-argument-type]
+        item: value_t  # ty: ignore[invalid-type-form]
 
     old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"][Payload]
     assert old.model_validate({"item": [{"name": 1}, {"name": 2}]}).model_dump(mode="json") == {
@@ -983,7 +969,7 @@ def test__router_generation__unsafe_bound_not_validated_in_old_versions__should_
 
         @router.get("/items", response_model=None if usage == "ignored_return" else int)
         def get_items() -> Payload:
-            return 1  # ty: ignore[invalid-explicit-return] # This return annotation is deliberately ignored.
+            return 1  # ty: ignore[invalid-explicit-return]
 
     app = create_versioned_app(version_change(*instructions), router=router)
     client = TestClient(app, headers={"x-api-version": "2001-01-01"})
@@ -1291,7 +1277,6 @@ def test__generate_versioned_models__bare_generic_sharing_quoted_parameter_acros
 def test__generate_versioned_models__fallback_naming_several_models_that_use_it__should_fail_loudly(
     outer: Any, first: Any, second: Any, create_runtime_schemas: CreateRuntimeSchemas
 ):
-    # Within the copy of each model, pydantic would resolve the name of the other one to its latest version
     schemas = create_runtime_schemas(
         version_change(schema(first).field("name").had(type=int), schema(second).field("name").had(type=int))
     )
@@ -1337,7 +1322,7 @@ def test__generate_versioned_models__bare_generic_whose_nested_model_has_no_modu
         page: Page[ItemT]
         item: ItemT
 
-    Page.__module__ = None  # ty: ignore[invalid-assignment] # Some generated classes have no module.
+    Page.__module__ = None  # ty: ignore[invalid-assignment]
     old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"][Envelope]
     body = {"page": {"item": {"name": 1}}, "item": {"name": 2}}
     assert old.model_validate(body).model_dump() == body
@@ -1367,7 +1352,7 @@ def test__router_generation__typed_extras_with_concrete_annotation__should_valid
 
     class Page(BaseModel):
         model_config = ConfigDict(extra="allow")
-        __pydantic_extra__: dict[str, Item]  # ty: ignore[incompatible-mutable-override] # Pydantic supports typed extras.
+        __pydantic_extra__: dict[str, Item]  # ty: ignore[incompatible-mutable-override]
 
     router = VersionedAPIRouter()
 
@@ -1398,7 +1383,7 @@ _TypedExtrasOtherT = TypeVar("_TypedExtrasOtherT")
 class TypedExtrasPage(BaseModel, Generic[_TypedExtrasOtherT, _TypedExtrasItemT]):
     model_config = ConfigDict(extra="allow")
     other: _TypedExtrasOtherT
-    __pydantic_extra__: dict[str, _TypedExtrasItemT]  # ty: ignore[incompatible-mutable-override] # Typed extras.
+    __pydantic_extra__: dict[str, _TypedExtrasItemT]  # ty: ignore[incompatible-mutable-override]
 
 
 def test__generate_versioned_models__typed_extras_with_typevar_of_unparametrized_generic__should_validate_old_model(
@@ -1415,7 +1400,6 @@ def test__generate_versioned_models__typed_extras_with_typevar_of_partially_para
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     schemas = create_runtime_schemas(version_change(schema(_TypedExtrasItem).field("name").had(type=int)))
-    # Pydantic versions differ in how they substitute parameters in the typed extras of parametrizations
     with pytest.raises(SchemaGenerationError, match=r"typed extra fields.*_TypedExtrasItemT.*2000-01-01"):
         schemas["2000-01-01"][TypedExtrasPage[int, _TypedExtrasItemT]]
 
@@ -1430,7 +1414,7 @@ def test__generate_versioned_models__typed_extras_with_typevar_of_non_generic_mo
 
     class Page(BaseModel):
         model_config = ConfigDict(extra="allow")
-        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[incompatible-mutable-override, unbound-type-variable] # Pydantic supports typed extras.
+        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[incompatible-mutable-override, unbound-type-variable]
 
     old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"][Page]
     assert old.model_validate({"extra": {"name": 1}}).model_dump() == {"extra": {"name": 1}}

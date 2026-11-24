@@ -16,5 +16,5 @@ def keep_names_of_moved_package(package_name: str, moved_package: ModuleType) ->
             isinstance(value, ModuleType) and value.__name__.startswith(f"{moved_package.__name__}.")
         ):
             continue
-        if namespace.setdefault(name, value) is not value:  # pragma: no cover # Guards future moves
+        if namespace.setdefault(name, value) is not value:  # pragma: no cover
             raise ImportError(f"{package_name}.{name} differs from {moved_package.__name__}.{name}")

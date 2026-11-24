@@ -1,6 +1,3 @@
-# NOTE: It's OK that any_string might not be correctly sortable such as v10 vs v9.
-# we can simply remove waterfalling from any_string api version style.
-
 import inspect
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -85,10 +82,8 @@ class URLVersionManager:
         if matches:
             version, reusable = matches[0]
             if reusable is not None:
-                # _RootCadwynAPIRouter.process_request reuses this match instead of matching the routes again
                 scope[_PATH_VERSION_MATCH_SCOPE_KEY] = reusable
             return version
-        # WebSockets never picked a version from the URL alone: a socket that matches no route is rejected
         if route_matched or scope["type"] == "websocket":
             return None
         versions_regex = "|".join(re.escape(version) for version in self.versioned_routers)
@@ -112,8 +107,6 @@ def _match_key(scope: Scope) -> tuple[Any, ...]:
 
 
 def _match_route(router: Router, scope: Scope) -> Union[tuple[BaseRoute, Scope, bool], None]:
-    # The same search as in _RootCadwynAPIRouter.process_request: the first full match, then the first partial
-    # match (405), and then the first match with the trailing slash added or removed (a redirect)
     partial = None
     for route in router.routes:
         match, child_scope = route.matches(scope)
@@ -159,8 +152,6 @@ def _generate_api_version_dependency(
                         openapi_examples={"default": {"value": default_value}},
                         title=title,
                         description=description,
-                        # FastAPI would otherwise read and document "api-version" for a header named "api_version",
-                        # while VersionPickingMiddleware reads the header by its exact name
                         **(
                             {"alias": api_version_parameter_name, "convert_underscores": False}
                             if fastapi_depends_class is fastapi.Header
@@ -199,8 +190,6 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        # We handle api version at middleware level because if we try to add a Dependency to all routes, it won't work:
-        # we use this header for routing so the user will simply get a 404 if the header is invalid.
         api_version = self._api_version_manager.get(request)
 
         if api_version is None:
@@ -214,8 +203,6 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         if api_version is not None:
-            # We return it because we will be returning the **matched** version, not the requested one.
-            # In date-based versioning with waterfalling, it makes sense.
             response.headers[self.api_version_parameter_name] = request.scope.get("cadwyn.api_version", api_version)
 
         return response

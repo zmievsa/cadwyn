@@ -1,4 +1,4 @@
-import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
+import collections.abc  # noqa: TC003
 import inspect
 from collections.abc import Sequence
 from typing import (
@@ -75,13 +75,10 @@ class _ParentRename(NamedTuple):
 
     parent: type[BaseModel]
     field_identity: int
-    # The name of the field before the version
     old_name: str
     version_change_name: str
-    # The models with instructions, and the identities of the fields that each of them declared before the version
     field_identities_before_version: "collections.abc.Mapping[type[BaseModel], collections.abc.Mapping[str, int]]"
     models_with_instructions: frozenset[type[BaseModel]]
-    # The identities of all of these fields
     field_identities_of_version: frozenset[int]
 
 
@@ -174,7 +171,6 @@ def _check_that_renamed_fields_are_not_inherited(
     for model, field, instruction, version_change_name in renames:
         old_name = instruction.name
         new_name = next((name for name, model_field in model.fields.items() if model_field is field), None)
-        # The model deleted the renamed field or renamed it back
         if new_name in {None, old_name}:
             continue
         model_copy = generator[model.cls]
@@ -305,7 +301,6 @@ def _get_bases_that_give_inherited_field(model_copy: type[BaseModel], field_name
     name, e.g. of a mixin.
     """
     inherited = model_copy.model_fields[field_name]
-    # Like pydantic, we skip `object`, which has no annotations
     candidates = [base for base in model_copy.__mro__[1:-1] if field_name in _get_annotations_without_evaluating(base)]
     matching = [
         base
@@ -441,12 +436,9 @@ def _change_model_config(
 ) -> None:
     config = model.get_config(schemas).copy()
     current = ConfigWrapper(config.copy(), check=False)
-    # Pydantic <2.14 fills in the validation settings here; newer versions keep an effective config separately.
     current.core_config(None)
     changed_keys = frozenset(config_patch)
     if _VALIDATE_BY_KEYS & changed_keys:
-        # Pydantic derives each of these flags from the other one and from populate_by_name,
-        # so we set both to keep the effective value of the one that the patch omits
         config.update(validate_by_alias=current.validate_by_alias, validate_by_name=current.validate_by_name)
         changed_keys |= _VALIDATE_BY_KEYS
     config.update(config_patch)
@@ -480,15 +472,11 @@ def _add_field_to_model(
             f'in "{version_change_name}" but there is already a field with that name.',
         )
 
-    # Special handling for ClassVar fields
     if get_origin(alter_schema_instruction.field.annotation) is ClassVar:
-        # ClassVar fields should not be in model.fields, only in annotations and other_attributes
         model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
-        # Set the actual ClassVar value in other_attributes
         if alter_schema_instruction.field.default is not PydanticUndefined:
             model.other_attributes[alter_schema_instruction.name] = alter_schema_instruction.field.default
     else:
-        # Regular field handling
         field = PydanticFieldWrapper(
             alter_schema_instruction.field, alter_schema_instruction.field.annotation, alter_schema_instruction.name
         )
@@ -593,7 +581,6 @@ def _get_parent_that_renamed_field(
         if not issubclass(base, BaseModel) or base is BaseModel or _is_generic_model(base):
             return None
         if base in schemas and field_name in schemas[base].fields:
-            # Each model has its own copy of the field in every version
             return base if schemas[base].fields[field_name].identity == field.identity else None
         cls = base
     return None

@@ -19,7 +19,7 @@ from fastapi._compat import (
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
 from pydantic import BaseModel
-from starlette.datastructures import FormData  # noqa: TC002 # Needed by runtime annotation introspection.
+from starlette.datastructures import FormData  # noqa: TC002
 
 
 def _get_omitted_body_marker() -> Any:
@@ -39,8 +39,6 @@ def _get_omitted_body_marker() -> Any:
 
 
 _OMITTED_BODY: Any = _get_omitted_body_marker()
-# Since FastAPI 0.158.2, FastAPI looks the dict body of a form model up under the param's aliases. We use its private
-# functions for picking form models and their aliases, so that we pick exactly the same ones
 _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS = tuple(map(int, re.findall(r"\d+", fastapi.__version__)[:3])) >= (0, 158, 2)
 _get_form_model = cast(
     "Callable[[ModelField], Union[type[BaseModel], None]]",
@@ -53,12 +51,9 @@ _get_cached_model_fields = cast(
     "Callable[[type[BaseModel]], list[ModelField]]",
     getattr(fastapi.dependencies.utils, "get_cached_model_fields", None),
 )
-# Since FastAPI 0.159.1, FastAPI checks with this function whether the form supplies an optional form model
 _is_form_model_supplied = cast(
     "Union[Callable[..., bool], None]", getattr(fastapi.dependencies.utils, "_is_form_model_supplied", None)
 )
-# Before FastAPI 0.160.0, a form model doesn't take the form fields that other params of the tree declare as its extra
-# fields. FastAPI collects their names with this function
 _get_request_param_names = cast(
     "Union[Callable[[Dependant, Any], dict[str, set[str]]], None]",
     getattr(fastapi.dependencies.utils, "_get_request_param_names", None),
@@ -69,24 +64,20 @@ _should_embed_body_fields = cast(
 _get_multidict_value = cast(
     "Callable[[ModelField, FormData, str], Any]", getattr(fastapi.dependencies.utils, "_get_multidict_value", None)
 )
-# Yields the alias and the value that FastAPI picks from a form for each field, e.g. the bytes of a `bytes` upload
 _extract_form_body = cast(
     "Callable[[list[ModelField], FormData], AsyncIterator[tuple[str, Any, Union[ModelField, None]]]]",
     getattr(fastapi.dependencies.utils, "_extract_form_body", None),
 )
-# Since FastAPI 0.153.0, FastAPI normalizes the dict body of a union of form models with this function for each model.
-# It takes the fields of the model from the dict with `_extract_form_items`
 _normalize_form_model = cast(
     "Callable[..., dict[str, Any]]", getattr(fastapi.dependencies.utils, "_normalize_form_model", None)
 )
-# Yields the alias that FastAPI picks from a form for each field and the other keys of the form, without reading uploads
 _extract_form_items = cast(
     "Callable[[list[ModelField], FormData], Iterator[tuple[str, Any, Union[ModelField, None]]]]",
     getattr(fastapi.dependencies.utils, "_extract_form_items", None),
 )
 
 
-def _can_be_called_with(  # pragma: no cover # FastAPI >= 0.153
+def _can_be_called_with(  # pragma: no cover
     function: Union[Callable[..., Any], None], *args: Any, **kwargs: Any
 ) -> bool:
     try:
@@ -96,7 +87,6 @@ def _can_be_called_with(  # pragma: no cover # FastAPI >= 0.153
     return True
 
 
-# We call these functions as FastAPI 0.153.0 to 0.162 do, so a change of their arguments must fail at import
 if _normalize_form_model is not None and not (  # pragma: no cover
     _can_be_called_with(_normalize_form_model, None, model=None)
     and _can_be_called_with(_extract_form_items, None, None)
@@ -116,7 +106,6 @@ def _get_form_models_before_fastapi_0_161(field: ModelField) -> list[type[BaseMo
     return [] if model is None else [model]
 
 
-# Since FastAPI 0.161.0, unions of form models are form models too, and `_get_form_model` returns None for them
 _get_form_models = cast(
     "Callable[[ModelField], list[type[BaseModel]]]",
     getattr(fastapi.dependencies.utils, "_get_form_models", None)
@@ -124,16 +113,14 @@ _get_form_models = cast(
 )
 
 
-def _get_unsupported_fastapi_functions() -> list[str]:  # pragma: no cover # FastAPI >= 0.158.2
+def _get_unsupported_fastapi_functions() -> list[str]:  # pragma: no cover
     """Return the private FastAPI functions that are missing or that Cadwyn can't call as it does."""
-    # Before FastAPI 0.160.0, FastAPI doesn't take the form fields of other params as extra fields of form models
     needs_known_param_names = (
         "known_param_names" in inspect.signature(fastapi.dependencies.utils.request_body_to_args).parameters
     )
     has_form_model_unions = getattr(fastapi.dependencies.utils, "_get_form_models", None) is not None
     arg = object()
     calls: list[tuple[str, Any, tuple[Any, ...], dict[str, Any], bool]] = [
-        # The name, the function, the args, the kwargs, and whether it must be an async generator function
         ("_get_form_models" if has_form_model_unions else "_get_form_model", _get_form_models, (arg,), {}, False),
         ("_get_param_aliases", _get_param_aliases, (arg,), {}, False),
         ("get_cached_model_fields", _get_cached_model_fields, (arg,), {}, False),
@@ -179,6 +166,4 @@ if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and not (  # pragma: no cover
         "aliases instead of taking them from its `field_info`. Cadwyn copies them with other aliases to pass form "
         "models to FastAPI. Please, open an issue on Cadwyn's GitHub."
     )
-# The key that FastAPI looks up the dict body of the head endpoint's form model under if another form param has its
-# alias, e.g. a form field that only an override declares. No form field has this key, so the param keeps its value
 _FORM_MODEL_BODY_KEY = "\x00cadwyn_form_model_body"

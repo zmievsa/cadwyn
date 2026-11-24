@@ -41,8 +41,6 @@ from ._versioned_models import migrate_request as migrate_request
 from ._versioned_models import migrate_response as migrate_response
 from ._versioned_models import migrate_response_body as migrate_response_body
 
-# These modules import some names only for type checking because importing them at runtime would be cyclic.
-# Bind them now that every module has loaded so that runtime annotation introspection can resolve them.
 _annotation_transformer.SchemaGenerator = SchemaGenerator
 _annotation_transformer._BareGenericCopier = _references._BareGenericCopier
 _annotation_transformer._CycleCopier = _references._CycleCopier
@@ -62,5 +60,4 @@ _schema_generator._ParentRename = _instructions._ParentRename
 _schema_generator._PydanticModelWrapper = _models._PydanticModelWrapper
 _schema_generator._ReferenceCycles = _references._ReferenceCycles
 
-# This package used to be a single module. Keep its objects' __module__ and namespace as they were then.
 present_private_submodules_as_package(__name__)

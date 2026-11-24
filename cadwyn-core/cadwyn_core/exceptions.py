@@ -34,8 +34,6 @@ class CadwynHeadRequestValidationError(CadwynError):
 
     @override
     def __reduce__(self) -> tuple[Callable[..., Self], tuple[type[Self], tuple[Any, ...]], dict[str, Any]]:
-        # Pickling and copying would call the class with the message, which `__init__` doesn't take, e.g. when a worker
-        # process raises the error. We restore its message, attributes, and notes without calling `__init__`.
         return _restore_exception, (type(self), self.args), self.__dict__
 
 

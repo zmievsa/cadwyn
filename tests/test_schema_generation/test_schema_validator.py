@@ -8,8 +8,8 @@ from pydantic import (
     field_serializer,
     field_validator,
     model_validator,
-    root_validator,  # ty: ignore[deprecated]  # Tests intentionally cover Pydantic v1 validators.
-    validator,  # ty: ignore[deprecated]  # Tests intentionally cover Pydantic v1 validators.
+    root_validator,  # ty: ignore[deprecated]
+    validator,  # ty: ignore[deprecated]
 )
 
 from cadwyn.exceptions import CadwynStructureError, InvalidGenerationInstructionError
@@ -50,7 +50,7 @@ def test__schema_validator_existed(create_runtime_schemas: CreateRuntimeSchemas)
         foo: str
 
         @model_validator(mode="before")
-        def hewwo(cls, data):  # -> Any
+        def hewwo(cls, data):
             raise NotImplementedError
 
         @field_validator("foo")
@@ -67,14 +67,14 @@ def test__schema_validator_existed__with_deprecated_validators(
 ):
     with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
 
-        @root_validator(pre=True)  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
+        @root_validator(pre=True)  # ty: ignore[deprecated]
         def hewwo(cls, values):
             values["foo"] += "_root"
             return values
 
     with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
 
-        @validator("foo")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
+        @validator("foo")  # ty: ignore[deprecated]
         def dawkness(cls, value):
             return value + "_field"
 
@@ -340,8 +340,6 @@ def test__validator_didnt_exist__ambiguous_function__should_require_attribute_na
         "external_classmethod": staticmethod(Normalizer.normalize),
     }[binding]
 
-    # The first attribute is named after the plain function, but only references that Cadwyn 8 accepted pick the
-    # validator named after the function
     class Model(BaseModel):
         x: str
         y: str
@@ -430,7 +428,7 @@ def test__validator_didnt_exist__function_shared_by_v1_and_v2_field_validators__
         return value.upper()
 
     with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
-        legacy = validator("x")(normalize)  # ty: ignore[deprecated]  # Covers Pydantic v1 validators.
+        legacy = validator("x")(normalize)  # ty: ignore[deprecated]
     modern = field_validator("y")(normalize)
 
     class Model(BaseModel):
@@ -452,9 +450,8 @@ def test__validator_didnt_exist__function_shared_by_root_and_model_validators__s
     def double(cls, values):
         return {**values, "x": values["x"] * 2}
 
-    # The root validator runs after field validation and the model validator before it, so "1" becomes 22
     with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
-        legacy = root_validator(skip_on_failure=True)(double)  # ty: ignore[deprecated]  # Covers Pydantic v1.
+        legacy = root_validator(skip_on_failure=True)(double)  # ty: ignore[deprecated]
     modern = model_validator(mode="before")(double)
 
     class Model(BaseModel):
@@ -625,7 +622,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
 
         with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
 
-            @validator("bar")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
+            @validator("bar")  # ty: ignore[deprecated]
             def validate_bar(cls, value):
                 raise NotImplementedError
 
@@ -638,7 +635,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
     class ExpectedSchema(BaseModel):
         bar: str
 
-        @validator("bar")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
+        @validator("bar")  # ty: ignore[deprecated]
         def validate_bar(cls, value):
             raise NotImplementedError
 

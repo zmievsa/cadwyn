@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
     from fastapi.routing import APIRoute
 else:
-    from cadwyn_core._stand_ins import (  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import (  # noqa: TC001
         APIRoute,
         Dependant,
         ModelField,
@@ -99,8 +99,6 @@ def _copy_decoded_json_string(_check: Any, value: Any, path: "_JsonPath", *, str
     elif value and ord(value) > 0xFF:
         copy = chr(ord(value))
     else:
-        # Python shares the empty string and the strings of one character up to "\xff", but some versions of
-        # pydantic decode them anew (e.g. "5"). We can't copy the shared ones.
         copy = from_json(to_json(value), cache_strings=False)
         if copy is value or (value and copy is chr(ord(value))):
             strings.by_path[path] = value
@@ -122,23 +120,12 @@ def _encode_planned_json_values(
     the body param reads the body, which would get the encoded values too.
     """
     client_strings = client_json_strings.by_path
-    # Whatever goes wrong, we leave the body as it is, because encoding must never break a request
     try:
-        # Encoding copies containers and hashes their keys, and checking the dependencies builds the dependants of
-        # the overrides, both of which run code of users (e.g. `__hash__` or schema hooks). So we only do them if
-        # a read-only pass finds a value to encode, which makes the request fail or get a wrong value as it is.
         try:
             client_strings_check = None
             has_values_to_encode = _has_json_values_to_encode(
                 plan, body, functools.partial(_is_json_value_to_encode, strings=client_strings), ()
             )
-        # If we can't encode one of the values, e.g. a string that a migration has encoded already, a migration might
-        # have encoded the others too, so we leave them as they are and only encode the strings that the client has
-        # sent. Values that aren't strings fail in the head as they are, as before. But if a string that the client
-        # has sent isn't at its place anymore (e.g. a migration has moved or removed it), or if we can't walk into
-        # a part of the body (e.g. a tuple that a migration has put there), the head might decode a string that the
-        # client has sent once more, so the whole body stays as it is. If we couldn't copy one of the strings that the
-        # client has sent, we can't tell whether it is still at its place, so the whole body stays as it is too.
         except _UnsafeJsonValueError:
             if client_json_strings.shared_paths:
                 raise
@@ -148,7 +135,6 @@ def _encode_planned_json_values(
         if not has_values_to_encode or has_other_body_readers():
             return body
         if client_strings_check is not None:
-            # Checking the dependencies might have changed the body, so we check it again as we encode it
             client_strings_check = _ClientJsonStringsCheck(client_strings)
             encoded = _replace_planned_json_values(
                 plan,
@@ -180,35 +166,20 @@ class _UnsafeJsonValueError(Exception):
     """The head might not get what the client has sent if we encode the `Json[...]` values of the body"""
 
 
-# How the head reads the dumped data of a core schema, or None if there's nothing to describe (e.g. a plain value):
-# `("json", check)` for a `Json[...]` value, `("nullable", description)`, `("items", description)`, and
-# `("values", description)` for None, list or set items, and dict values, `("model", keys, ((key, description), ...))`
-# for the data of a model with its dumped keys.
-# In `Json[...]` values, it says what the parsed value must look like for us to encode it. The plan of what to encode
-# is the description without the parts that have no `Json[...]` values.
 _JsonValuesPlan: TypeAlias = tuple[Any, ...]
-# Where a value is in the body: the keys of models, the types and keys of other dicts, and the indexes of lists
 _JsonPath: TypeAlias = tuple[Any, ...]
-# The keys of the child schemas of the core schema types that hold other values, and the kinds of their descriptions
 _JSON_CHILD_SCHEMA_KEYS = {
     "nullable": ("schema", "nullable"),
     "list": ("items_schema", "items"),
     "dict": ("values_schema", "values"),
 }
-# What the head validates the body with: the body field of a route, or the model of `migrate_request()`
 _JsonPlanSource: TypeAlias = "Union[ModelField, type[BaseModel]]"
-# The descriptions of the body fields, and the plans for the pairs of a head body field and a body field of a version
 _BODY_FIELD_JSON_PLANS: dict[int, tuple[_JsonPlanSource, Union[_JsonValuesPlan, None]]] = {}
 _NORMALIZED_CORE_SCHEMAS: dict[int, tuple[_JsonPlanSource, Any]] = {}
 _JSON_VALUES_PLANS: dict[tuple[int, int], tuple[_JsonPlanSource, _JsonPlanSource, Union[_JsonValuesPlan, None]]] = {}
-# The descriptions of the models of one body field by `(is_in_json, model, depth)`, so that describing stays linear
 _JsonPlanMemo: TypeAlias = dict[tuple[bool, type[BaseModel], int], Any]
 _UNSAFE_JSON_VALUE = object()
-# The greatest number of nested models that we walk into, so that the first request of a deep body doesn't need
-# a much deeper stack than the next ones
 _MAX_JSON_PLAN_DEPTH = 8
-# The core schema types without validators whose values the head reads as the client has sent them, both as they
-# are and encoded as JSON, by the exact types of their values. Any other type that the walk doesn't know stops it.
 _JSON_LEAF_VALUE_TYPES: dict[str, tuple[type, ...]] = {
     "none": (type(None),),
     "bool": (bool,),
@@ -223,23 +194,18 @@ _JSON_LEAF_VALUE_TYPES: dict[str, tuple[type, ...]] = {
     "uuid": (uuid.UUID,),
 }
 _JSON_LEAF_SCHEMA_TYPES = frozenset((*_JSON_LEAF_VALUE_TYPES, "any", "literal", "enum"))
-# The types of the values that JSON has
 _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
-# The core schema types whose values keep their JSON type when we encode them, so a union of them picks the same member
 _PLAIN_JSON_SCHEMA_TYPES = frozenset(
     ("any", "none", "bool", "int", "float", "str", "literal", *_JSON_CHILD_SCHEMA_KEYS)
 )
 _PLAIN_LITERAL_TYPES = (str, int, bool, type(None))
-# The keys of these core schemas that hold no constraints
 _PLAIN_JSON_SCHEMA_KEYS = frozenset(
     ("type", "metadata", "expected", "schema", "items_schema", "keys_schema", "values_schema")
 )
-# The settings of models that change or constrain their strings, as the constraints of string schemas do
 _STRING_CONFIG_KEYS = (
     *("str_to_lower", "str_to_upper", "str_strip_whitespace", "str_min_length", "str_max_length"),
     "coerce_numbers_to_str",
 )
-# Default factories that always give the same value
 _DETERMINISTIC_DEFAULT_FACTORIES = (list, dict, set, frozenset, tuple)
 
 
@@ -257,18 +223,12 @@ def _get_json_values_plan(
         return cached[2]
     try:
         plan = _get_body_field_json_plan(head_body_field)
-        # The models of the request's version are copies of the head's, so the core schemas are the same if the
-        # version doesn't change the body, apart from the classes and the names of the definitions. Any other
-        # difference, even a constraint of a string, could make the head read another value than the request's
-        # version has.
         if (
             plan is not None
             and body_field is not head_body_field
             and _get_normalized_core_schema(body_field) != _get_normalized_core_schema(head_body_field)
         ):
             plan = None
-    # Planning must never break a request that works without it, so whatever goes wrong (e.g. a default whose
-    # `__eq__` raises), we leave the body as it is
     except Exception:  # noqa: BLE001
         plan = None
     _JSON_VALUES_PLANS[id(head_body_field), id(body_field)] = (head_body_field, body_field, plan)
@@ -287,7 +247,6 @@ def _get_body_field_json_plan(body_field: _JsonPlanSource) -> Union[_JsonValuesP
         return cached[1]
     try:
         schema = cast("dict[str, Any]", _get_core_schema(body_field))
-        # Most bodies have no `Json[...]` fields, so they aren't walked at all
         description = (
             _walk_json_values(_register_core_schema_definitions(schema), frozenset(), {}, is_in_json=False)
             if _has_core_schema_of_types(schema, frozenset(("json",)))
@@ -323,7 +282,6 @@ def _normalize_core_schema(value: Any, refs: dict[str, int]) -> Any:
             for key, item in value.items()
             if key != "metadata"
         }
-    # Containers stay hashable, so that they can be the keys of dicts (e.g. of defaults), and keep their types
     if isinstance(value, (list, tuple)):
         return type(value).__name__, tuple(_normalize_core_schema(item, refs) for item in value)
     if isinstance(value, (set, frozenset)):
@@ -377,24 +335,20 @@ def _walk_json_values(
     if schema_type in _JSON_LEAF_SCHEMA_TYPES:
         return _walk_json_leaf(schema, is_in_json=is_in_json)
     if schema_type == "default":
-        # The head calls the default factories of the fields that the dump leaves out once more
         if "default_factory" in schema and schema["default_factory"] not in _DETERMINISTIC_DEFAULT_FACTORIES:
             raise _UnsafeJsonValueError
         return _walk_json_values(schema["schema"], visiting, memo, is_in_json=is_in_json)
     walk = _JSON_SCHEMA_WALKERS.get(schema_type)
     if walk is not None:
         return walk(schema, visiting, memo, is_in_json=is_in_json)
-    # We only walk into the schema types that we know, e.g. not into generators, whose unions we wouldn't check
     if schema_type not in _JSON_CHILD_SCHEMA_KEYS:
         raise _UnsafeJsonValueError
     child_key, kind = _JSON_CHILD_SCHEMA_KEYS[schema_type]
     if not is_in_json:
-        # We don't encode the keys of dicts, so they mustn't have `Json[...]` values
         if "keys_schema" in schema and _walk_json_values(schema["keys_schema"], visiting, memo, is_in_json=False):
             raise _UnsafeJsonValueError
         child = _walk_json_values(schema[child_key], visiting, memo, is_in_json=False) if child_key in schema else None
         return None if child is None else (kind, child)
-    # In `Json[...]` values, we check that the values that the schema doesn't type are JSON
     child = _walk_json_values(schema[child_key], visiting, memo, is_in_json=True) if child_key in schema else ("any",)
     if schema_type != "dict":
         return kind, child
@@ -403,8 +357,6 @@ def _walk_json_values(
         if "keys_schema" in schema
         else ("any",)
     )
-    # The keys of JSON objects are strings, so keys of several types (e.g. `1` and `"1"`) could become the same key.
-    # We only allow keys of a single type, and check at runtime that their JSON differs (e.g. for NaN).
     if keys_check[0] not in ("leaf", "enum", "any") or (keys_check[0] != "any" and len(keys_check[-1]) != 1):
         raise _UnsafeJsonValueError
     return kind, child, keys_check
@@ -419,9 +371,6 @@ def _walk_json_leaf(schema: dict[str, Any], *, is_in_json: bool) -> Union[_JsonV
     schema_type = schema["type"]
     if schema_type == "enum":
         values = [member.value for member in schema["members"]]
-        # The head looks the members up by their values, which must stay what they are when we encode them (e.g.
-        # a decimal becomes a string, which might be the value of another member), and a custom lookup could pick
-        # another member. As dict keys, values of several types can still collide, which the dict checks.
         if "missing" in schema or any(type(value) not in _JSON_NATIVE_TYPES for value in values):
             raise _UnsafeJsonValueError
         return ("enum", schema["cls"], frozenset(map(type, values))) if is_in_json else None
@@ -431,8 +380,6 @@ def _walk_json_leaf(schema: dict[str, Any], *, is_in_json: bool) -> Union[_JsonV
         return ("any",)
     if schema_type == "literal":
         expected = schema["expected"]
-        # As for enums, the values must stay what they are when we encode them, and differ from each other in JSON,
-        # where e.g. `1` and `1.0` might be the same value
         if any(type(value) not in _JSON_NATIVE_TYPES for value in expected) or len(set(expected)) != len(expected):
             raise _UnsafeJsonValueError
         return "leaf", frozenset(map(type, expected))
@@ -445,8 +392,6 @@ def _walk_json_reference(
     ref = schema["schema_ref"]
     if ref not in visiting:
         return _walk_json_values(_CORE_SCHEMA_DEFINITIONS[ref], visiting | {ref}, memo, is_in_json=is_in_json)
-    # Outside of `Json[...]` values, we're already describing what the reference refers to, but we don't describe
-    # the `Json[...]` values that its data has deeper down, so the head would decode their strings once more
     if is_in_json or _has_core_schema_of_types(_CORE_SCHEMA_DEFINITIONS[ref], frozenset(("json",))):
         raise _UnsafeJsonValueError
     return None
@@ -455,8 +400,6 @@ def _walk_json_reference(
 def _walk_json_schema(
     schema: dict[str, Any], visiting: frozenset[object], memo: _JsonPlanMemo, *, is_in_json: bool
 ) -> Any:
-    # A `Json[...]` value in a `Json[...]` value would need JSON in JSON. We don't leave the `Json[...]` values that we
-    # can't encode as they are, because the head would decode their strings once more if we encoded the others.
     if is_in_json:
         raise _UnsafeJsonValueError
     return "json", (
@@ -469,14 +412,10 @@ def _walk_json_union(
 ) -> Union[_JsonValuesPlan, None]:
     choices = schema["choices"].values() if isinstance(schema["choices"], dict) else schema["choices"]
     choices = [choice[0] if isinstance(choice, tuple) else choice for choice in choices]
-    # The head might pick another member for the dump than the request's version has picked for what the client has
-    # sent, e.g. for the dump of a model, a string that a constraint has changed, or a decimal or a date that we encode
-    # as a string, so we only allow the members that keep their values and their JSON types
     if not all(_is_plain_json_schema(choice) for choice in choices):
         raise _UnsafeJsonValueError
     if not is_in_json:
         return None
-    # In `Json[...]` values, we check the types of the values of the members that are plain values
     types: set[type] = set()
     for choice in choices:
         check = _walk_json_values(choice, visiting, memo, is_in_json=True)
@@ -491,7 +430,6 @@ def _walk_json_union(
 def _walk_json_tuple(
     schema: dict[str, Any], visiting: frozenset[object], memo: _JsonPlanMemo, *, is_in_json: bool
 ) -> None:
-    # We don't encode or check the values in tuples, so they mustn't have any
     if is_in_json or any(
         _walk_json_values(item, visiting, memo, is_in_json=False) is not None for item in schema["items_schema"]
     ):
@@ -515,8 +453,6 @@ def _is_plain_json_schema(schema: dict[str, Any]) -> bool:
     stack = [schema]
     while stack:
         node = stack.pop()
-        # Constraints (e.g. `pattern`), transformations (e.g. `to_upper`), serializers, and strictness change what
-        # the members accept
         if (
             node["type"] not in _PLAIN_JSON_SCHEMA_TYPES
             or not node.keys() <= _PLAIN_JSON_SCHEMA_KEYS
@@ -533,11 +469,8 @@ def _walk_json_model(
     model: type[BaseModel], visiting: frozenset[object], memo: _JsonPlanMemo, *, is_in_json: bool
 ) -> Any:
     depth = sum(isinstance(item, type) for item in visiting)
-    # We can't check the dumps of the models that are deeper than that. A model that we're already describing refers
-    # to itself, e.g. through a model that it refers to, and we don't describe the data deeper down.
     if model in visiting or depth >= _MAX_JSON_PLAN_DEPTH:
         raise _UnsafeJsonValueError
-    # A model can be in many places, so we only describe it once for each depth
     key = (is_in_json, model, depth)
     if key not in memo:
         try:
@@ -558,11 +491,8 @@ def _describe_json_model(
     so we raise `_UnsafeJsonValueError`.
     """
     inner_schema = _get_unchanging_model_core_schema(model)
-    # Models that allow extra keys dump the keys that they don't read, which can overwrite the dumps of their fields,
-    # and the dump computes the computed fields once more, which might give other values (e.g. of a counter)
     if inner_schema is None or _get_validation_settings(model)[2] == "allow" or model.model_computed_fields:
         raise _UnsafeJsonValueError
-    # The settings of the model apply to the members of its unions too
     if any(model.model_config.get(key) for key in _STRING_CONFIG_KEYS) and _has_core_schema_of_types(
         inner_schema, frozenset(("union", "tagged-union"))
     ):
@@ -577,7 +507,6 @@ def _describe_json_model(
     for (name, field), dumped_key in zip(model.model_fields.items(), dumped_keys, strict=True):
         field_schema = inner_schema["fields"][name]
         paths = _get_validation_paths(model, name, field)
-        # The head must read every field from its dumped key and not from a dumped key of anything else
         if (
             not _do_compiled_aliases_match(field, field_schema)
             or field_schema.get("serialization_exclude")
@@ -616,7 +545,6 @@ def _has_json_values_to_encode(
         children = [(plan[1], item, (*path, _get_json_path_key(key))) for key, item in data.items()]
     else:
         children = [(child, data[key], (*path, key)) for key, child in plan[2] if key in data]
-    # We check every child before `any()` stops at the first value to encode
     results = [_has_json_values_to_encode(child, item, is_to_encode, item_path) for child, item, item_path in children]
     return any(results)
 
@@ -672,7 +600,6 @@ def _replace_planned_json_values(
 
 
 def _get_json_path_key(key: Any) -> tuple[type, Any]:
-    # Keys of different types can be equal, e.g. `1` and `True`, but aren't the same key in JSON
     return type(key), key
 
 
@@ -680,10 +607,8 @@ def _is_json_value_to_encode(
     check: _JsonValuesPlan, value: Any, path: "_JsonPath", *, strings: "dict[_JsonPath, str]"
 ) -> bool:
     """Whether to encode the value of a `Json[...]` field, or raise `_UnsafeJsonValueError` if we can't encode it"""
-    # None stays as it is because FastAPI before 0.151.0 gives a body that is None its default
     if value is None:
         return False
-    # Any other string might be JSON that a migration has encoded already
     if (type(value) is str and not _is_client_json_string(value, path, strings)) or not _passes_json_value_check(
         check, value
     ):
@@ -693,7 +618,6 @@ def _is_json_value_to_encode(
 
 def _is_client_json_string(value: Any, path: "_JsonPath", strings: "dict[_JsonPath, str]") -> bool:
     """Whether the value is the copy of a string that the client has sent, which we have put at the path"""
-    # Paths only have the keys of dicts that `_is_json_container` has checked, so hashing them runs no code of users
     return type(value) is str and strings.get(path) is value
 
 
@@ -747,7 +671,6 @@ def _encode_json_value(value: Any) -> str:
     """Return the value encoded as JSON, or raise `_UnsafeJsonValueError` if we can't encode it"""
     try:
         return to_json(value).decode()
-    # E.g. a string with a lone surrogate, which a migration can set
     except PydanticSerializationError as e:
         raise _UnsafeJsonValueError from e
 
@@ -777,7 +700,6 @@ def _is_json_value(value: Any) -> bool:
 
 
 def _is_nan(value: Any) -> bool:
-    # JSON has no sign for NaN, so a negative NaN would become a positive one
     return type(value) is float and value != value
 
 
@@ -794,7 +716,6 @@ def _is_json_temporal(value: Union[datetime, time]) -> bool:
 
 def _are_json_keys(keys_check: _JsonValuesPlan, value: dict[Any, Any]) -> bool:
     """Whether the keys of the dict pass the check and stay different keys in JSON, whose keys are strings"""
-    # Keys that the schema doesn't type must be strings, which stay the keys that they are
     if keys_check[0] == "any":
         return all(type(key) is str for key in value)
     if not all(_passes_json_value_check(keys_check, key) for key in value):
@@ -817,8 +738,6 @@ def _passes_json_value_check(check: _JsonValuesPlan, value: Any) -> bool:
             and (not isinstance(value, (datetime, time)) or _is_json_temporal(value))
         )
     if kind == "enum":
-        # A member of another enum might have a value of a member of this one. Dumps have members, because the walk
-        # stops at `use_enum_values`, so other values (e.g. that a migration sets) stop the body too.
         return type(value) is check[1] and not _is_nan(value.value)
     if kind == "nullable":
         return value is None or _passes_json_value_check(check[1], value)
@@ -832,7 +751,6 @@ def _passes_json_value_check(check: _JsonValuesPlan, value: Any) -> bool:
             and all(_passes_json_value_check(values_check, item) for item in value.values())
         )
     _, keys, checks = check
-    # Comparing and looking keys up runs the `__eq__` and `__hash__` of subclasses of `str`, iterating doesn't
     return (
         type(value) is dict
         and all(type(key) is str for key in value)

@@ -1,10 +1,9 @@
 import importlib.metadata
 
 try:
-    # It checks that it has the version of cadwyn
     import cadwyn_core  # noqa: F401
 except ModuleNotFoundError as exc:
-    if exc.name != "cadwyn_core":  # pragma: no cover # A module that cadwyn-core needs is missing
+    if exc.name != "cadwyn_core":  # pragma: no cover
         raise
     _version = importlib.metadata.version("cadwyn")
     raise ImportError(
@@ -12,7 +11,6 @@ except ModuleNotFoundError as exc:
         f"`pip install cadwyn-core=={_version}`."
     ) from exc
 
-# They moved to cadwyn-core, and `import cadwyn` still makes them its attributes under their old names
 from . import _asts as _asts
 from . import _utils as _utils
 from .applications import Cadwyn
@@ -42,8 +40,6 @@ from .structure import (
 )
 
 # isort: split
-# The FastAPI integration gives the versioning modules what they need from FastAPI. They only need it once Cadwyn is
-# used, so it comes after the other imports, which keeps the order in which they import FastAPI.
 from ._internal import fastapi_bindings as fastapi_bindings
 
 __version__ = importlib.metadata.version("cadwyn")

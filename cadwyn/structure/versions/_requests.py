@@ -1,6 +1,6 @@
 import functools
 from collections.abc import (
-    Callable,  # noqa: TC003 # Needed by runtime annotation introspection.
+    Callable,  # noqa: TC003
 )
 from contextlib import AsyncExitStack
 from typing import (
@@ -98,7 +98,6 @@ async def _migrate_request(
     get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
     client_json_strings: "_ClientJsonStrings",
 ) -> dict[str, Any]:
-    # Migrations can put new uploads into the form, which FastAPI doesn't know about
     uploads = _get_uploads_to_close(request) if request_info._form is not None else None
     has_run_migrations = _run_request_migrations(
         versions, request_info, current_version, body_target, get_body_union_member, head_route, uploads
@@ -108,18 +107,15 @@ async def _migrate_request(
 
     request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
     del request._headers
-    # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
     CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
     form_model_lookup = _FormModelLookup(head_dependant)
-    # Request migrations got the members of the copies of enums, as they always did, but the head gets its own ones.
-    # Each param that reads the body gets its own iterator over each lazy value, as in plain FastAPI.
     body_with_head_members = _get_head_values(versions, request_info.body, route, head_dependant, head_route)
     if request_info._form is not None:
         if uploads_read_by_fastapi:
             await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
         body_for_solving = FormData(request_info._form)
-    elif (  # pragma: no cover # FastAPI >= 0.158.2
+    elif (  # pragma: no cover
         form_model_omission is _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS
         and (
             body_with_head_members is None
@@ -128,18 +124,14 @@ async def _migrate_request(
             )
         )
     ):
-        # The form model stays omitted, so every other param reads the form that the client would have sent
         body_for_solving = await _get_form_for_omitted_form_model(
             request, head_dependant, head_route, body_with_head_members, embed_body_fields=embed_body_fields
         )
-    # A body is omitted if the request had none for FastAPI, or if a migration has set it to None
     elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
         body_for_solving = _OMITTED_BODY
-    elif (  # pragma: no cover # FastAPI >= 0.158.2
+    elif (  # pragma: no cover
         form_model_omission is _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS
     ):
-        # The migrated body supplies the form model. There is no model dump to restore, but the migrated body and the
-        # untouched form keys must reach every reader just as they do for a supplied form model.
         body_for_solving = body_with_head_members
         form_model_lookup = await _get_form_model_lookup(
             request,
@@ -150,8 +142,7 @@ async def _migrate_request(
             embed_body_fields=embed_body_fields,
             is_migrated=has_run_migrations,
         )
-    elif form_model_omission is _FormModelOmission.OMITTED:  # pragma: no cover # FastAPI >= 0.158.2
-        # A migration has set the body of an omitted form model. It isn't a dump, so we don't restore its aliases
+    elif form_model_omission is _FormModelOmission.OMITTED:  # pragma: no cover
         body_for_solving = request_info.body
         form_model_lookup = _get_omitted_form_model_lookup(
             head_dependant, head_route, body_for_solving, embed_body_fields=embed_body_fields
@@ -182,7 +173,6 @@ async def _migrate_request(
             head_dependant,
             head_route,
             route,
-            # The models that we replace with data can have members of copies of enums and lazy values too
             _get_head_values(
                 versions,
                 _to_head_input(
@@ -196,11 +186,6 @@ async def _migrate_request(
             embed_body_fields=embed_body_fields,
         )
 
-    # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-    # We solve the head's dependencies exactly once, because solving them again would run the dependencies
-    # that aren't cached, e.g. `use_cache=False` and `yield` ones, once more. If the head rejects the restored body,
-    # we report its errors instead of solving again with the body as it is, which would also hide the client's
-    # values behind the defaults that some fields get from their core schemas.
     result = await solve_dependencies(
         request=request,
         body=_embed_form_model(body_for_solving, form_model_lookup),
@@ -237,36 +222,28 @@ async def _convert_endpoint_kwargs_to_version(
     if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
         kwargs.pop(request_param_name)
     if route.body_field is not None and isinstance(route.body_field.field_info, params.Form):
-        # FastAPI has already parsed this form, so this returns its cached form
         _get_uploads_to_close(request).add((await request.form()).multi_items())
 
     api_version = versions.api_version_var.get()
     if api_version is None:
         return kwargs
 
-    # The class of the model whose dump the body is, e.g. the member of a union that the request matches
     dumped_body: Union[BaseModel, None] = None
     form_model_omission = _FormModelOmission.NOT_OMITTED
     uploads_read_by_fastapi: Union[_UploadPositions, None] = None
-    # The validated body that tells which member of a union body the request matches, if we have it
     validated_body: object = _UNKNOWN_BODY
-    # The copies of the strings that the client has sent in `Json[...]` fields, by their paths in the body
     client_json_strings = _ClientJsonStrings()
-    # This is a kind of body param you get when you define a single pydantic schema in your route's body
     if (
         len(route.dependant.body_params) == 1
         and head_body_field is not None
         and body_field_alias is not None
         and _body_is_in_kwargs(route, body_field_alias, embed_body_fields=embed_body_fields)
     ):
-        # FastAPI keys the kwargs by param names, so a kwarg named after the body's alias can be another param
         raw_body: Union[BaseModel, None] = kwargs[route.dependant.body_params[0].name]
         validated_body = raw_body
         if raw_body is None:
             body = None
             form_model_omission = await _get_form_model_omission(request, route)
-        # It means we have a dict or a list instead of a full model.
-        # This covers the following use case in the endpoint definition: "payload: dict = Body(None)"
         elif not isinstance(raw_body, BaseModel):
             body = raw_body
         else:
@@ -276,7 +253,6 @@ async def _convert_endpoint_kwargs_to_version(
             plan = _get_route_json_values_plan(head_dependant, route, embed_body_fields=embed_body_fields)
             body = _copy_decoded_json_strings(plan, body, client_json_strings)
     else:
-        # This is for requests without body or with complex body such as form or file
         body = await _get_body(request, route.body_field, strict_content_type=_get_strict_content_type(request))
         if isinstance(body, FormData):
             uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
@@ -314,7 +290,6 @@ async def _convert_endpoint_kwargs_to_version(
         get_body_union_member=get_body_union_member,
         client_json_strings=client_json_strings,
     )
-    # Because we re-added it into our kwargs when we did solve_dependencies
     if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
         new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
 
@@ -326,7 +301,6 @@ def _get_head_values(
 ) -> Any:
     """Return the migrated body with the values that the head needs (see `_to_head_values`)"""
     replace_enum_members = versions._has_versioned_plain_enums
-    # A single param can't share the iterators with anyone
     replay_lazy_iterators = _can_body_have_lazy_iterators(route, in_lazy_items=False) and _has_several_body_readers(
         head_dependant, head_route
     )
@@ -366,8 +340,6 @@ async def _encode_json_values(
     it is and fails as before.
     """
     plan = _get_route_json_values_plan(head_dependant, route, embed_body_fields=embed_body_fields)
-    # FastAPI gives the body param its default without validating it if the request has no body, so the values of
-    # the default might not have the types that the request's version validates them into
     if plan is None or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields):
         return body
     return _encode_planned_json_values(

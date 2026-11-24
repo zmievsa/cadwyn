@@ -65,7 +65,6 @@ def test__import__with_another_version_of_cadwyn_core__should_name_the_versions(
 
 
 def test__version_check_of_cadwyn_core__without_cadwyn__should_pass(monkeypatch: pytest.MonkeyPatch):
-    # The standalone tox environment imports cadwyn-core where cadwyn really isn't installed
     monkeypatch.setattr(importlib.metadata, "distributions", lambda **_: iter(()))
 
     cadwyn_core._check_that_cadwyn_has_the_same_version()

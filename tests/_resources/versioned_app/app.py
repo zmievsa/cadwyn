@@ -28,14 +28,12 @@ def non_api_route_made_only_to_verify_that_we_can_have_non_api_routes():
     raise NotImplementedError
 
 
-# TODO: Add better tests for covering lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield  # pragma: no cover
 
 
 def _create_versioned_app(api_version_var: Union[ContextVar[Union[VersionType, None]], None] = None) -> Cadwyn:
-    # A version change can only belong to one version bundle, so every app gets its own
     class ReturnFirstVersionResponse(VersionChange):
         description = "2021-01-01 returns my_version1 instead of my_version2"
         instructions_to_migrate_to_previous_version = (

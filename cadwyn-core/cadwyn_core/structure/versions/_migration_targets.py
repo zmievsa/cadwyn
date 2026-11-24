@@ -1,6 +1,6 @@
 from collections.abc import (
-    Callable,  # noqa: TC003 # Needed by runtime annotation introspection.
-    Iterable,  # noqa: TC003 # Needed by runtime annotation introspection.
+    Callable,  # noqa: TC003
+    Iterable,  # noqa: TC003
 )
 from typing import (
     TYPE_CHECKING,
@@ -29,7 +29,7 @@ from cadwyn_core.exceptions import (
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 else:
-    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001
 
 
 def _get_schema_migration_key(annotation: object) -> object:
@@ -51,10 +51,7 @@ _SchemaInstruction = TypeVar("_SchemaInstruction")
 class _SchemaMigrationTarget(NamedTuple):
     """What the schema migrations of a request body or a response model are looked up by."""
 
-    # The annotations whose migrations the body or the response gets as a whole, e.g. the model `A` or `Union[A, B]`.
-    # Their migrations replace the ones of the union members, so that none of them runs twice
     keys: tuple[object, ...] = ()
-    # The latest versions of the models that are members of the annotation if it's a union, e.g. `Optional[A]`
     union_members: tuple[type[BaseModel], ...] = ()
 
 
@@ -140,7 +137,6 @@ def _no_union_member() -> None:
     """Find no union member: for the bodies and responses whose union members have no migrations."""
 
 
-# Marks that the body param doesn't get the request body as an endpoint argument, so we don't have its validated value
 _UNKNOWN_BODY = object()
 
 

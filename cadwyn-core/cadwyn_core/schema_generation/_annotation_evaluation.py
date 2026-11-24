@@ -38,10 +38,7 @@ from cadwyn_core._utils import (
 
 
 def _rebuild_model(model: type[BaseModel]) -> None:
-    # In case we have a forwardref within one of the fields
-    # For example, when "from __future__ import annotations" is used in the file with the schema
     if model is not BaseModel:
-        # An empty namespace makes sure that our local variables cannot be used to resolve the forward refs
         model.model_rebuild(raise_errors=False, _types_namespace={})
 
 
@@ -50,10 +47,7 @@ def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
     if sys.version_info >= (3, 14):  # pragma: no cover
         from annotationlib import Format, get_annotations
 
-        # Annotations are evaluated lazily since Python 3.14 so the names that are only imported for type checking
-        # would raise a NameError
         return get_annotations(obj, format=Format.FORWARDREF)
-    # E.g. `object` has none before Python 3.14, which annotationlib treats as no annotations
     return getattr(obj, "__annotations__", {})
 
 
@@ -74,7 +68,6 @@ def _evaluate_user_annotations(evaluate: Callable[[], _T_EVALUATED]) -> _T_EVALU
     try:
         return evaluate()
     except RecursionError:
-        # This is more likely a bug in Cadwyn than in the user's annotations
         raise
     except Exception:  # noqa: BLE001
         return _UNRESOLVED
@@ -94,7 +87,6 @@ def _has_undefined_names_in_lazy_annotations(obj: Any) -> bool:
     return False
 
 
-# The models whose copies do not redefine inherited fields (see _ReferenceCycles.get_redefined_fields)
 _NO_REDEFINED_FIELDS: "collections.abc.Mapping[str, Any]" = types.MappingProxyType({})
 
 
@@ -110,12 +102,10 @@ def _get_model_annotations(
             return _get_annotation_with_metadata(field_info)
         return value  # pragma: no cover
 
-    # Pydantic has already resolved the annotations of the fields so we prefer them over unresolved annotations
     annotations = {
         name: _rebuild_annotated(name, value) if _is_unresolved_annotation(value) else value
         for name, value in _get_annotations_without_evaluating(model).items()
     }
-    # The inherited fields that the copy redefines (see _ReferenceCycles.get_redefined_fields)
     return annotations | dict(redefined_fields)
 
 
@@ -150,20 +140,16 @@ def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldIn
     ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
     typevars_map = get_model_typevars_map(model)
     config_wrapper = ConfigWrapper(model.model_config, check=False)
-    # Pydantic evaluates the annotations of the fields in there
     rebuilt_fields = _evaluate_user_annotations(
         lambda: rebuild_model_fields(
             model, config_wrapper=config_wrapper, ns_resolver=ns_resolver, typevars_map=typevars_map
         )
     )
     if rebuilt_fields is _UNRESOLVED:
-        # E.g. some names in the annotations are not defined yet
         return None
-    # Pydantic >= 2.13 also returns the info about the extra fields
     return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
 
 
-# The modules of the generics whose args are types that pydantic resolves, such as list, dict, Optional, or Callable
 _TYPE_POSITION_GENERIC_MODULES = frozenset(
     {"builtins", "collections", "collections.abc", "types", "typing", "typing_extensions"}
 )
@@ -187,19 +173,14 @@ def _is_type_position_in_generic(origin: Any, index: int) -> bool:
 def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
     """Rebuild a generic alias such as list[Item] or Optional[Item] with new args"""
     origin = get_origin(annotation)
-    # A bare `typing.Callable` has nothing to version and cannot be rebuilt as `Callable[()]`
     if origin is collections.abc.Callable and not new_args:
         return annotation
-    # The special forms that take a single arg (e.g. ClassVar, Final, TypeGuard, and Unpack) reject a tuple of it.
-    # A single arg is also what the user's code passed to any other generic, e.g. `list[Item]`
     if len(new_args) == 1:
         return origin[new_args[0]]
     return origin[new_args]
 
 
 def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
-    # The same as pydantic's FieldInfo._copy() (which does not exist in older versions of pydantic):
-    # the mutable attributes must not be shared with the original either
     field_info_copy = copy.copy(field_info)
     for attr_name in ("metadata", "_attributes_set", "_qualifiers"):
         setattr(field_info_copy, attr_name, copy.copy(getattr(field_info, attr_name)))
@@ -220,7 +201,6 @@ def _replace_in_type_positions(annotation: Any, replace: Callable[[Any], Any]) -
     if replaced is not annotation:
         return replaced
     if isinstance(annotation, list):
-        # E.g. the args of Callable[[Item], None]
         return [_replace_in_type_positions(arg, replace) for arg in annotation]
     if not isinstance(annotation, (*GenericAliasUnionArgs, UnionType)):
         return annotation
@@ -240,7 +220,6 @@ def _replace_in_type_positions(annotation: Any, replace: Callable[[Any], Any]) -
 def _get_typevar_fallbacks(param: typing.TypeVar) -> tuple[str, tuple[Any, ...]]:
     """Return what pydantic validates a TypeVar without an arg as: its default, constraints, or bound, if any"""
     default = getattr(param, "__default__", None)
-    # typing.TypeVar has no defaults before Python 3.13
     if getattr(param, "has_default", lambda: default is not None)():
         return "default", (default,)
     if param.__constraints__:
@@ -290,7 +269,6 @@ def _contains_only_builtin_types(annotation: Any, *, visited_aliases: "set[int]"
             value, visited_aliases=visited_aliases, alias_name=annotation.__name__
         )
     if isinstance(annotation, (str, ForwardRef)):
-        # Pydantic resolves the name of a type alias within its value to the type alias itself
         return (annotation if isinstance(annotation, str) else annotation.__forward_arg__) == alias_name
     if is_any(annotation) or _is_one_of(annotation, _BUILTIN_TYPES_OF_RECURSIVE_TYPE_ALIASES):
         return True
@@ -304,7 +282,6 @@ def _contains_only_builtin_types(annotation: Any, *, visited_aliases: "set[int]"
 
 
 def _is_one_of(value: Any, members: "tuple[Any, ...]") -> bool:
-    # By identity because the annotations can be anything, e.g. unhashable or with an __eq__ that raises
     return any(value is member for member in members)
 
 
@@ -325,7 +302,7 @@ class _TypeAliasValue(NamedTuple):
 def _are_same_args(args: tuple[Any, ...], other_args: tuple[Any, ...]) -> bool:
     try:
         return bool(args == other_args)
-    except Exception:  # noqa: BLE001  # pragma: no cover # E.g. Annotated metadata whose __eq__ raises
+    except Exception:  # noqa: BLE001  # pragma: no cover
         return False
 
 
@@ -350,7 +327,6 @@ def _get_value_of_type_alias_with_args(annotation: Any) -> "Union[_TypeAliasValu
         elif getattr(value, "__parameters__", ()):
             value = value[tuple(args_by_param[param] for param in value.__parameters__)]
     except (NameError, KeyError, TypeError, ValueError):
-        # E.g. its value uses names that are not defined yet, or it has a TypeVarTuple that takes several args
         return _UNRESOLVED
     return _TypeAliasValue(alias, args, value)
 
@@ -366,7 +342,6 @@ def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
     globalns = getattr(sys.modules.get(model.__module__), "__dict__", None)
     localns = {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
     evaluated_annotation = _evaluate_user_annotations(lambda: pydantic_try_eval_type(annotation, globalns, localns)[0])
-    # The forward refs that are left make discovery keep the head args, like main
     return annotation if evaluated_annotation is _UNRESOLVED else evaluated_annotation
 
 

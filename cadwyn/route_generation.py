@@ -30,7 +30,7 @@ from cadwyn.exceptions import (
     RouterGenerationError,
     RouterPathParamsModifiedError,
 )
-from cadwyn.middleware import APIVersionLocation  # noqa: TC001 # Needed by runtime annotation introspection.
+from cadwyn.middleware import APIVersionLocation  # noqa: TC001
 from cadwyn.structure.versions._background import (
     _DroppedBackgroundTasksWarning,
     _get_hidden_background_tasks_param_name,
@@ -59,7 +59,6 @@ _Call = TypeVar("_Call", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=APIRouter)
 _WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
 _RouteT = TypeVar("_RouteT", bound=BaseRoute)
-# This is a hack we do because we can't guarantee how the user will use the router.
 _FLAT_DEPENDANT_ATTR: Final = "_flat_dependant"
 _RoutePath = str
 _RouteMethod = str
@@ -150,15 +149,6 @@ def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext |
             new_route.dependencies = list(new_route.dependencies)
         return new_route
 
-    # This is slightly wasteful in terms of resources but it makes it easy for us
-    # to make sure that new versions of FastAPI are going to be supported even if
-    # APIRoute gets new attributes.
-    # Pre-populate deepcopy's memo so it returns the original objects for attributes
-    # containing ModelField/TypeAdapter instances instead of recursing into them.
-    # These can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
-    # infinite recursion during deepcopy.
-    # FastAPI checks `example is not _Unset` by identity when building OpenAPI, so a copied sentinel
-    # inside our endpoint wrappers' param defaults would be rendered as `"example": {}`.
     memo: dict[int, Any] = {id(_Unset): _Unset}
     for attr in ("dependant", _FLAT_DEPENDANT_ATTR, "body_field", "response_model", "dependency_overrides_provider"):
         obj = getattr(route, attr, None)
@@ -220,8 +210,6 @@ def _set_route_deleted(route: APIRoute | APIWebSocketRoute, *, deleted: bool) ->
 
 
 def _refresh_websocket_route(route: APIWebSocketRoute, dependency_overrides_provider: object) -> None:
-    # FastAPI builds path matchers, dependants, embedding rules, and the handler closure together.
-    # Copy all of that state, including fields added by newer FastAPI versions, but keep Cadwyn's marker.
     rebuilt = APIWebSocketRoute(
         route.path,
         route.endpoint,
@@ -260,7 +248,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
         ]
 
     def transform(self) -> GeneratedRouters[_R, _WR]:
-        # Copy MUST keep the order and number of routes. Otherwise, a ton of code below will break.
         router = copy_router(self.parent_router)
         webhook_router = copy_router(self.parent_webhooks_router)
         routers: dict[VersionType, _R] = {}
@@ -272,8 +259,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     if isinstance(route, APIWebSocketRoute) and not _route_is_deleted(route):
                         _refresh_websocket_route(route, version_router.dependency_overrides_provider)
             schema_generator = self.schema_generators[str(version.value)]
-            # All routes of the version must be known before any of them is versioned so that the decisions about
-            # the models that refer to each other do not depend on the order of the routes
             with schema_generator.versioning_routes(get_models_that_routes_request([router, webhook_router])):
                 schema_generator.annotation_transformer.migrate_router_to_version(router)
                 schema_generator.annotation_transformer.migrate_router_to_version(webhook_router)
@@ -282,7 +267,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
 
             routers[version.value] = router
             webhook_routers[version.value] = webhook_router
-            # Applying changes for the next version
             router = copy_router(router)
             webhook_router = copy_router(webhook_router)
             self._apply_endpoint_changes_to_router(router.routes + webhook_router.routes, version)
@@ -311,8 +295,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
             for older_router in list(routers.values()):
                 older_route = older_router.routes[route_index]
 
-                # We know they are APIRoutes because of the check at the very beginning of the top loop.
-                # I.e. Because head_route is an APIRoute, both routes are  APIRoutes too
                 older_route = cast("APIRoute", older_route)
                 if _DELETED_ROUTE_TAG in older_route.tags:
                     continue
@@ -327,7 +309,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     template_older_body_model = None
                 _add_data_migrations_to_route(
                     older_route,
-                    # NOTE: The fact that we use latest here assumes that the route can never change its response schema
                     head_route,
                     template_older_body_model,
                     older_route.body_field.alias if older_route.body_field is not None else None,
@@ -432,11 +413,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
     def _extract_all_routes_identifiers_for_route_to_converter_matching(
         self, router: APIRouter, head_router: APIRouter
     ) -> tuple[dict[_RoutePath, dict[_RouteMethod, set[_RouteId]]], set[Any], set[Any]]:
-        # int is the index of the route in the router.routes list.
-        # So we essentially keep track of which routes have which response models and request bodies.
-        # and their indices in the router.routes list. The indices will allow us to match them to the same
-        # routes in the head version. This gives us the ability to later apply changes to these routes
-        # without thinking about any renamings or response model changes.
 
         response_models = set()
         request_bodies = set()
@@ -446,12 +422,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
             if isinstance(route, APIRoute):
                 if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
                     response_models.add(route.response_model)
-                # Migrations are looked up by the latest version of the route, e.g. for a union or a type alias.
-                # The routers of all versions have the same routes in the same order, so it's an APIRoute too
                 head_route = cast("APIRoute", head_router.routes[index])
                 response_target = _get_schema_migration_target(head_route.response_model)
                 response_models.update(response_target.keys, response_target.union_members)
-                # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
                     annotation = route.body_field.field_info.annotation
                     if annotation is not None and lenient_issubclass(annotation, BaseModel):
@@ -491,7 +464,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 f'Endpoint "{list(methods)} {path}" you tried to {action} in "{version_change_name}" {problem}'
             )
 
-        # We take the methods of the routes before changing them because had(methods=...) changes them
         if isinstance(instruction, EndpointDidntExistInstruction):
             action, problem_of_missing_methods = "delete", "doesn't exist in a newer version"
             if deleted_routes:
@@ -579,7 +551,6 @@ def _validate_no_repetitions_in_routes(routes: list[APIRoute | APIWebSocketRoute
 def _add_data_migrations_to_route(
     route: APIRoute,
     head_route: Any,
-    # A single body parameter can also use a primitive, union, or generic annotation.
     template_body_field: object,
     template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
@@ -594,8 +565,6 @@ def _add_data_migrations_to_route(
             f"for route {list(_route_methods(route))} {route.path} which should not be possible. "
             "Please, contact my author.",
         )
-    # The solve of the latest version needs the BackgroundTasks that FastAPI runs after the response. FastAPI only
-    # creates one if something asks for it, so with the flag we ask for it if the endpoint doesn't.
     background_tasks_param_name = route.dependant.background_tasks_param_name
     hidden_background_tasks_param_name = None
     if background_tasks_param_name is None and run_background_tasks_of_latest_version_dependencies:
@@ -677,7 +646,6 @@ def _get_routes(
         if (
             isinstance(route, APIRoute | APIWebSocketRoute)
             and route.path.rstrip("/") == endpoint_path
-            # A WEBSOCKET selector matches only WebSocket routes, and an HTTP selector matches only HTTP routes
             and ("WEBSOCKET" in endpoint_methods) == isinstance(route, APIWebSocketRoute)
             and _route_methods(route).issubset(endpoint_methods)
             and (endpoint_func_name is None or _callable_name(route.endpoint) == endpoint_func_name)
@@ -696,7 +664,6 @@ def _get_route_from_func(
             return route
         if isinstance(route, APIWebSocketRoute) and route.endpoint == endpoint and websocket_route is None:
             websocket_route = route
-    # Preserve the decorator's HTTP selection when the same function serves both protocols.
     return websocket_route
 
 
@@ -714,7 +681,7 @@ def _get_version_changes_that_migrate_route(
         for index, version in enumerate(version_list)
         if _DELETED_ROUTE_TAG not in cast("APIRoute", routers[version.value].routes[route_index]).tags
     ]
-    if not existing_indices:  # pragma: no cover # Route generation fails for routes that exist in no version
+    if not existing_indices:  # pragma: no cover
         return []
     return [change for version in version_list[: max(existing_indices)] for change in version.changes]
 
@@ -750,5 +717,4 @@ def _schema_name(schema: object) -> str:
 
 
 def _route_has_a_simple_body_schema(route: APIRoute) -> bool:
-    # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
     return len(route.dependant.body_params) == 1

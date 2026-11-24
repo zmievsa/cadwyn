@@ -25,8 +25,6 @@ possibly-missing-attribute = "ignore"
 unsupported-base = "ignore"
 
 [[overrides]]
-# The how-to examples are small apps that import their own modules
-# (`from users import ...`) the way an app run from its own directory does
 include = ["docs_src/how_to/change_openapi_schemas/*/*/**"]
 exclude = ["docs_src/how_to/change_openapi_schemas/*/tests/**"]
 
@@ -34,15 +32,12 @@ exclude = ["docs_src/how_to/change_openapi_schemas/*/tests/**"]
 import-not-found = "ignore"
 
 [[overrides]]
-# These doc examples import the modules of an imaginary app (e.g. `from users import User`).
-# Their tests register stand-ins for these modules before they import the examples.
 include = ["docs_src/concepts/version_changes/block*.py", "docs_src/how_to/migrate_data_outside_of_routes/block*.py"]
 
 [overrides.rules]
 import-not-found = "ignore"
 
 [[overrides]]
-# The `cadwyn render` examples run from the directory of this app, so it imports `data.schemas`
 include = ["docs_src/concepts/schema_generation/render_project/**"]
 
 [overrides.rules]

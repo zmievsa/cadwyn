@@ -49,7 +49,6 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
-    # Exactly the same version, which `cadwyn` and `cadwyn_core` also check at import
     "cadwyn-core==9.1.0",
     "fastapi >=0.137.1",
     "starlette >=0.30.0",
@@ -69,7 +68,6 @@ dev = [
     "python-multipart >=0.0.6",
     "better-devtools ~=0.13.3",
     "pytest-sugar ~=1.0.0",
-    # tests
     "svcs ~=24.1.0",
     "httpx >=0.26.0",
     "pytest-fixture-classes >=1.0.3",
@@ -77,9 +75,7 @@ dev = [
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
-    # type checking
     "ty>=0.0.102",
-    # docs
     "mkdocs >=1.5.2",
     "mkdocs-material >=9.3.1",
     "mkdocs-simple-hooks >=0.1.5",
@@ -132,7 +128,6 @@ patch = ["subprocess"]
 fail_under = 100
 skip_covered = true
 skip_empty = true
-# Taken from https://coverage.readthedocs.io/en/7.1.0/excluding.html#advanced-exclusion
 exclude_lines = [
     "pragma: no cover",
     "assert_never\\(",
@@ -156,33 +151,25 @@ omit = [
     "./docs/plugin.py",
     "./site/plugin.py",
     "scripts/*.py",
-    # Modules that tests write to their temporary directories
     "*/pytest-of-*/*",
 ]
 
 [tool.pytest.ini_options]
-# They run in a standalone install of cadwyn-core, which the `standalone` tox environment makes
 addopts = "--ignore=cadwyn-core/tests"
 filterwarnings = [
-    # When debugging `ResourceWarning`s, change this to "all" and set PYTHONTRACEMALLOC.
     "error",
 
-    # Older starlette syntax is currently supported.
     "ignore:The `name` is not the first parameter anymore:DeprecationWarning:starlette.templating",
     "ignore:The on_startup and on_shutdown parameters are deprecated:DeprecationWarning:starlette.routing",
 
-    # FastAPI still uses httpx, we cannot fix it
     "ignore: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead",
 
-    # Starlette's test client still imports the alias deprecated in AnyIO 4.15.
     'ignore:The anyio\.abc\.BlockingPortal alias is deprecated, use anyio\.from_thread\.BlockingPortal instead\.:DeprecationWarning:starlette\.testclient',
 
-    # Older pydantic syntax is currently supported.
     "ignore:Using extra keyword arguments on `Field` is deprecated:DeprecationWarning:pydantic.fields",
     "ignore:Pydantic V1 style `@root_validator` validators are deprecated:pydantic.PydanticDeprecatedSince20",
     "ignore:Pydantic V1 style `@validator` validators are deprecated:pydantic.PydanticDeprecatedSince20",
 
-    # starlette fails to close an anyio `MemoryObjectReceiveStream` that it opens.
     "ignore:Unclosed .MemoryObjectReceiveStream:ResourceWarning:anyio.streams.memory",
 ]
 

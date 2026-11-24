@@ -75,7 +75,6 @@ class IntTreeNode(TreeNode[int]):
     pass
 
 
-# The generators that HookedTree asks about itself while pydantic creates its subclasses, with their answers
 HOOKED_TREE_GENERATORS: list[tuple[Any, list[Any]]] = []
 
 
@@ -155,7 +154,6 @@ class AnimalEnvelope(BaseModel):
 
 
 class AnyModelEnvelope(BaseModel):
-    # Like on main, the fields that accept any model are never versioned
     value: SerializeAsAny[BaseModel]
 
 
@@ -226,7 +224,6 @@ def test__router_generation__unchanged_self_referencing_models__should_work_in_e
         assert client.post("/models", json={"children": 1}).status_code == HTTP_422_UNPROCESSABLE_CONTENT
         openapi = unversioned_client.get(f"/openapi.json?version={version}")
         assert openapi.status_code == HTTP_200_OK
-        # The unchanged models are the same classes in every version so they never get duplicated
         schema_names = openapi.json()["components"]["schemas"]
         assert not [name for name in schema_names if name.endswith(("__1", "__2"))]
 
@@ -282,7 +279,6 @@ def test__generate_versioned_models__unchanged_models_outside_of_reference_cycle
     for generator in generate_versioned_models(versions).values():
         for model in (ItemWithCategory, CategoryChild, TreeNode[int], IntTreeNode, AnyModelEnvelope, OuterOfItem, Item):
             assert generator[model] is not model
-        # Their copies refer to the head models in reference cycles
         assert generator[ItemWithCategory].model_fields["category"].annotation == Optional[Category]
         assert generator[TreeNode[int]].__bases__ == (TreeNode,)
         assert generator[OuterOfItem].model_fields["item"].annotation is generator[Item]
@@ -295,12 +291,10 @@ def test__generate_versioned_models__models_referring_to_changed_models__should_
     )
     generators = generate_versioned_models(versions)
 
-    # A child of a changed model, even if its own fields refer to unchanged models only
     old_child = generators["2000-01-01"][CategoryChild]
     assert old_child is not CategoryChild
     assert old_child.__bases__ == (generators["2000-01-01"][CategoryParent],)
     assert old_child.model_fields["name"].alias == "oldName"
-    # The unchanged self-referencing model that it refers to is the head one
     assert old_child.model_fields["children"].annotation == list[Category]
     assert generators["2001-01-01"][CategoryChild].model_fields["name"].alias == "fullName"
 
@@ -421,7 +415,6 @@ def test__generate_versioned_models__self_referencing_model_with_changed_generic
     generator = generate_versioned_models(versions)["2000-01-01"]
 
     old_category = generator[CategoryWithItemPage]
-    # Its generic uses the old Item so it needs a copy of its own
     assert old_category is not CategoryWithItemPage
     old_page = get_args(old_category.model_fields["items"].annotation)[0]
     assert get_args(old_page.model_fields["items"].annotation) == (generator[Item],)
@@ -434,7 +427,6 @@ def test__generate_versioned_models__generic_arg_referring_to_self_referencing_m
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
-    # The self-referencing Category no longer stops the args from being versioned because it is not copied
     assert get_args(generator[Wrapper[ItemWithCategory]].model_fields["items"].annotation) == (
         generator[ItemWithCategory],
     )
@@ -470,7 +462,6 @@ def test__generate_versioned_models__changed_child_of_parent_with_custom_init__s
     old_child = generate_versioned_models(versions)["2000-01-01"][StrippingChild]
 
     assert StrippingChild(x=" a ").x == "a"
-    # The __init__ of the head parent would fail to strip the integer
     assert old_child.model_validate({"x": 1}).model_dump() == {"x": 1}
 
 
@@ -489,7 +480,6 @@ def test__migrate_response_body__head_instance_of_changed_subclass__should_be_re
         Version("2000-01-01"),
     )
 
-    # The head parent would accept the head instance and serialize it with the field that did not exist
     with pytest.raises(ValidationError):
         migrate_response_body(versions, response_model, latest_body=latest_body, version="2000-01-01")
 
@@ -519,7 +509,6 @@ def test__router_generation__unchanged_self_referencing_sibling_of_changed_model
         assert client.post("/siblings", json={"name": "a"}).json() == {"name": "a"}
         assert unversioned_client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
     for generator in generate_versioned_models(app.versions).values():
-        # The common base is copied for its changed subclass but its other subclasses do not need copies
         assert generator[SharedBase] is not SharedBase
         assert generator[SiblingCategory] is SiblingCategory
 
@@ -533,14 +522,10 @@ def test__generate_versioned_models__self_referencing_generic_parametrized_while
     answers_during_parametrization: list[Any] = []
     HOOKED_TREE_GENERATORS.append((generator, answers_during_parametrization))
     try:
-        # Like when another thread parametrizes the generic, the parametrization is a subclass of HookedTree
-        # before pydantic sets its fields and its generic args
         old_tree = generator[HookedTree[float]]
     finally:
         HOOKED_TREE_GENERATORS.clear()
 
-    # The parametrizations do not make their origin versioned and the answer that did not know about the
-    # parametrization yet is not kept either
     assert answers_during_parametrization
     assert all(answer is HookedTree for answer in answers_during_parametrization)
     assert generator[HookedTree] is HookedTree

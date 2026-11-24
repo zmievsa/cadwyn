@@ -31,16 +31,11 @@ _IDENTICAL_REPRS_ERROR = (
 )
 
 
-# A parent type of typing._GenericAlias
 _BaseGenericAlias: type = cast("type", type(List[int])).mro()[1]  # noqa: UP006
 
-# type(list[int]) and type(List[int]) are different which is why we have to do this.
-# Please note that this problem is much wider than just lists which is why we use typing._BaseGenericAlias
-# instead of typing._GenericAlias.
 GenericAliasUnion = Union[GenericAlias, _BaseGenericAlias]  # ty: ignore[invalid-type-form]
 GenericAliasUnionArgs = get_args(GenericAliasUnion)
 if sys.version_info >= (3, 14):  # pragma: no cover
-    # In Python 3.14, Union types are no longer subtypes of _BaseGenericAlias
     GenericAliasUnionArgs = (*GenericAliasUnionArgs, type(Union[int, str]))
 
 
@@ -63,7 +58,6 @@ def get_fancy_repr(value: Any, context: Union[_ReprContext, None] = None) -> Any
             raise CadwynRenderError(
                 "Cannot render shared mutable containers faithfully. Use a named default_factory instead."
             )
-        # Keep temporary values from subclass iterators alive so their ids cannot be reused during this rendering.
         context.mutable[id(value)] = value
     context.active.add(id(value))
     try:
@@ -127,7 +121,6 @@ def transform_grouped_metadata(
 
 
 def _container_item_repr(value: Any, context: _ReprContext) -> PlainRepr:
-    # Values are expressions rather than quoted strings. Annotations still spell NoneType as None.
     return PlainRepr("type(None)" if value is NoneType else get_fancy_repr(value, context))
 
 
@@ -137,7 +130,6 @@ def transform_collection(
 ) -> PlainRepr:
     cls = type(value)
     if _is_generated_namedtuple(cls):
-        # Named tuples take their fields as separate arguments rather than as one iterable
         fields = (_container_item_repr(item, context) for item in tuple.__iter__(cast("tuple[object, ...]", value)))
         return PlainRepr(f"{cls.__name__}({', '.join(fields)})")
     items = [_container_item_repr(item, context) for item in value]
@@ -148,8 +140,6 @@ def transform_collection(
 
 
 def _is_generated_namedtuple(cls: type) -> bool:
-    # Only the classes that namedtuple() and NamedTuple generate are known to take their fields positionally.
-    # Their subclasses can take other arguments, so they render through their constructor and repr instead.
     return (
         cls.__bases__ == (tuple,)
         and isinstance(vars(cls).get("_fields"), tuple)
@@ -182,7 +172,6 @@ def transform_dict(value: dict[object, object], context: _ReprContext) -> PlainR
             )
         return PlainRepr(f"defaultdict({_container_item_repr(factory, context)}, {_mapping_repr(value, context)!r})")
     if cls is Counter:
-        # Counter(iterable_of_pairs) would count the pairs, and Counter's repr would sort the counts
         return PlainRepr(f"Counter({_mapping_repr(value, context)!r})" if value else "Counter()")
     pairs = [(_container_item_repr(k, context), _container_item_repr(v, context)) for k, v in value.items()]
     if len({key for key, _ in pairs}) != len(pairs):
@@ -208,12 +197,11 @@ def _rebuild_and_repr(original: object, rebuild: Callable[[], object], expected:
         rebuilt = rebuild()
         source = repr(rebuilt)
         expression = ast.parse(source, mode="eval").body
-    except Exception as error:  # User constructors and reprs can fail in arbitrary ways.
+    except Exception as error:
         raise CadwynRenderError(
             f"Cannot render {cls.__qualname__} through its constructor and repr. Use a named default_factory instead."
         ) from error
     if type(rebuilt) is not cls or _stored_items(rebuilt) != expected:
-        # E.g. a Counter subclass counts the (key, value) pairs that we pass to its constructor
         raise CadwynRenderError(
             f"Cannot render {cls.__qualname__} because its constructor doesn't keep its type and items. "
             "Use a named default_factory instead."
@@ -255,8 +243,6 @@ def transform_union(value: Any, context: _ReprContext) -> str:
 def transform_lambda(value: LambdaType, keyword: str = "default_factory") -> Any:
     if keyword != "default_factory" and value.__closure__:
         raise CadwynRenderError("Cannot inline a config lambda with captured variables. Use a named function instead.")
-    # We clean source because getsource() can return only a part of the expression which
-    # on its own is not a valid expression such as: "\n  .had(default_factory=lambda: 91)"
     return _get_lambda_source_from_keyword(inspect.getsource(value).strip(" \n\t."), keyword)
 
 
@@ -285,7 +271,6 @@ def _get_lambda_source_from_keyword(source: str, keyword: str) -> str:
 
     if len(found_lambdas) == 1:
         return ast.unparse(found_lambdas[0])
-    # E.g. `EXTRA = lambda s: ...` passed as `json_schema_extra=EXTRA`
     elif len(found_lambdas) == 0:
         raise InvalidGenerationInstructionError(
             f"No lambda found in {keyword} even though one was passed: {source}",

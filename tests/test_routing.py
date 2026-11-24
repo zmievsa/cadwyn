@@ -35,7 +35,6 @@ def test__header_routing__with_defined_and_compatible_versions__should_select_re
     assert response.json() == {"users": [{"username": "tom", "page": 83}]}
 
     response = client.get("/v1/")
-    # its fine, because "/v1/" is defined in the lower version
     assert response.status_code == 200
 
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2022-01-10"})
@@ -50,7 +49,6 @@ def test__header_routing__with_defined_and_compatible_versions__should_select_re
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2022-03-12"})
 
     response = client.get("/v1/users")
-    # its fine, because /users is defined in the lower version
     assert response.status_code == 200
 
     response = client.get("/v1/")
@@ -59,7 +57,6 @@ def test__header_routing__with_defined_and_compatible_versions__should_select_re
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2025-01-01"})
 
     response = client.get("/v1/users")
-    # its fine, because /users is defined in the lower version
     assert response.status_code == 200
 
 

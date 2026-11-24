@@ -50,6 +50,9 @@ These follow from how Cadwyn works (see [Architecture](architecture.md)). They a
 | Migrations inside nested models | Won't do. Write the migration for the outer schema. | Running nested migrations by default would convert data twice in apps that already follow the docs (#468). |
 | Computed fields that return versioned models | Documented limitation. Expose the data as a regular field. | Every Pydantic serializer that picks a model by the value's type loses nested JSON config, changes duck-typed values, or re-wraps user exceptions (#469). |
 | `.had(alias=...)` and `.didnt_have("alias")` | Since 9.0, they also change the validation and serialization aliases that Pydantic derived from `alias`, as `Field()` does, so the wire key matches the documented one. Data with only the old key fails (a 422 or a 500) instead of getting the field's default. 8.x only warned at startup. | Clients of apps without migrations relied on the old key, so the fix waited for a major release and must fail loudly instead of losing their values (#465). |
+| `had()` and `didnt_have()` for a `Field()` in `Annotated` metadata | They don't change its constraints, its default, or the constraint classes in the metadata (e.g. `Strict` or `AllowInfNan`), as in 7.4.0, also when pydantic rebuilds the annotation from `Field()` with postponed annotations. `didnt_have()` removes only the attributes that document the field there: `title`, `description`, `examples`, and `deprecated`. `json_schema_extra` stays, because validators can read it. | Older versions of apps with such instructions have always behaved as if the instructions did nothing. Applying them would make these versions reject requests and change responses that they have always served. The unreleased #430 applied them, and #453 reverted it before 8.0.0. |
+| `lifespan`, `on_startup`, and `on_shutdown` of `Cadwyn()` | Passed only to the app's root router, never to the routers that Cadwyn creates for each version and for the unversioned routes. | FastAPI's `include_router()` merges the lifespans of the routers it includes and registers their startup and shutdown handlers again, so the app's lifespan would run once for every router (#372). |
+| The logger of data migrations | Stays named `cadwyn.structure.versions`, although its code moved to `cadwyn_core`. | Logging configs of apps refer to that name. Renaming it would silently stop their filters and handlers from applying (#660). |
 | Fields whose validation and serialization keys differ | Fix only the requests and responses that would certainly fail ("rescue-only"). | Responses that passed before must not change, even if they lost a value. |
 | Self-referencing models | Copied when that's safe. Otherwise, Cadwyn raises `SchemaGenerationError` at startup. | A clear failure is better than serving wrong shapes. |
 | Enum defaults of omitted parameters on FastAPI before 0.148 | Not rewritten. | It would fix a pre-existing bug on old FastAPI only, and every attempt added new edge cases. |
@@ -130,7 +133,7 @@ These are accepted for now. Fixing one is a separate change with its own issue.
 * Caches may share structure between models or versions, but never user-visible state such as a stateful default factory.
 * Invalid instructions or models fail at startup with an error that names the model and the field. Never fail later at request time, and never serve wrong data without an error.
 * When you rely on a private FastAPI or Pydantic internal, check at import time that it exists, and fail with a clear error if it changed instead of falling back.
-* `Cadwyn()` accepts FastAPI's parameters and passes each of them to every router it creates.
+* `Cadwyn()` accepts FastAPI's parameters and passes each of them to every router it creates, except its lifespan and its startup and shutdown handlers (see [Decisions already made](#decisions-already-made)).
 * In the user docs, describe the common case and its workaround. The full list of shapes that a rule covers belongs in the tests.
 
 **How to check a change**
@@ -139,3 +142,14 @@ These are accepted for now. Fixing one is a separate change with its own issue.
 * Run the tests on the minimum supported and the latest Pydantic, and on Python 3.11 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.
 * Pytest puts the root of the checkout it runs from first on `sys.path`, so run a test file from the checkout that you want to test.
 * After merging `main` into a branch, look for top-level functions that are now defined twice. The later definition wins without a warning.
+
+## Development setup
+
+These decisions keep the checks honest. Reversing one of them makes the checks pass while they test less.
+
+| Area | Decision | Why |
+| --- | --- | --- |
+| Lint rules that rewrite annotations and enums | Ruff's `UP007`, `UP045`, `UP042`, and `UP044` stay off, so `Union[...]`, `Optional[...]`, `(str, Enum)`, and `Unpack[Ts]` aren't rewritten to `X \| Y`, `X \| None`, `StrEnum`, and `*Ts`. | Cadwyn handles each of these forms at runtime, and they behave differently: e.g. `str()` of a `(str, Enum)` member differs from a `StrEnum` member. The tests cover each form, and the autofix would silently turn them into tests of the other one. |
+| Ternaries | Ruff's `SIM108` stays off. | Coverage can't see which side of a ternary ran, so a ternary hides an untested branch from the 100% coverage requirement. |
+| The version of `cadwyn-core` that the tests run against | The tests of `cadwyn` import `cadwyn-core` from the checkout (`PYTHONPATH` in `tox.ini`), and tox reinstalls it on every run (`--reinstall-package=cadwyn-core`), as does the `standalone` environment, whose tests import the installed wheel instead (`--import-mode=importlib`). | tox-uv rebuilds only `cadwyn`, and tox installs dependencies only when their list changes. Without these settings, the tests would run against an old build of `cadwyn-core` without an error. |
+| Required CI checks | Branch protection requires only the "CI passed" job, which fails if any other CI job fails, is cancelled, or is skipped. | Jobs can be added, renamed, or removed without changing the repository settings. When branch protection listed jobs one by one, it required only the test jobs, so lint, coverage, and the docs build could fail without blocking a merge (#642). |

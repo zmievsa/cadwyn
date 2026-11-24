@@ -37,7 +37,6 @@ CURRENT_DIR = Path(__file__).parent
 Undefined = object()
 
 
-# The models whose copies are being generated on this thread, with what reference discovery found in them
 _copying_state = threading.local()
 
 
@@ -86,25 +85,19 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
     ) -> Any:
         schema_generator = generator.schema_generator
         discovered_references = [
-            # The models with instructions are always discovered through their wrappers, the others are
-            # discovered in place
             self.get_references(schema_generator.model_bundle.schemas)
             if self.cls in schema_generator._changed_models
             else _get_head_model_references(
                 self.cls, schema_generator._reference_cycles.get_redefined_fields(self.cls)
             ),
-            # The references that the generator caches for its decisions
             schema_generator._get_references(self.cls),
         ]
         if isinstance(generator, _BareGenericCopier):
-            # The copies of generics used without type args resolve their quoted annotations, so discovery must too
             collector = _ReferencedModelCollector()
             versioned_parameters = generator.annotation_transformer.versioned_parameters
             collector.annotation_transformer.versioned_parameters = versioned_parameters
             self._change_version_of_references(collector, schema_generator.model_bundle.schemas)
             discovered_references = [collector.get_references()]
-        # Discovery does not know the references of a model whose annotations refer to names that are not
-        # defined yet so the generic args that lead to it are never versioned
         complete_references = [references for references in discovered_references if references.is_complete]
         _get_models_being_copied().append((self.cls, complete_references))
         try:
@@ -202,7 +195,6 @@ def check_that_discovery_finds_every_model_that_copying_would_request(
     generator: SchemaGenerator, model: type[BaseModel]
 ) -> None:
     references = generator._get_references(model)
-    # A collector that requests the models the same way as copying does instead of only recording them
     collector = _ReferencedModelCollector()
     collector.annotation_transformer = _AnnotationTransformer(collector)
     fields = model.model_fields

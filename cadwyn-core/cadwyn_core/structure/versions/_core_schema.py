@@ -51,7 +51,6 @@ def _has_core_schema_of_types(schema: dict[str, Any], types: frozenset[str]) -> 
             elif node.get("type") == "definition-ref" and node.get("schema_ref") in _CORE_SCHEMA_DEFINITIONS:
                 stack.append(_CORE_SCHEMA_DEFINITIONS[node["schema_ref"]])
             else:
-                # Defaults, literal values, and metadata are data, not schemas
                 stack.extend(value for key, value in node.items() if key not in ("default", "expected", "metadata"))
     return False
 
@@ -68,24 +67,16 @@ def _get_unchanging_model_core_schema(model: type[BaseModel]) -> Union[dict[str,
     schema = _register_core_schema_definitions(cast("dict[str, Any]", model.__pydantic_core_schema__))
     if schema["type"] == "definition-ref":
         schema = _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
-    # `_get_model_inner_core_schema` unwraps the "after" validators of the model and of its fields schema, so we check
-    # that the model schema is the outermost one and that its fields schema is its own schema
     if schema["type"] != "model" or schema.get("post_init") or schema["schema"] is not inner_schema:
         return None
     return inner_schema
 
 
 def _get_dumped_key(name: str, field: FieldInfo) -> str:
-    # An empty alias is an alias too
     return name if field.serialization_alias is None else field.serialization_alias
 
 
-# Reading a core schema of an unexpected shape fails with one of these. We leave such models and fields as on main.
 _CORE_SCHEMA_ERRORS = (LookupError, TypeError, AttributeError)
-# The core schema types whose dumped values are their valid input, and their keys that hold child schemas as
-# `(key, holds_several_schemas, is_optional)`. Any other type, such as "json" or the validators that get the raw input
-# ("function-before", "function-wrap", "function-plain"), is unsafe.
-# Data-valued keys such as defaults, literal values, metadata, or serializers are never walked.
 _CHILD_SCHEMA_KEYS: dict[str, tuple[tuple[str, bool, bool], ...]] = {
     **dict.fromkeys(
         (
@@ -114,12 +105,9 @@ _CHILD_SCHEMA_KEYS: dict[str, tuple[tuple[str, bool, bool], ...]] = {
     "typed-dict": (("fields", True, False), ("extras_schema", False, True)),
     "dataclass-args": (("fields", True, False),),
 }
-# Parts of core schemas that are summarized separately because many schemas share them: definitions by their ref
-# and models by their class. This keeps the reading of core schemas linear in their size.
 _CoreSchemaUnit: TypeAlias = tuple[str, object]
 _CORE_SCHEMA_DEFINITIONS: dict[str, dict[str, Any]] = {}
 _CORE_SCHEMA_MODELS: dict[object, dict[str, Any]] = {}
-# Units are kept in the order the schema refers to them, so that the exploration order doesn't depend on hashing
 _CORE_SCHEMA_UNIT_SUMMARIES: dict[_CoreSchemaUnit, tuple[bool, tuple[_CoreSchemaUnit, ...]]] = {}
 _IS_CORE_SCHEMA_UNIT_SAFE: dict[_CoreSchemaUnit, bool] = {}
 
@@ -151,7 +139,6 @@ def _normalize_validation_alias(alias: object) -> object:
         return [[alias]]
     if isinstance(alias, (AliasPath, AliasChoices)):
         alias = alias.convert_to_aliases()
-    # Compiled `AliasChoices` are lists of paths, while a compiled `AliasPath` is a single path
     if isinstance(alias, list) and alias and not all(isinstance(path, list) for path in alias):
         alias = [alias]
     return alias
@@ -167,10 +154,8 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
         schema = _register_core_schema_definitions(cast("dict[str, Any]", model.__pydantic_core_schema__))
         if schema["type"] == "definition-ref":
             schema = _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
-        # "after" model validators wrap the model schema and only get the validated model
         while schema["type"] == "function-after" or _is_renamed_key_check(schema):
             schema = schema["schema"]
-        # A custom `__init__` might expect the input that the dump doesn't have
         if (
             schema["type"] != "model"
             or schema["cls"] is not model
@@ -181,7 +166,6 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
         ):
             return None
         inner_schema = schema["schema"] if schema["root_model"] else _get_fields_core_schema(schema)
-        # "wrap" and "plain" model validators wrap the model schema, while "before" ones wrap its fields schema
         if not schema["root_model"] and inner_schema["type"] != "model-fields":
             return None
     except _CORE_SCHEMA_ERRORS:
@@ -189,10 +173,7 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
     return inner_schema
 
 
-# The keys that the fields of a generated model lost because their aliases followed `alias`, which
-# `_reject_keys_renamed_by_alias` rejects unless a field of the model reads them: `{field_name: renamed_keys}`
 _KEYS_RENAMED_BY_ALIAS = "__cadwyn_keys_renamed_by_alias__"
-# The checks that each model class makes, which we compute from its compiled core schema the first time it validates
 _RENAMED_KEY_CHECKS = "__cadwyn_renamed_key_checks__"
 
 
@@ -242,15 +223,11 @@ def _get_keys_read_by_fields(model: type[BaseModel]) -> dict[str, tuple[str, ...
     if schema["type"] == "definitions":
         definitions = {definition["ref"]: definition for definition in schema["definitions"]}
         schema = schema["schema"]
-    # Validators of the model, including `_reject_keys_renamed_by_alias`, wrap it
     while schema["type"] != "model":
         schema = definitions[schema["schema_ref"]] if schema["type"] == "definition-ref" else schema["schema"]
     config = schema.get("config", {})
-    # Like pydantic-core, which reads the alias if it validates by alias, and the name if it validates by name or if
-    # the field has no alias
     validate_by_alias, validate_by_name = config.get("validate_by_alias", True), config.get("validate_by_name", False)
     fields_schema = schema["schema"]
-    # "before" and "after" validators of the model wrap its fields schema
     while fields_schema["type"] != "model-fields":
         fields_schema = fields_schema["schema"]
     keys_read_by_fields = {}
@@ -278,7 +255,6 @@ def _is_renamed_key_check(schema: dict[str, Any]) -> bool:
 def _get_fields_core_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Return the fields core schema of a model or dataclass core schema"""
     fields_schema = schema["schema"]
-    # "after" validators (including `root_validator(skip_on_failure=True)`) wrap the fields schema
     while fields_schema["type"] == "function-after":
         fields_schema = fields_schema["schema"]
     return fields_schema
@@ -322,7 +298,6 @@ def _is_core_schema_unit_safe(root: _CoreSchemaUnit) -> bool:
             continue
         is_unsafe, units = (True, ()) if is_safe is False else _summarize_core_schema_unit(unit)
         if is_unsafe:
-            # Everything on the way from the root reaches it too
             while True:
                 _IS_CORE_SCHEMA_UNIT_SAFE[unit] = False
                 if unit == root:
@@ -343,7 +318,6 @@ def _summarize_core_schema_unit(unit: _CoreSchemaUnit) -> tuple[bool, tuple[_Cor
         body = (_CORE_SCHEMA_DEFINITIONS if kind == "ref" else _CORE_SCHEMA_MODELS).get(key)
         units: dict[_CoreSchemaUnit, None] = {}
         try:
-            # A definition that we haven't seen is unsafe
             is_unsafe = body is None or _has_unsafe_core_schema(body, units, is_unit_body=True)
         except _CORE_SCHEMA_ERRORS:
             is_unsafe = True
@@ -359,12 +333,8 @@ def _has_unsafe_core_schema(
     That's the case for custom serializers, `Json`, `OnErrorOmit`, models that forbid extra keys but dump computed
     fields, models with a custom `__init__`, validators that get the raw input, and core schema types we don't know.
     """
-    # References and models can carry serializers too, e.g. `Annotated[Model, PlainSerializer(...)]`,
-    # so we check them before we summarize the schemas that they refer to
     if _is_custom_serialization(schema.get("serialization")):
         return True
-    # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we can't tell what the dumped
-    # keys break
     if schema.get("on_error", "raise") != "raise":
         return True
     schema_type = schema["type"]
@@ -398,14 +368,12 @@ def _get_child_core_schemas(schema: dict[str, Any]) -> Iterator[dict[str, Any]]:
         child = schema[key]
         if holds_several:
             for item in child.values() if isinstance(child, dict) else child:
-                # Union choices can be `(schema, label)` tuples
                 yield item[0] if isinstance(item, tuple) else item
         else:
             yield child
 
 
 def _is_custom_serialization(serialization: object) -> bool:
-    # Serializers that only run in JSON mode don't affect `model_dump()`
     return isinstance(serialization, dict) and serialization.get("when_used") not in ("json", "json-unless-none")
 
 
@@ -417,7 +385,6 @@ def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -
     if not validate_by_alias or alias is None:
         paths.append([name])
     else:
-        # Pydantic only accepts strings, `AliasPath`, and `AliasChoices`, which this turns into lists of paths
         paths.extend(cast("list[list[Union[str, int]]]", _normalize_validation_alias(alias)))
     if validate_by_name:
         paths.append([name])

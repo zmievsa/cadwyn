@@ -23,7 +23,6 @@ def make_tags() -> StubOnlyGeneric[int]:
 
 
 class Page(BaseModel, Generic[T]):
-    # A default makes it a statement that runs, unlike lazily evaluated annotations
     items: list[T] = Field(default_factory=list)
 
 

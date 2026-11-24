@@ -1,4 +1,4 @@
-import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
+import collections.abc  # noqa: TC003
 from collections.abc import Callable
 from typing import (
     Any,
@@ -7,7 +7,6 @@ from typing import (
 
 from pydantic import BaseModel
 
-# The keys of the core schemas whose values are not schemas, such as default values, which can be anything
 _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS = frozenset({"default", "default_factory", "expected", "metadata"})
 
 
@@ -76,4 +75,4 @@ def _get_field_core_schemas(
                 if inner_node.get("type") == "model-fields":
                     return {name: field.get("schema") for name, field in inner_node["fields"].items()}
             return None
-    return None  # pragma: no cover # The schema of a model always describes the model itself
+    return None  # pragma: no cover

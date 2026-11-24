@@ -48,8 +48,6 @@ if TYPE_CHECKING:
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
-# FastAPI silently keeps unknown keyword arguments in `app.extra`, so we reject these ourselves. The 8.x docs told
-# apps to pass the values that turn the changelog off, which still do what they did, so we only warn about them
 _REMOVED_CHANGELOG_ARGUMENTS = {"changelog_url": None, "include_changelog_url_in_schema": False}
 
 
@@ -169,14 +167,11 @@ class Cadwyn(FastAPI):
         strict_content_type: bool = True,
         **extra: Any,
     ) -> None:
-        # Cadwyn 9.0 removed openapi_prefix. FastAPI before 0.145.0 would still accept it through **extra,
-        # so we reject it ourselves on every FastAPI version
         if "openapi_prefix" in extra:
             raise TypeError(
                 "Cadwyn.__init__() got an unexpected keyword argument 'openapi_prefix'. Cadwyn 9.0 removed it. "
                 "Set the root path on your server instead (e.g. `root_path` or your proxy's prefix)."
             )
-        # An async callback would return an unawaited coroutine on every /openapi.json request
         customizer_target = openapi_customizer
         while isinstance(customizer_target, functools.partial | staticmethod | classmethod):
             customizer_target = (
@@ -185,7 +180,7 @@ class Cadwyn(FastAPI):
                 else customizer_target.__func__
             )
         if iscoroutinefunction(customizer_target) or iscoroutinefunction(
-            getattr(type(customizer_target), "__call__", None)  # noqa: B004  # Async __call__ of callable objects
+            getattr(type(customizer_target), "__call__", None)  # noqa: B004
         ):
             raise TypeError(
                 f"openapi_customizer must be synchronous, got the async callable {openapi_customizer!r}. "
@@ -196,7 +191,6 @@ class Cadwyn(FastAPI):
         self.run_background_tasks_of_latest_version_dependencies = run_background_tasks_of_latest_version_dependencies
         self._cadwyn_initialized = False
 
-        # FastAPI keeps unknown keyword arguments in app.extra, so a removed argument would be ignored without this
         if "api_version_header_name" in extra:
             raise TypeError(
                 "Cadwyn 9.0.0 removed the api_version_header_name argument. Use api_version_parameter_name instead."
@@ -274,11 +268,6 @@ class Cadwyn(FastAPI):
         self.redoc_js_url = redoc_js_url
         self.redoc_favicon_url = redoc_favicon_url
 
-        # NOTE: lifespan/on_startup/on_shutdown are intentionally NOT included here. This dict is reused to
-        # construct the unversioned and versioned child routers, which are then merged into the root router via
-        # include_router. FastAPI's include_router merges lifespans and re-registers startup/shutdown handlers,
-        # so including them here would run the user's lifespan/handlers once per child router (see issue #372).
-        # They belong solely to the root router and are passed to it explicitly below.
         self._kwargs_to_router: dict[str, Any] = {
             "routes": routes,
             "redirect_slashes": redirect_slashes,
@@ -305,7 +294,6 @@ class Cadwyn(FastAPI):
             self._api_version_fastapi_depends_class = fastapi.Path
         else:
             assert_never(api_version_location)
-        # TODO: Add a test validating the error message when there are no versions
         default_version_example = next(iter(self.versions._version_values_set))
         if api_version_format == "date":
             self.api_version_validation_data_type = date
@@ -348,7 +336,6 @@ class Cadwyn(FastAPI):
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
 
-    # The parameters must be explicit: uvicorn treats any app that can be called without arguments as an app factory
     @override
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not self._cadwyn_initialized:
@@ -356,7 +343,6 @@ class Cadwyn(FastAPI):
         if scope["type"] != "http":
             await super().__call__(scope, receive, send)
             return
-        # We close the uploads after everything else, including FastAPI's own closing of them and background tasks
         uploads = _UploadsToClose()
         scope[_UPLOADS_TO_CLOSE_SCOPE_KEY] = uploads
         try:
@@ -443,7 +429,6 @@ class Cadwyn(FastAPI):
                 detail=f"OpenApi file with version `{version}` not found",
             )
 
-        # Add root path to servers when mounted as sub-app or proxy is used
         urls = (server_data.get("url") for server_data in self.servers)
         server_urls = {url for url in urls if url}
         root_path = self._extract_root_path(req)
@@ -471,11 +456,6 @@ class Cadwyn(FastAPI):
             servers=self.servers,
             separate_input_output_schemas=self.separate_input_output_schemas,
         )
-        # The API version header dependency of versioned routes defaults to their version so that requests
-        # without the header still reach them when api_version_default_value or a custom versioning middleware
-        # picks their version. FastAPI therefore documents the header as optional, but without
-        # api_version_default_value the server returns a 404 for requests without it. We keep the default so that
-        # clients generated from OpenAPI keep sending the version of the document.
         if is_versioned and self._api_version_location == "custom_header" and not self._api_version_has_default_value:
             self._mark_api_version_header_as_required_in_openapi(openapi)
         if self.openapi_customizer is not None:
@@ -487,13 +467,10 @@ class Cadwyn(FastAPI):
         return JSONResponse(openapi)
 
     def _mark_api_version_header_as_required_in_openapi(self, openapi: dict[str, Any]) -> None:
-        # Every route of a versioned document is only reachable with this header, so we also mark it as required
-        # when a route declares a header with the same name itself.
         header_name = self.api_version_parameter_name
         for path_item in openapi.get("paths", {}).values():
             for operation in path_item.values():
                 for parameter in operation.get("parameters", ()):
-                    # Parameters from openapi_extra can be references such as {"$ref": "..."} without "in"
                     if parameter.get("in") == "header" and parameter.get("name") == header_name:
                         parameter["required"] = True
 
@@ -553,7 +530,6 @@ class Cadwyn(FastAPI):
         return req.scope.get("root_path", "").rstrip("/")
 
     def _render_docs_dashboard(self, req: Request, docs_url: str):
-        # req.base_url already contains the app root path, so we only take the scheme and host from it
         base_url = f"{req.url.scheme}://{req.url.netloc}{self._extract_root_path(req)}"
         table = {version: f"{base_url}{docs_url}?version={version}" for version in self.router.versions}
         if self._there_are_public_unversioned_routes():
@@ -592,8 +568,6 @@ class Cadwyn(FastAPI):
                 )
             ],
         )
-        # Route generation flattens FastAPI's include trees, so there is no nested tree to preserve here, and
-        # Cadwyn can materialize the routes to keep the root router's version bookkeeping stable
         newly_added_routes = _materialize_routes(versioned_router.routes[route_count_before_include:])
         versioned_router.routes[route_count_before_include:] = newly_added_routes
         versioned_router._mark_routes_changed()

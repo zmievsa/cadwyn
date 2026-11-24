@@ -218,9 +218,6 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
 @pytest.mark.parametrize(
     ("path", "schema_name", "is_applied"),
     [
-        # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets, including the annotation
-        # that pydantic rebuilds from Field() with postponed annotations. Applying it would make the older versions
-        # reject the requests and responses that they have always accepted, so it stays ignored
         ("/field_defaults", "ConstrainedFieldsInFieldDefaults", False),
         ("/annotated", "ConstrainedFieldsInAnnotated", False),
     ],
@@ -372,11 +369,6 @@ def test__router_generation__child_had_inherited_field__should_not_change_parent
         router=router,
     )
 
-    # The changes of the parent's field in even older versions still apply to the child.
-    # With postponed annotations, max_length=10 is also in the annotation that pydantic rebuilds from Field() and
-    # Cadwyn 7.4.0 ignored had(max_length=3) for it. Applying it would make the older versions reject the requests
-    # and responses that they have always accepted, so it stays ignored (test_router_generation.py checks that it
-    # does not leak into the parent and siblings without postponed annotations)
     for version, path, schema_name, description, max_length in [
         ("2001-01-01", "/parent", "ParentWithInheritedField", "Head description", 10),
         ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 10),
@@ -427,8 +419,6 @@ def test__router_generation__child_had_constraint_of_inherited_field__should_not
         router=router,
     )
 
-    # The parent has an instruction of its own (for "amount"). With postponed annotations, request bodies are
-    # validated with the versioned models, so the leak of #466 would reject the personal invoice too
     body = {"code": "LONG-CODE", "amount": 1}
     assert clients["2001-01-01"].post("/business", json=body).status_code == 200
     assert clients["2001-01-01"].post("/personal", json=body).status_code == 200
@@ -768,9 +758,6 @@ class SchemaWithConstraintClasses(BaseModel):
 @pytest.mark.parametrize(
     ("field_name", "instruction", "value", "head_status_code", "old_status_code"),
     [
-        # Cadwyn 7.4.0 ignored had() for constraint classes, like for other constraints in the annotation's metadata.
-        # Applying it could make the older versions reject the requests that they have always accepted (as in
-        # had(allow_inf_nan=False)), so it stays ignored. didnt_have() failed with TypeError there instead
         ("strict_field", lambda field: field.had(strict=False), "1", 422, 422),
         ("strict_field", lambda field: field.didnt_have("strict"), "1", 422, 200),
         ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 200),
@@ -1059,15 +1046,10 @@ class InheritedStaticmethodNew(ResourceWithStaticmethodNew):
     pass
 
 
-# Each of the following wrappers leads to a function from this module through one attribute and to a function from
-# the other module through another one. Only the order of inspect.signature() leads to the annotations it returns.
-
-
 def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
 
 
-# A partial's explicit __wrapped__ comes before its .func
 partial_with_wrapped = functools.update_wrapper(
     functools.partial(_invoke, other_module.get_body), other_module.get_body
 )
@@ -1093,7 +1075,6 @@ class ProviderWithDecoratedMethod:
     provide = _decorator_from_this_module(other_module.provide)
 
 
-# The decorator's __wrapped__ leads to a bound method whose function comes from the other module
 decorated_bound_method = _decorator_from_this_module(other_module.provider.provide)
 
 
@@ -1163,7 +1144,6 @@ class _PartialWithOverriddenCall(functools.partial):
         return super().__call__(*args, **kwargs)
 
 
-# Postponed annotations of routes can only refer to the dependency through the globals
 partial_subclass_of_dependency_from_another_module = _PartialWithOverriddenCall(
     other_module.get_body_with_optional_quoted_body
 )
@@ -1172,10 +1152,6 @@ partial_subclass_of_dependency_from_another_module = _PartialWithOverriddenCall(
 def test__router_generation__partial_subclass_of_dependency_from_another_module__should_accept_bodies_like_head(
     router, create_versioned_clients
 ):
-    # FastAPI cannot resolve "Payload" for such partials in the head route (it uses the unwrapped partial's globals,
-    # which are empty) and Cadwyn resolves them in the globals of their __call__, where "Payload" does not exist
-    # either. Resolving it anywhere else would make the versioned routes expect a different request body than
-    # the head route that Cadwyn validates requests against after migrating them
     @router.post("/test")
     async def route(body: Annotated[Any, Depends(partial_subclass_of_dependency_from_another_module)]):
         return body
@@ -1268,12 +1244,10 @@ class ProviderWithPartialmethodCall:
 
 
 class ProviderWithInstanceCall:
-    # A callable instance without __get__ gets called as is
     __call__ = other_module.callable_provider
 
 
 class ProviderWithClassCall:
-    # Calling the instance constructs the class
     __call__ = other_module.Resource
 
 
@@ -1302,7 +1276,6 @@ instance_call_provider = ProviderWithInstanceCall()
 class_call_provider = ProviderWithClassCall()
 function_like = FunctionLike(other_module.get_body)
 
-# A partial that also carries the metadata of a function
 function_like_partial = functools.partial(_invoke, other_module.get_body)
 for _attribute_name in ("__name__", "__code__", "__defaults__", "__kwdefaults__", "__annotations__", "__globals__"):
     setattr(function_like_partial, _attribute_name, getattr(other_module.get_body, _attribute_name))
@@ -1355,8 +1328,6 @@ def test__router_generation__function_like_dependency__should_resolve_annotation
         return body
 
     paths = ["/function_like"]
-    # Python 3.11-3.12's inspect.signature() reads a function-like partial directly. Python 3.13+ unwraps partials
-    # first so it gets the signature of _invoke which has no "body" and even FastAPI itself cannot use it there
     if sys.version_info < (3, 13):
 
         @router.post("/function_like_partial")
@@ -1372,7 +1343,7 @@ def test__router_generation__function_like_dependency__should_resolve_annotation
 
 
 def get_limit_with_type_checking_only_return(limit: int) -> Decimal:
-    return limit  # ty: ignore[invalid-explicit-return]  # The annotation is only for type checkers.
+    return limit  # ty: ignore[invalid-explicit-return]
 
 
 def get_limit_with_type_checking_only_parameter(limit: int, price: Decimal | None = None) -> int:
@@ -1381,7 +1352,7 @@ def get_limit_with_type_checking_only_parameter(limit: int, price: Decimal | Non
 
 class LimitGetterWithTypeCheckingOnlyReturn:
     def __call__(self, limit: int) -> Decimal:
-        return limit  # ty: ignore[invalid-explicit-return]  # The annotation is only for type checkers.
+        return limit  # ty: ignore[invalid-explicit-return]
 
 
 limit_getter_with_type_checking_only_return = LimitGetterWithTypeCheckingOnlyReturn()
@@ -1422,8 +1393,6 @@ def get_item_with_type_checking_only_return(item: VersionedItem) -> Decimal:
 def test__router_generation__partial_dependency_with_type_checking_only_annotations__should_use_versioned_models(
     router, create_versioned_clients, style
 ):
-    # FastAPI itself cannot resolve "VersionedItem" for such partials at request time (it looks for the globals on
-    # the partial) so we only compare the schemas that each version documents
     if style == "default_dependency":
 
         @router.post("/test")
@@ -1444,8 +1413,6 @@ def test__router_generation__partial_dependency_with_type_checking_only_annotati
     required_fields = {}
     for version, version_client in clients.items():
         if style == "annotated_dependency" and version == "2001-01-01":
-            # The latest version changes nothing that the dependency uses so, as before, it keeps the original
-            # partial, whose annotation FastAPI cannot resolve
             with pytest.raises(PydanticUserError):
                 version_client.get(f"/openapi.json?version={version}")
             continue
@@ -1460,11 +1427,11 @@ def test__router_generation__partial_dependency_with_type_checking_only_annotati
 class NotSubscriptableAtRuntime:
     """Like pandas.Series: its stubs make it generic for type checkers but subscripting it fails at runtime"""
 
-    def __class_getitem__(cls, item: Any) -> Any:  # pragma: no cover # Only runs if something evaluates the annotation
+    def __class_getitem__(cls, item: Any) -> Any:  # pragma: no cover
         raise TypeError(f"type {cls.__name__!r} is not subscriptable")
 
 
-def make_values(size: int) -> NotSubscriptableAtRuntime[int]:  # ty: ignore[invalid-type-form]  # Like pandas.
+def make_values(size: int) -> NotSubscriptableAtRuntime[int]:  # ty: ignore[invalid-type-form]
     return list(range(size))
 
 
@@ -1476,7 +1443,6 @@ class ModelWithCallables(BaseModel):
 def test__router_generation__non_dependency_callables_with_unevaluable_annotations__should_work(
     router, create_versioned_clients
 ):
-    # FastAPI never evaluates the annotations of callables other than endpoints and dependencies so neither does Cadwyn
     @router.post("/test")
     async def route(body: ModelWithCallables):
         return body
@@ -1485,7 +1451,6 @@ def test__router_generation__non_dependency_callables_with_unevaluable_annotatio
         assert version_client.post("/test", json={}).json() == {"values": [0, 1, 2], "size": 1}
 
 
-# With postponed annotations, the quotes make this a string within a string so evaluating it once leaves a string
 def make_values_with_quoted_return(
     size: int = 3,
 ) -> "NotSubscriptableAtRuntime[int]":  # noqa: UP037  # ty: ignore[invalid-type-form]
@@ -1498,7 +1463,6 @@ cached_make_values_with_quoted_return = functools.lru_cache(make_values_with_quo
 def test__router_generation__dependency_with_quoted_unevaluable_return_annotation__should_work(
     router, create_versioned_clients
 ):
-    # FastAPI never evaluates the return annotations of dependencies so neither does Cadwyn
     @router.get("/partial")
     async def partial_route(values: Annotated[Any, Depends(functools.partial(make_values_with_quoted_return, 3))]):
         return values
@@ -1527,7 +1491,6 @@ class QuotedPayload(BaseModel):
     current: str
 
 
-# With postponed annotations, the quotes make these strings within strings so evaluating them once leaves strings
 def get_current_from_quoted_body(body: "QuotedPayload") -> str:  # noqa: UP037
     return body.current
 
@@ -1565,7 +1528,6 @@ def test__router_generation__quoted_parameter_annotations__should_use_versioned_
     assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
 
 
-# With postponed annotations, evaluating these once leaves forward references within them
 def get_current_from_nested_quoted_list(items: list["QuotedPayload"]) -> str:  # noqa: UP037
     raise NotImplementedError
 
@@ -1595,7 +1557,6 @@ _NESTED_QUOTED_DEPENDENCIES = {
 }
 
 
-# Postponed annotations of routes can only refer to the dependency through the globals
 nested_quoted_dependency: Any = None
 
 
@@ -1621,14 +1582,10 @@ def test__router_generation__nested_quoted_parameter_annotations__should_use_ver
             raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
-    # FastAPI itself cannot evaluate such forward references in the head route that Cadwyn validates requests
-    # against after migrating them so we only check what each version validates and documents on its own
     assert clients["2000-01-01"].post("/test", json=make_body({"current": "ok"})).status_code == 422
     required_fields = {}
     for version, version_client in clients.items():
         if style == "annotated_dependency" and version == "2001-01-01":
-            # The latest version changes nothing that the dependency uses so, as before, it keeps the original
-            # dependency, whose forward refs pydantic cannot resolve
             with pytest.raises(PydanticUserError):
                 version_client.get(f"/openapi.json?version={version}")
             continue
@@ -1641,8 +1598,6 @@ def test__router_generation__nested_quoted_parameter_annotations__should_use_ver
 
 
 def _with_signature_of_unevaluated_annotations(function: Any) -> Any:
-    # Like decorators that rebuild the signature to inject parameters or defaults (e.g. fastapi-utils' @cbv).
-    # inspect.signature() leaves postponed annotations as strings and eval_str does not evaluate __signature__
     function.__signature__ = inspect.signature(function)
     return function
 
@@ -1706,10 +1661,7 @@ def test__router_generation__default_factory_with_annotations_set_by_hand__shoul
     async def route(body: ModelWithFactoryWithAnnotationsSetByHand):
         return body.values
 
-    # Only the copies of the models read the annotations of their default factories
     model_change = version_change(schema(ModelWithFactoryWithAnnotationsSetByHand).field("values").had(description="A"))
-    # Cadwyn reads the annotations of such callables through annotationlib on Python 3.14+ which ignores the ones
-    # set by hand. Before 3.14, it reads __annotations__ and evaluates them
     if sys.version_info >= (3, 14):
         for version_client in create_versioned_clients(model_change).values():
             assert version_client.post("/test", json={}).json() == [0, 1, 2]

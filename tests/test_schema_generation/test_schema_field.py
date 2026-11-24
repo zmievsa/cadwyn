@@ -94,7 +94,6 @@ class SchemaWithOneIntField(BaseModel):
 
 
 ##############
-# EXISTED AS #
 ##############
 
 
@@ -177,7 +176,6 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
 
 
 ################
-# DIDN'T EXIST #
 ################
 
 
@@ -276,7 +274,6 @@ def _get_description_and_max_length(model: type[BaseModel]) -> tuple[Union[str, 
     return field.description, max_length
 
 
-# The parent has an instruction so that its field is the same object as the field of its subclasses in Cadwyn
 PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="Bar")
 
 
@@ -366,7 +363,6 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
             id="diamond_then_other_parent",
         ),
         pytest.param(
-            # Pydantic takes the field of the diamond from its first base which does not have the change
             [[schema(InheritedFieldOtherParent).field("foo").had(max_length=3)]],
             {
                 InheritedFieldChild: ("Head", 10),
@@ -507,8 +503,6 @@ def test__schema_field_had__inherited_field_that_a_sibling_changed__should_accep
 def test__schema_field_had__type_that_only_another_model_had__should_change_it(
     create_runtime_schemas: CreateRuntimeSchemas, instructions: list[Any]
 ):
-    # Before #466, Cadwyn rejected the second instruction because the first one also changed the type of the other
-    # models that share the field
     schemas = create_runtime_schemas(version_change(PARENT_INSTRUCTION, *instructions))
 
     changed_models = {instruction.schema for instruction in instructions}
@@ -721,7 +715,7 @@ class MixinWithField:
     foo: int = 0
 
 
-class LeftChildWithMixin(MixinWithField, ParentOfDiamondWithMixin):  # ty: ignore[incompatible-attribute-override]  # The mixin deliberately retypes `foo`.
+class LeftChildWithMixin(MixinWithField, ParentOfDiamondWithMixin):  # ty: ignore[incompatible-attribute-override]
     pass
 
 
@@ -807,13 +801,11 @@ def test__schema_field_had__constraint_of_other_parent_of_diamond__should_apply_
     )
     schemas = create_runtime_schemas(version_change(*right_instructions))
 
-    # Pydantic takes the field of the diamond from its first base which does not have the constraint
     assert schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1}).foo == -1
     with pytest.raises(ValidationError):
         schemas["2000-01-01"][RightChildOfConstrainedDiamond].model_validate({"foo": -1})
     assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
 
-    # The same instruction for the diamond before the one for its other parent applies to the diamond
     schemas = create_runtime_schemas(
         version_change(
             schema(ParentOfConstrainedDiamond).field("bar").had(description="Bar"),
@@ -827,7 +819,6 @@ def test__schema_field_had__constraint_of_other_parent_of_diamond__should_apply_
     assert schemas["2000-01-01"][ConstrainedDiamond].model_fields["foo"].description is None
     assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
 
-    # Once the diamond changes the field itself, it gets the changes of all of its parents
     schemas = create_runtime_schemas(
         version_change(*right_instructions, schema(ConstrainedDiamond).field("foo").had(description="Foo"))
     )
@@ -1191,7 +1182,6 @@ def test__schema_field_had_name__parent_renamed_field_that_child_without_instruc
         version_change(schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo"))
     )
 
-    # Cadwyn copies the models without instructions when something needs them, e.g. the routes when the app starts
     with pytest.raises(InvalidGenerationInstructionError) as exc_info:
         schemas["2000-01-01"][ChildWithoutInstructionsThatRedeclaresFieldThatGetsRenamed]
 
@@ -1591,7 +1581,6 @@ def test__schema_field_had__parent_renamed_fields_that_share_default_factory__sh
         )
     )
 
-    # Like the fields that the child inherits from the parent, the renamed ones share the parent's copy of the factory
     assert schemas["2000-01-01"][ChildWithFieldsThatShareDefaultFactoryToRename]().model_dump() == {
         "baz": 1,
         "old_foo": 2,
@@ -1952,8 +1941,6 @@ class ChildThatRetypesFoo(ParentOfChildThatRetypesFoo):
 def test__schema_field_existed_as__changelog_recipe_for_child_rename__should_keep_parent_field_and_add_child_field(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    # The CHANGELOG of 9.0 gives this recipe to keep the older versions of 8.x, in which
-    # schema(ChildThatRetypesFoo).field("foo").had(name="old_foo") inherited the parent's foo next to old_foo
     schemas = create_runtime_schemas(
         version_change(
             schema(ChildThatRetypesFoo)
@@ -2032,7 +2019,6 @@ def test__schema_field_had__none_default_of_child_after_sibling_unset_default_fa
 def test__schema_field_had__both_default_and_default_factory__should_raise_error(
     create_runtime_schemas: CreateRuntimeSchemas, field_name: str, attributes: dict[str, Any]
 ):
-    # Cadwyn 7.4.0 failed with pydantic's TypeError here
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
@@ -2133,7 +2119,7 @@ class TagList(list[Any]):
     pass
 
 
-class TagTuple(tuple[Any, ...]):  # noqa: SLOT001 # It needs instance attributes
+class TagTuple(tuple[Any, ...]):  # noqa: SLOT001
     pass
 
 
@@ -2163,7 +2149,7 @@ def _get_default(schemas: dict[str, SchemaGenerator], version: str, model: type[
         pytest.param(_with_source(Options(a=[1])), id="dict_subclass"),
         pytest.param(collections.defaultdict(list, a=[1]), id="defaultdict"),
         pytest.param(_with_source(collections.OrderedDict(a=[1])), id="ordered_dict"),
-        pytest.param(collections.Counter(a=1), id="counter"),  # deepcopy drops the attributes of Counter
+        pytest.param(collections.Counter(a=1), id="counter"),
         pytest.param(Point(1, [2]), id="named_tuple"),
     ],
 )
@@ -2371,7 +2357,7 @@ def test__schema_field__plain_container_default_with_versioned_model_class__shou
     assert descriptions == {"2000-01-01": "Old", "2001-01-01": None}
 
 
-def _function_in_default(value: int) -> int:  # pragma: no cover # Only its signature is versioned
+def _function_in_default(value: int) -> int:  # pragma: no cover
     return value
 
 
@@ -2497,7 +2483,7 @@ def test__schema_field__container_subclass_default_whose_deepcopy_shares_what_ca
         assert value[0] is default[0]
 
 
-def make_tags_from_registry(registry: Any = None) -> list[str]:  # pragma: no cover # Generation fails first
+def make_tags_from_registry(registry: Any = None) -> list[str]:  # pragma: no cover
     return []
 
 
@@ -2618,8 +2604,6 @@ def test__schema_field_didnt_have__annotated_default_after_child_set_default_fac
         )
     )
 
-    # Cadwyn 7.4.0 ignored didnt_have("default") for the default from Field() in the annotation. Applying it would
-    # make the older versions reject the requests without the field that they have always accepted, so it stays ignored
     assert schemas["2000-01-01"][AnnotatedParentWithDefaultInField]().foo == 0
     assert schemas["2000-01-01"][AnnotatedChildWithDefaultInField]().foo == 0
 
@@ -2635,8 +2619,6 @@ def test__schema_field_didnt_have__annotated_default_after_child_set_default_fac
         )
     )
 
-    # Cadwyn 7.4.0 ignored didnt_have("default") for the default from Field() in the annotation. Applying it would
-    # make the older versions reject the requests without the field that they have always accepted, so it stays ignored
     assert schemas["2000-01-01"][AnnotatedParentWithDefaultInField]().foo == 0
     assert schemas["2000-01-01"][AnnotatedChildWithDefaultInField]().foo == 20
 
@@ -2670,7 +2652,6 @@ def test__schema_field_had__ellipsis_default_with_factory_of_annotated_field_wit
         )
     )
 
-    # The child's instruction does not apply to the parent
     assert schemas["2000-01-01"][AnnotatedParentWithDefaultToReplaceWithFactory]().foo == 20
     assert schemas["2000-01-01"][AnnotatedChildWithDefaultToReplaceWithFactory]().foo == 1
 
@@ -2693,7 +2674,6 @@ def test__schema_field_had__default_of_child_after_parent_deleted_annotated_defa
 ):
     schemas = create_runtime_schemas(
         version_change(
-            # The child gets its own annotation of the field with the factory before the parent deletes it
             schema(AnnotatedChildWithDefaultFactory).field("foo").had(description="Child"),
             schema(AnnotatedParentWithDefaultFactory).field("foo").didnt_have("default_factory"),
             schema(AnnotatedSiblingWithDefaultFactory).field("foo").had(default_factory=None),  # ty: ignore[invalid-argument-type]
@@ -2705,7 +2685,6 @@ def test__schema_field_had__default_of_child_after_parent_deleted_annotated_defa
 
 
 def test__schema_field_had__annotated_default_factory_with_assigned_default__should_raise_pydantic_error():
-    # Cadwyn relies on pydantic rejecting such declarations, so only instructions can give a field both
     with pytest.raises(TypeError, match="cannot specify both default and default_factory"):
 
         class ModelWithAnnotatedFactoryAndAssignedDefault(BaseModel):
@@ -2774,12 +2753,10 @@ def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_ver
     schemas = create_runtime_schemas(version_change(older_instruction), version_change(newer_instruction))
 
     field = schemas["2000-01-01"][diamond].model_fields[field_name]
-    # Pydantic takes the field of the diamond from its first base which does not have the change
     assert [m.max_length for m in field.metadata if hasattr(m, "max_length")] == [10]
 
 
 #######
-# HAD #
 #######
 
 
@@ -2793,7 +2770,6 @@ def assert_field_had_changes_apply(
 
     field_info = schemas["2000-01-01"][model].model_fields["foo"]
     if attr in FieldInfo.metadata_lookup:
-        # We do this because _PydanticGeneralMetadata does not have a proper `__eq__`
         assert repr(FieldInfo._collect_metadata({attr: attr_value})[0]) in [repr(obj) for obj in field_info.metadata]
     else:
         assert getattr(field_info, attr) == attr_value
@@ -2915,7 +2891,6 @@ def test_schema_field_had__json_schema_extra_as_dict(create_runtime_schemas: Cre
         create_runtime_schemas,
     )
 
-    # Validate the JSON Schema produced by Pydantic contains the extra
     model_cls = schemas["2000-01-01"][SchemaWithFooHadDictJsonSchemaExtra]
     json_schema = model_cls.model_json_schema()
     assert json_schema["properties"]["foo"]["example"] == "bar"
@@ -2936,7 +2911,6 @@ def test__schema_field_had__json_schema_extra_as_callable(create_runtime_schemas
         create_runtime_schemas,
     )
 
-    # Validate the JSON Schema produced by Pydantic contains changes from the callable
     model_cls = schemas["2000-01-01"][SchemaWithFooHadCallableJsonSchemaExtra]
     json_schema = model_cls.model_json_schema()
     props = json_schema["properties"]["foo"]
@@ -3128,9 +3102,6 @@ def test__schema_field_had_and_didnt_have__field_info_subclass_in_annotated__sho
         assert [(type(field_info), field_info.extra) for field_info in field_infos] == [
             (FieldInfoWithExtraAttribute, "hello")
         ]
-    # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets (since pydantic 2.12). Applying
-    # it would make the older versions reject the requests and responses that they have always accepted, so it stays
-    # ignored
     assert old_schema.model_json_schema()["properties"] == {
         "foo": {
             "description": "Old",
@@ -3138,9 +3109,6 @@ def test__schema_field_had_and_didnt_have__field_info_subclass_in_annotated__sho
             "title": "Foo",
             "type": "string",
         },
-        # Cadwyn 7.4.0 also ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
-        # them could make the older versions reject or change the data that they have always accepted or returned, so
-        # it stays ignored. Only the attributes that document the field get removed
         "bar": {"minLength": 1, "title": "Bar", "type": "string"},
     }
 
@@ -3157,7 +3125,6 @@ def _title_of_field(name: str, field_info: FieldInfo) -> str:
     return name.upper()
 
 
-# The type and the Field() arguments that set every attribute that field().didnt_have() accepts
 ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE: dict[str, tuple[Any, dict[str, Any]]] = {
     "default": (int, {"default": 1}),
     "alias": (str, {"alias": "a"}),
@@ -3195,12 +3162,7 @@ ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE: dict[str, tuple[Any, dict[str, Any]]] = {
     "discriminator": (Union[TaggedCat, TaggedDog], {"discriminator": "kind"}),
     "json_schema_extra": (str, {"json_schema_extra": {"key": "value"}}),
 }
-# Only pydantic v1 had them, and pydantic v2 rejects them in Field()
 FIELD_ATTRIBUTES_OF_PYDANTIC_V1 = {"const", "allow_mutation"}
-# Cadwyn 7.4.0 ignored didnt_have() for all attributes of a Field() in the annotation's metadata. Removing any
-# attribute but the ones that only document the field could make the older versions reject or change the data that
-# they have always accepted or returned, so only these get removed
-# (json_schema_extra holds arbitrary data that validators can read, so it isn't one of them)
 ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED = {"title", "description", "examples", "deprecated"}
 
 
@@ -3437,8 +3399,8 @@ def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRu
         bar: int = Field(default=83)
 
     class SchemaThatOverridesField(ParentSchema):
-        foo: str = Field(description="What?")  # ty: ignore[incompatible-attribute-override]  # Test a deliberate field type override.
-        bar: str = Field(description="What?")  # ty: ignore[incompatible-attribute-override]  # Test a deliberate field type override.
+        foo: str = Field(description="What?")  # ty: ignore[incompatible-attribute-override]
+        bar: str = Field(description="What?")  # ty: ignore[incompatible-attribute-override]
 
     schemas = create_runtime_schemas(
         version_change(
@@ -3645,7 +3607,6 @@ def test__schema_field_had_name__parent_renamed_field_to_class_var_and_back_to_f
         Version("2000-01-01"),
     )
 
-    # The rename only gives the parent a field with the new name in the oldest version
     with pytest.raises(InvalidGenerationInstructionError) as exc_info:
         generate_versioned_models(versions)["2000-01-01"][ChildThatRedeclaresIntFooThatGetsRenamed]
 
@@ -3695,7 +3656,6 @@ class DiamondWithPlainFoo(LeftOfDiamondWithPlainFoo, RightOfDiamondWithPlainFoo)
     ("diamond", "bases"),
     [
         pytest.param(DiamondWithConstrainedFoo, '"RootOfDiamondWithConstrainedFoo"', id="kept_base_is_known"),
-        # Both declare `foo: int`, so we can't tell which field pydantic kept
         pytest.param(
             DiamondWithPlainFoo, 'one of "RightOfDiamondWithPlainFoo", "RootOfDiamondWithPlainFoo"', id="ambiguous"
         ),
@@ -3851,7 +3811,6 @@ def test__schema_field_had_name__parent_renamed_field_to_name_that_child_declare
         version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
     )
 
-    # The child's own `old_foo` hides the parent's renamed field, so the child has it only once, as `foo`
     child = schemas["2000-01-01"][ChildThatRedeclaresIntFooAndHasOldFoo]
     assert child.model_validate({"foo": 1, "old_foo": "own"}).model_dump() == {"old_foo": "own", "foo": 1}
 
@@ -4046,7 +4005,7 @@ def test__generate_versioned_routers__mro_entries_parent_has_overridden_forward_
     create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
 ):
     class Parent(BaseModel):
-        value: "NotDefined"  # noqa: F821  # ty: ignore[unresolved-reference]  # Intentionally incomplete; child overrides.
+        value: "NotDefined"  # noqa: F821  # ty: ignore[unresolved-reference]
 
     class Model(AliasOfBases(Parent)):
         value: int
@@ -4566,7 +4525,6 @@ def test__schema_field_had__default_that_is_a_large_set__should_compare_it_quick
     with contextlib.suppress(InvalidGenerationInstructionError):
         create_runtime_schemas(version_change(schema(SchemaWithLargeSetDefault).field("foo").had(default=new_value)))
 
-    # Comparing every item with every other item takes minutes
     assert time.perf_counter() - started_at < 5
 
 
@@ -4574,7 +4532,7 @@ class TaggedList(list[int]):
     tag: str
 
 
-class TaggedTuple(tuple[int, ...]):  # noqa: SLOT001 # It needs __dict__ to hold the tag
+class TaggedTuple(tuple[int, ...]):  # noqa: SLOT001
     tag: str
 
 
@@ -4626,7 +4584,6 @@ def _tagged(value: Any, tag: str) -> Any:
 def test__schema_field_had__default_of_container_subclass_with_state_that_equality_ignores__should_not_raise_error(
     create_runtime_schemas: CreateRuntimeSchemas, make_value: Callable[[], Any]
 ):
-    # The generated versions don't keep the state of these defaults, so we can only check that Cadwyn accepts them
     class SchemaWithTaggedDefault(BaseModel):
         foo: Any = _tagged(make_value(), "old")
 
@@ -4723,7 +4680,6 @@ class ChildDataclassWithoutEq(ParentDataclass):
     y: int
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "ChildDataclassWithoutEq":
-        # So the tests can tell the copies of the defaults apart
         return self
 
 
@@ -4814,7 +4770,6 @@ def _dataclass_values_whose_field_is_a_descriptor(calls: list[str]) -> tuple[Any
         calls.append("value")  # pragma: no cover
         return 1  # pragma: no cover
 
-    # The instances keep their values in their __dict__, but reading the field runs the property
     BoxWithFieldDescriptor.value = property(read_value)  # ty: ignore[invalid-assignment]
     return old_value, new_value
 
@@ -4837,8 +4792,6 @@ def test__schema_field_had__default_that_could_run_user_code_when_inspected__sho
     class SchemaWithDefault(BaseModel):
         foo: Any = old_value
 
-    # Pydantic and Cadwyn run some of this code anyway when they build the models of the versions, e.g. isinstance()
-    # reads __class__, so we count the calls when the instruction doesn't compare the default
     calls.clear()
     create_runtime_schemas(version_change(schema(SchemaWithDefault).field("foo").had(description="Foo")))
     calls_without_comparing_the_default = Counter(calls)

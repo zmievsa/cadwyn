@@ -41,6 +41,5 @@ mixed_hosts_app = Cadwyn(
     )
 )
 mixed_hosts_app.generate_and_include_versioned_routers(router)
-# Cadwyn generates the versioned routes when the app starts, and the tests inspect them without starting the app
 with TestClient(mixed_hosts_app):
     pass

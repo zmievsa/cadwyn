@@ -6,12 +6,11 @@ Importing this module on older Python versions fails because they evaluate annot
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    # Python 3.14 only evaluates annotations when asked to so this import is only needed by type checkers
     from decimal import Decimal  # noqa: TC004
 
 
 def get_limit(limit: int) -> Decimal:
-    return limit  # ty: ignore[invalid-explicit-return]  # The annotation is only for type checkers.
+    return limit  # ty: ignore[invalid-explicit-return]
 
 
 def get_limit_with_price(limit: int, price: Decimal | None = None) -> int:

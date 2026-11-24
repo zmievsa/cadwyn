@@ -30,7 +30,6 @@ class NestedUnionA(BaseModel):
         label: str
 
     changed: Changed
-    # Detail is only available through the namespace of the class
     peer: Detail | Ref[NestedUnionB]
 
 
@@ -44,7 +43,6 @@ def make_detail(model: Any) -> MetadataDetail:
 
 class MetadataA(BaseModel):
     changed: Changed
-    # Ref["MetadataB"] is only reachable through the default factory in the metadata of an unresolved annotation
     detail: Annotated[MetadataDetail, Field(default_factory=functools.partial(make_detail, model=Ref["MetadataB"]))]
 
 

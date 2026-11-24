@@ -5,8 +5,8 @@ through these, so the migrations give the same body either way. Only routes run 
 """
 
 from collections.abc import (
-    Callable,  # Needed by runtime annotation introspection.
-    Iterable,  # Needed by runtime annotation introspection.
+    Callable,
+    Iterable,
 )
 from typing import (
     TYPE_CHECKING,
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from ._bundle import VersionBundle
 else:
-    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001 # For runtime annotation introspection
+    from cadwyn_core._stand_ins import APIRoute  # noqa: TC001
 
 
 class _Uploads(Protocol):
@@ -64,7 +64,6 @@ def _run_request_migration(
     try:
         migration(request_info)
     finally:
-        # A later migration can replace or remove the uploads that this one has put into the form
         if uploads is not None and request_info._form is not None:
             uploads.add(request_info._form)
 
@@ -120,7 +119,6 @@ def _migrate_response(
             migrations_to_apply: list[_BaseAlterResponseInstruction] = list(
                 _get_schema_migrations(
                     version_change.alter_response_by_schema_instructions,
-                    # Route generation makes sure that the migrations of the members don't migrate HTTP errors
                     response_target if response_info.status_code < 300 else response_target._replace(union_members=()),
                     get_response_union_member,
                 )
@@ -130,8 +128,6 @@ def _migrate_response(
                 migrations_to_apply.extend(version_change._route_to_response_migration_mapping[head_route_id])
 
             for migration in migrations_to_apply:
-                # Once a migration turns the response into an error, the older migrations that are written for its
-                # successful body must not run on the error body, unless they migrate HTTP errors
                 if response_info.status_code < 300 or migration.migrate_http_errors:
                     migration(response_info)
     return response_info

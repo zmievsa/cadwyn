@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from ._bundle import VersionBundle
 from ._common import _RouteId
 
-# ty requires staticmethod's type arguments, but runtime isinstance() requires the bare class.
 if TYPE_CHECKING:
     _StaticMethodInstruction: TypeAlias = staticmethod[..., object]
 else:

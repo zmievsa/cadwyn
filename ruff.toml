@@ -2,312 +2,298 @@ target-version = "py311"
 line-length = 120
 extend-exclude = [
     "scripts/*.py",
-    "**/*.md", # Ruff 0.16 formats Markdown by default; Markdown remains owned by the documentation toolchain
+    "**/*.md",
 ]
 
 [lint]
 preview = true
 explicit-preview-rules = true
 select = [
-    "F",       # pyflakes
-    "E",       # pycodestyle errors
-    "W",       # pycodestyle warnings
-    "C90",     # mccabe
-    "I",       # isort
-    "D",       # pydocstyle
-    "N",       # pep8-naming
-    "UP",      # pyupgrade
-    "YTT",     # flake8-2020
-    "ANN001",  # missing type annotation for arguments
-    "ANN002",  # missing type annotation for *args
-    "ANN003",  # missing type annotation for **kwargs
-    "ANN201",  # Missing return type annotation for public function
-    "ANN204",  # Missing return type annotation for special method
-    "ANN205",  # Missing return type annotation for staticmethod
-    "ANN206",  # Missing return type annotation for classmethod
-    "ASYNC",   # flake8-async
-    "ASYNC119", # Yield in context manager in async generator may not trigger cleanup
-    "S",       # flake8-bandit
-    "S401",    # telnetlib and related modules are insecure
-    "S402",    # ftplib and related modules are insecure
-    "S403",    # pickle, dill, and shelve modules are possibly insecure
-    "S405",    # xml.etree methods are vulnerable to XML attacks
-    "S406",    # xml.sax methods are vulnerable to XML attacks
-    "S407",    # xml.dom.expatbuilder is vulnerable to XML attacks
-    "S408",    # xml.dom.minidom is vulnerable to XML attacks
-    "S409",    # xml.dom.pulldom is vulnerable to XML attacks
-    "S411",    # XMLRPC is vulnerable to remote XML attacks
-    "S412",    # CGI-like applications may be vulnerable to httpoxy
-    "S413",    # pycrypto has publicly disclosed vulnerabilities
-    "S415",    # Prefer an encrypted protocol over IPMI
-    "BLE",     # flake8-blind-except
-    "FBT003",  # flake8-boolean-trap
-    "B",       # flake8-bugbear
-    "B043",    # Constant delattr call is no safer than normal property deletion
-    "B901",    # Yield with a value-returning return in a generator is confusing
-    "B909",    # Mutation to a loop iterable during iteration
-    "COM",     # flake8-commas
-    "C4",      # flake8-comprehensions
-    "T10",     # flake8-debugger
-    "EXE",     # flake8-executable
-    "ISC",     # flake8-implicit-str-concat
-    "FA100",   # Missing future annotations import for a rewritable type annotation
-    "FA102",   # Missing future annotations import for compatibility
-    "FIX001",  # Line contains FIXME
-    "FIX003",  # Line contains XXX
-    "FIX004",  # Line contains HACK
-    "G010",    # Logging statement uses warn instead of warning
-    "G201",    # Logging .exception(...) should be used instead of .error(..., exc_info=True)
-    "G202",    # Logging statement has redundant exc_info
-    "INP",     # flake8-no-pep420
-    "PIE",     # flake8-pie
-    "T20",     # flake8-print
-    "PYI",     # flake8-pyi
-    "PT",      # flake8-pytest-style
-    "PT029",   # pytest.warns call must specify the expected warning
-    "Q",       # flake8-quotes
-    "RSE",     # flake8-raise
-    "RET",     # flake8-return
-    "SIM",     # flake8-simplify
-    "TC",      # flake8-type-checking
-    "TC008",   # Remove quotes from a type alias
-    "ARG",     # flake8-unused-arguments
-    "PTH",     # flake8-use-pathlib
-    "ERA",     # flake8-eradicate
-    "LOG",     # flake8-logging
-    "G",       # flake8-logging-format
-    "PGH",     # pygrep-hooks
-    "PL",      # pylint
-    "PLC0414", # Import alias does not rename original package
-    "TRY",     # tryceratops
-    "FLY",     # flynt
-    "PERF",    # Perflint
-    "RUF",     # ruff-specific rules
-    "DTZ",     # flake8-datetimez
-    "FURB",    # Refurb # TODO: Try integrating this one back but ignore some of the rules
-    "FURB131", # Prefer clear over deleting a full slice
-    "FURB142", # Avoid repeated set method calls in a loop
-    "FURB145", # Prefer the copy method over slicing
-    "FURB152", # Replace a numeric literal with the corresponding math constant
-    "FURB154", # Avoid repeated consecutive calls
-    "FURB156", # Avoid hardcoded string character sets
-    "FURB180", # Prefer abc.ABC over metaclass=abc.ABCMeta
-    "ICN001",  # Enforce conventional import aliases
-    "ICN002",  # Ban imports from unconventional aliases
-    "ICN003",  # Ban imports from banned modules
-    "INT001",  # Do not use an f-string inside a gettext call
-    "INT002",  # Do not use format inside a gettext call
-    "INT003",  # Do not use printf-style formatting inside a gettext call
-    "PD002",   # Avoid inplace=True in Pandas operations
-    "PD003",   # Use isna instead of isnull
-    "PD004",   # Use notna instead of notnull
-    "PD007",   # Use .loc instead of .ix
-    "PD008",   # Use .loc instead of .at
-    "PD009",   # Use .iloc instead of .iat
-    "PD010",   # Use pivot_table instead of pivot or unstack
-    "PD011",   # Use to_numpy or array instead of .values
-    "PD012",   # Use read_csv instead of read_table
-    "PD013",   # Use stack instead of melt
-    "PD015",   # Use merge methods instead of pd.merge
-    "PD101",   # Use the NumPy random generator API
-    "RUF027",  # Possible f-string without an f prefix
-    "RUF031",  # Use parentheses for tuples in subscripts
-    "RUF038",  # Simplify Literal unions containing both True and False
-    "RUF039",  # Use a raw string for regular-expression patterns
-    "RUF045",  # Annotate implicit class variables in dataclasses
-    "RUF047",  # Empty else clause
-    "RUF050",  # Empty if statement
-    "RUF052",  # Local dummy variable is accessed
-    "RUF054",  # Indented form feed
-    "RUF055",  # Plain string pattern passed to a re function
-    "RUF056",  # Avoid a redundant falsy fallback in dict.get
-    "RUF065",  # Prefer %#o to formatting oct() with %s
-    "RUF066",  # Property has no return statement
-    "RUF069",  # Unreliable floating-point equality comparison
-    "RUF070",  # Unnecessary assignment before yield from
-    "RUF071",  # os.path.commonprefix compares character-by-character
-    "RUF072",  # Empty finally clause
-    "RUF073",  # Percent operator used on an f-string
-    "RUF074",  # Decorators are in the wrong order
-    "RUF075",  # Context-manager cleanup is not protected from exceptions
-    "SLOT000", # str subclass should define __slots__
-    "SLOT001", # tuple subclass should define __slots__
-    "SLOT002", # namedtuple subclass should define __slots__
-    "TID251",  # Banned API import
-    "TID253",  # Banned module-level import
-    "UP051",   # Replace deprecated abstract static/class methods
+    "F",
+    "E",
+    "W",
+    "C90",
+    "I",
+    "D",
+    "N",
+    "UP",
+    "YTT",
+    "ANN001",
+    "ANN002",
+    "ANN003",
+    "ANN201",
+    "ANN204",
+    "ANN205",
+    "ANN206",
+    "ASYNC",
+    "ASYNC119",
+    "S",
+    "S401",
+    "S402",
+    "S403",
+    "S405",
+    "S406",
+    "S407",
+    "S408",
+    "S409",
+    "S411",
+    "S412",
+    "S413",
+    "S415",
+    "BLE",
+    "FBT003",
+    "B",
+    "B043",
+    "B901",
+    "B909",
+    "COM",
+    "C4",
+    "T10",
+    "EXE",
+    "ISC",
+    "FA100",
+    "FA102",
+    "FIX001",
+    "FIX003",
+    "FIX004",
+    "G010",
+    "G201",
+    "G202",
+    "INP",
+    "PIE",
+    "T20",
+    "PYI",
+    "PT",
+    "PT029",
+    "Q",
+    "RSE",
+    "RET",
+    "SIM",
+    "TC",
+    "TC008",
+    "ARG",
+    "PTH",
+    "ERA",
+    "LOG",
+    "G",
+    "PGH",
+    "PL",
+    "PLC0414",
+    "TRY",
+    "FLY",
+    "PERF",
+    "RUF",
+    "DTZ",
+    "FURB",
+    "FURB131",
+    "FURB142",
+    "FURB145",
+    "FURB152",
+    "FURB154",
+    "FURB156",
+    "FURB180",
+    "ICN001",
+    "ICN002",
+    "ICN003",
+    "INT001",
+    "INT002",
+    "INT003",
+    "PD002",
+    "PD003",
+    "PD004",
+    "PD007",
+    "PD008",
+    "PD009",
+    "PD010",
+    "PD011",
+    "PD012",
+    "PD013",
+    "PD015",
+    "PD101",
+    "RUF027",
+    "RUF031",
+    "RUF038",
+    "RUF039",
+    "RUF045",
+    "RUF047",
+    "RUF050",
+    "RUF052",
+    "RUF054",
+    "RUF055",
+    "RUF056",
+    "RUF065",
+    "RUF066",
+    "RUF069",
+    "RUF070",
+    "RUF071",
+    "RUF072",
+    "RUF073",
+    "RUF074",
+    "RUF075",
+    "SLOT000",
+    "SLOT001",
+    "SLOT002",
+    "TID251",
+    "TID253",
+    "UP051",
 
-    # Framework-specific
-    "DJ",   # flake8-django
-    "NPY",  # NumPy specific rules
-    "FAST", # FastAPI linting
-    "AIR",  # flake8-airflow
-
+    "DJ",
+    "NPY",
+    "FAST",
+    "AIR",
 ]
 unfixable = [
-    "ERA001", # eradicate: found commented out code (can be dangerous if fixed automatically)
+    "ERA001",
 ]
 ignore = [
-    ### The following rules are recommended to be ignored by ruff when using ruff format ###
-    "W191",   # Checks for indentation that uses tabs
-    "E111",   # Checks for indentation with a non-multiple of 4 spaces
-    "E114",   # Checks for indentation of comments with a non-multiple of 4 spaces
-    "E117",   # Checks for over-indented code
-    "A",      # flake8-builtins
-    "EM",     # flake8-errmsg
-    "D100",   # Missing docstring in public module
-    "D101",   # Missing docstring in public class
-    "D102",   # Missing docstring in public method
-    "D103",   # Missing docstring in public function
-    "D104",   # Missing docstring in public package
-    "D105",   # Missing docstring in magic method
-    "D106",   # Missing docstring in public nested class
-    "D107",   # Missing docstring in __init__
-    "D213",   # Multi-line docstring summary should start at the second line
-    "D400",   # First line should end with a period
-    "D415",   # First line should end with a period, question mark, or exclamation point
-    "D206",   # Checks for docstrings that are indented with tabs
-    "D300",   # Checks for docstrings that use '''single quotes''' instead of """double quotes"""
-    "Q000",   # Checks for inline strings that use single quotes or double quotes
-    "Q001",   # Checks for multiline strings that use single quotes or double quotes
-    "Q002",   # Checks for docstrings that use single quotes or double quotes
-    "Q003",   # Checks for strings that include escaped quotes
-    "COM812", # Checks for the absence of trailing commas
-    "COM819", # Checks for the presence of prohibited trailing commas
-    "ISC001", # Checks for implicitly concatenated strings on a single line
-    "ISC002", # Checks for implicitly concatenated strings that span multiple lines
+    "W191",
+    "E111",
+    "E114",
+    "E117",
+    "A",
+    "EM",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+    "D213",
+    "D400",
+    "D415",
+    "D206",
+    "D300",
+    "Q000",
+    "Q001",
+    "Q002",
+    "Q003",
+    "COM812",
+    "COM819",
+    "ISC001",
+    "ISC002",
 
-    # Framework-specific
+    "PL",
+    "TD",
+    "DOC",
 
-    "PL",  # pylint
-    "TD",  # flake8-todos
-    "DOC", # pydocstyle
+    "D203",
+    "ARG001",
+    "ARG002",
+    "TRY003",
+    "TRY300",
+    "PT019",
+    "SIM108",
+    "RET505",
+    "N805",
+    "UP007",
+    "UP045",
+    "UP017",
+    "UP042",
+    "UP044",
+    "RET506",
+    "FURB101",
+    "FURB103",
+    "FURB113",
+    "FURB118",
+    "FURB140",
+    "FURB148",
 
-    ### The other rules ###
-    "D203",   # 1 blank line required before class docstring
-    "ARG001", # Unused first argument
-    "ARG002", # Unused method argument
-    "TRY003", # Avoid specifying long messages outside the exception class
-    "TRY300", # Consider moving statement into the else clause
-    "PT019",  # Fixture without value is injected as parameter, use @pytest.mark.usefixtures instead
-    # (usefixtures doesn't play well with IDE features such as auto-renaming)
-    "SIM108",  # Use ternary operator instead of if-else block (ternaries lie to coverage)
-    "RET505",  # Unnecessary `else` after `return` statement
-    "N805",    # First argument of a method should be named `self` (pydantic validators don't play well with this)
-    "UP007",   # Use `X | Y` for type annotations (we need this for testing and our runtime logic)
-    "UP045",   # Use `X | None` for type annotations (same runtime-annotation constraint as UP007)
-    "UP017",   # Use `datetime.UTC` alias (`timezone.utc` is the same object)
-    "UP042",   # Use `StrEnum` instead of `(str, Enum)` (they format differently, and tests cover both)
-    "UP044",   # Use `*Ts` instead of `Unpack[Ts]` (tests cover the `Unpack` form)
-    "RET506",  # Unnecessary `elif` after `raise` statement
-    "FURB101", # Refurb: open and read should be replaced by Path({filename}).{suggestion}
-    "FURB103", # Refurb: open and write should be replaced by Path({filename}).{suggestion}
-    "FURB113", # Refurb: Use extend instead of repeatedly calling list.append()
-    "FURB118", # Use operator.* alternative instead of defining a function
-    "FURB140", # Use itertools.starmap instead of the generator
-    "FURB148", # enumerate value is unused, use for x in range(len(y)) instead
+    "ANN202",
+    "ANN401",
+    "CPY001",
+    "FBT001",
+    "FBT002",
+    "FIX002",
+    "SLF001",
+    "TID252",
 
-    # Reviewed stable rules that are intentionally disabled
-    "ANN202", # Missing return type annotation for private function
-    "ANN401", # Dynamically typed expressions using Any are disallowed
-    "CPY001", # Missing copyright notice at the top of a file
-    "FBT001", # Boolean-typed positional argument in a function definition
-    "FBT002", # Boolean default positional argument in a function definition
-    "FIX002", # Line contains TODO
-    "SLF001", # Private member access
-    "TID252", # Prefer absolute imports over parent-relative imports
-
-    # Reviewed preview rules that are intentionally disabled
-    "AIR003",  # Airflow Variable.get called outside a task
-    "AIR004",  # Airflow task.branch can be replaced with task.short_circuit
-    "AIR201",  # Prefer a task output over xcom_pull in template strings
-    "AIR202",  # Airflow task relies on multiple_outputs inference
-    "AIR304",  # Runtime-changing value can cause infinite Airflow DAG versions
-    "AIR321",  # Airflow API moved in Airflow 3.1
-    "B903",    # Class could be a dataclass or namedtuple
-    "D420",    # Docstring sections are in the wrong order
-    "D421",    # Property docstring starts with a verb
-    "E112",    # Expected an indented block
-    "E113",    # Unexpected indentation
-    "E115",    # Expected an indented comment block
-    "E116",    # Unexpected comment indentation
-    "E201",    # Whitespace after an opening delimiter
-    "E202",    # Whitespace before a closing delimiter
-    "E203",    # Whitespace before punctuation
-    "E204",    # Whitespace after a decorator
-    "E211",    # Whitespace before an opening bracket
-    "E221",    # Multiple spaces before an operator
-    "E222",    # Multiple spaces after an operator
-    "E223",    # Tab before an operator
-    "E224",    # Tab after an operator
-    "E225",    # Missing whitespace around an operator
-    "E226",    # Missing whitespace around an arithmetic operator
-    "E227",    # Missing whitespace around a bitwise or shift operator
-    "E228",    # Missing whitespace around a modulo operator
-    "E231",    # Missing whitespace after punctuation
-    "E241",    # Multiple spaces after a comma
-    "E242",    # Tab after a comma
-    "E251",    # Unexpected spaces around a keyword-argument equals sign
-    "E252",    # Missing whitespace around a parameter equals sign
-    "E261",    # Too little whitespace before an inline comment
-    "E262",    # Inline comment should start with '# '
-    "E265",    # Block comment should start with '# '
-    "E266",    # Too many leading '#' characters in a block comment
-    "E271",    # Multiple spaces after a keyword
-    "E272",    # Multiple spaces before a keyword
-    "E273",    # Tab after a keyword
-    "E274",    # Tab before a keyword
-    "E275",    # Missing whitespace after a keyword
-    "E301",    # Missing blank line before a nested definition
-    "E302",    # Missing blank lines before a top-level definition
-    "E303",    # Too many blank lines
-    "E304",    # Blank line after a decorator
-    "E305",    # Missing blank lines after a top-level definition
-    "E306",    # Missing blank line before a nested definition
-    "E502",    # Redundant backslash
-    "FURB189", # Prefer UserString or UserList over subclassing str or list
-    "RUF029",  # Async function contains no await or other async feature
-    "RUF067",  # __init__ module contains code rather than only re-exports
-    "RUF105",  # noqa comment used instead of ruff: ignore
-    "RUF106",  # Rule code used instead of a rule name in a suppression
-    "RUF201",  # Rule code used instead of a rule name in configuration
-    "S404",    # Importing subprocess is possibly insecure
-    "TID254",  # Import should be lazy
-    "TID255",  # Lazy import is resolved immediately
-    "W391",    # Too many newlines at the end of a file
+    "AIR003",
+    "AIR004",
+    "AIR201",
+    "AIR202",
+    "AIR304",
+    "AIR321",
+    "B903",
+    "D420",
+    "D421",
+    "E112",
+    "E113",
+    "E115",
+    "E116",
+    "E201",
+    "E202",
+    "E203",
+    "E204",
+    "E211",
+    "E221",
+    "E222",
+    "E223",
+    "E224",
+    "E225",
+    "E226",
+    "E227",
+    "E228",
+    "E231",
+    "E241",
+    "E242",
+    "E251",
+    "E252",
+    "E261",
+    "E262",
+    "E265",
+    "E266",
+    "E271",
+    "E272",
+    "E273",
+    "E274",
+    "E275",
+    "E301",
+    "E302",
+    "E303",
+    "E304",
+    "E305",
+    "E306",
+    "E502",
+    "FURB189",
+    "RUF029",
+    "RUF067",
+    "RUF105",
+    "RUF106",
+    "RUF201",
+    "S404",
+    "TID254",
+    "TID255",
+    "W391",
 ]
-
 
 [lint.per-file-ignores]
 "**/tests/*" = [
-    "S",      # ignore bandit security issues in tests
-    "B018",   # ignore useless expressions in tests
-    "PT012",  # ignore complex with pytest.raises clauses
-    "RUF012", # ignore mutable class attributes ClassVar typehint requirement
-    "ANN001", # Missing type annotation for function argument
-    "ANN002", # Missing type annotation for *args
-    "ANN003", # Missing type annotation for **kwargs
-    "ANN201", # Missing return type annotation for public function
-    "ANN204", # Missing return type annotation for special method
-    "ANN205", # Missing return type annotation for staticmethod
-    "ANN206", # Missing return type annotation for classmethod
-    "PGH003", # Use specific rule codes when ignoring type issues
-    "B008",   # Do not perform function call in argument defaults
+    "S",
+    "B018",
+    "PT012",
+    "RUF012",
+    "ANN001",
+    "ANN002",
+    "ANN003",
+    "ANN201",
+    "ANN204",
+    "ANN205",
+    "ANN206",
+    "PGH003",
+    "B008",
 ]
 "docs_src/**" = [
-    "ANN201", # Missing return type annotation for public function in concise documentation examples
-    "ANN204", # Missing return type annotation for special method in concise documentation examples
-    "ANN205", # Missing return type annotation for staticmethod in concise documentation examples
-    "ANN206", # Missing return type annotation for classmethod in concise documentation examples
-    "E501",   # Documentation examples can contain intentionally indivisible lines longer than 80 characters
-    "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
-]
-"cadwyn-core/cadwyn_core/schema_generation/_annotation_transformer.py" = [
-    "ERA001", # Found commented-out code (We want it commented-out and I cannot ignore it per-line)
+    "ANN201",
+    "ANN204",
+    "ANN205",
+    "ANN206",
+    "E501",
+    "RUF012",
 ]
 
 [lint.isort]
-# It lives in its own directory
 known-first-party = ["cadwyn_core"]
 
 [lint.mccabe]
