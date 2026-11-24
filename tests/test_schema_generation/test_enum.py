@@ -462,7 +462,10 @@ def test__enum_didnt_have__enum_with_function_member__should_keep_the_function_a
 
     assert list(old_enum.__members__) == ["a", "function"]
     assert isinstance(old_enum.function, old_enum)
-    assert old_enum.function.value() == 3
+    # ty 0.0.109 binds the plain function that `member` wraps as a method: https://github.com/astral-sh/ty/issues/3981.
+    # Repeating unused-ignore-comment keeps ty versions that accept the call passing:
+    # https://github.com/astral-sh/ty/issues/3393.
+    assert old_enum.function.value() == 3  # ty: ignore[too-many-positional-arguments, unused-ignore-comment, unused-ignore-comment]
 
 
 class EnumWithCustomNewThatTakesMoreThanTheValue(Enum):
