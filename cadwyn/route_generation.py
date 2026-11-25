@@ -160,7 +160,17 @@ def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext |
     # FastAPI checks `example is not _Unset` by identity when building OpenAPI, so a copied sentinel
     # inside our endpoint wrappers' param defaults would be rendered as `"example": {}`.
     memo: dict[int, Any] = {id(_Unset): _Unset}
-    for attr in ("dependant", _FLAT_DEPENDANT_ATTR, "body_field", "response_model", "dependency_overrides_provider"):
+    for attr in (
+        "dependant",
+        _FLAT_DEPENDANT_ATTR,
+        "body_field",
+        "response_model",
+        "dependency_overrides_provider",
+        # Every copy gets a new response field anyway: route generation creates the field of the version's response
+        # model, and FastAPI's include-router context creates its own. Deep copies of the field's TypeAdapter made up
+        # most of the time that copying a route took
+        "response_field",
+    ):
         obj = getattr(route, attr, None)
         if obj is not None:
             memo[id(obj)] = obj

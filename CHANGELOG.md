@@ -5,6 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- Cadwyn generates the routes of every version about a quarter faster. Copying a route no longer deep copies the TypeAdapter of its response field, which every copy replaced anyway, and rebuilding a route's dependencies for a version no longer builds a response field that it threw away. In an app with 300 routes and 23 versions, the first request now takes 7.6 seconds instead of 10.2.
+
+### Fixed
+
+- With pydantic older than 2.14.3, a name that is used in the annotations of a route but is imported only under `TYPE_CHECKING`, such as `Literal`, no longer makes the first request fail with an `ImportError` that blames a missing import. Cadwyn now handles it the same way FastAPI does, as it already did with pydantic 2.14.3 and newer ([#324](https://github.com/zmievsa/cadwyn/issues/324)).
+
 ## [9.1.0]
 
 These are the changes since 9.0.0. The release candidate 9.1.0rc1 had all of them except the last two entries under Changed and the last entry under Fixed.

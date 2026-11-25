@@ -376,7 +376,9 @@ class Cadwyn(FastAPI):
                     self.run_background_tasks_of_latest_version_dependencies
                 ),
             )
-        except RecursionError as e:
+        # Before 2.14.3, pydantic raised RecursionError when route generation deep copied a TypeAdapter that couldn't
+        # be built because of an unresolved annotation (#324). Route generation no longer deep copies TypeAdapters
+        except RecursionError as e:  # pragma: no cover
             raise ImportError(
                 "You are likely missing an import from typing such as typing.Literal which causes RecursionError"
             ) from e
