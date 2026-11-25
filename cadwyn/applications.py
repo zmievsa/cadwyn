@@ -36,7 +36,7 @@ from cadwyn.middleware import (
     VersionPickingMiddleware,
     _generate_api_version_dependency,
 )
-from cadwyn.route_generation import copy_route, generate_versioned_routers
+from cadwyn.route_generation import copy_route, generate_versioned_routers, materialize_generated_routes
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure.versions._uploads import _UPLOADS_TO_CLOSE_SCOPE_KEY, _UploadsToClose
 from cadwyn_core.structure import VersionBundle
@@ -594,7 +594,7 @@ class Cadwyn(FastAPI):
         )
         # Route generation flattens FastAPI's include trees, so there is no nested tree to preserve here, and
         # Cadwyn can materialize the routes to keep the root router's version bookkeeping stable
-        newly_added_routes = _materialize_routes(versioned_router.routes[route_count_before_include:])
+        newly_added_routes = materialize_generated_routes(versioned_router.routes[route_count_before_include:])
         versioned_router.routes[route_count_before_include:] = newly_added_routes
         versioned_router._mark_routes_changed()
         added_routes.extend(newly_added_routes)

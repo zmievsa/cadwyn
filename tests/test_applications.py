@@ -2320,3 +2320,31 @@ def test__cadwyn_router__deleted__should_be_missing():
     del app.router
 
     assert not hasattr(app, "router")
+
+
+def test__cadwyn__with_responses_with_a_model__should_document_them_in_every_version():
+    class NotFound(BaseModel):
+        detail: str
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items() -> list[str]:
+        raise NotImplementedError
+
+    app = Cadwyn(
+        versions=VersionBundle(HeadVersion(), *versions(version_change())),
+        responses={404: {"model": NotFound}},
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        for version in ("2001-01-01", "2000-01-01"):
+            openapi = client.get("/openapi.json", params={"version": version}).json()
+            assert openapi["paths"]["/items"]["get"]["responses"]["404"] == {
+                "description": "Not Found",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/NotFound"}}},
+            }
+            assert openapi["components"]["schemas"]["NotFound"]["properties"] == {
+                "detail": {"title": "Detail", "type": "string"}
+            }
