@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- Cadwyn builds the routes of every version once instead of twice. When it adds the routes of a version to the app, it no longer lets FastAPI build their response fields and dependants again, and only adds the version's dependency and the app's router settings to the ones that route generation built. In an app with 300 routes and 23 versions, the first request now takes 8.3 seconds instead of 9.8. Cadwyn still lets FastAPI build the routes on versions of FastAPI whose route contexts it doesn't know.
+
 ## [9.1.0]
 
 These are the changes since 9.0.0. The release candidate 9.1.0rc1 had all of them except the last two entries under Changed and the last entry under Fixed.

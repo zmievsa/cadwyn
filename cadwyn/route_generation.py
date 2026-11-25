@@ -1,8 +1,9 @@
+import inspect
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import copy, deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -15,8 +16,9 @@ from typing import (
 
 import fastapi.routing
 from fastapi import APIRouter
-from fastapi.datastructures import _Unset
+from fastapi.datastructures import DefaultPlaceholder, _Unset
 from fastapi.routing import APIRoute, APIWebSocketRoute, _EffectiveRouteContext, _iter_routes_with_context
+from fastapi.utils import get_value_or_default
 from pydantic import BaseModel
 from starlette.routing import BaseRoute, compile_path
 from typing_extensions import TypeVar
@@ -195,6 +197,190 @@ def _copy_effective_route_context_attr(attr_name: str, attr_value: Any) -> Any:
 
 def _refresh_route_app(route: APIRoute) -> None:
     route.app = fastapi.routing.request_response(route.get_route_handler())
+
+
+# The attributes that FastAPI's _EffectiveRouteContext.from_api_route() sets, which
+# _get_effective_context_of_generated_route() sets too. If FastAPI adds or removes one, we let FastAPI build the context
+_EFFECTIVE_ROUTE_CONTEXT_FIELDS: Final = frozenset(
+    {
+        "original_route",
+        "starlette_route",
+        "frontend_prefix",
+        "path",
+        "endpoint",
+        "stream_item_type",
+        "response_model",
+        "summary",
+        "response_description",
+        "deprecated",
+        "operation_id",
+        "response_model_include",
+        "response_model_exclude",
+        "response_model_by_alias",
+        "response_model_exclude_unset",
+        "response_model_exclude_defaults",
+        "response_model_exclude_none",
+        "include_in_schema",
+        "response_class",
+        "dependency_overrides_provider",
+        "callbacks",
+        "openapi_extra",
+        "generate_unique_id_function",
+        "strict_content_type",
+        "tags",
+        "responses",
+        "name",
+        "path_regex",
+        "path_format",
+        "param_convertors",
+        "methods",
+        "unique_id",
+        "status_code",
+        "response_field",
+        "stream_item_field",
+        "dependencies",
+        "description",
+        "response_fields",
+        "dependant",
+        _FLAT_DEPENDANT_ATTR,
+        "_embed_body_fields",
+        "body_field",
+        "is_sse_stream",
+        "is_json_stream",
+    }
+)
+
+
+def materialize_generated_routes(routes: Sequence[BaseRoute]) -> list[BaseRoute]:
+    """Materialize routes like `_iter_routes_with_context()` and `copy_route()` do, building each route only once.
+
+    FastAPI's include-router context builds every route from scratch: its response fields, its dependant, and its
+    body field. Route generation has just built all of these for the routes of each version, and the include-router
+    context of a version only adds the version's dependency and the app's router settings. So we apply these to the
+    state that route generation built, and let FastAPI build the routes whose context changes anything else.
+    """
+    materialized: list[BaseRoute] = []
+    for node in routes:
+        # Route generation flattens include trees, so only other versions of FastAPI, whose route contexts have other
+        # fields, get here. The daily tests with the newest dependencies cover this
+        if (  # pragma: no cover
+            not isinstance(node, fastapi.routing._IncludedRouter)
+            or any(isinstance(route, fastapi.routing._IncludedRouter) for route in node.original_router.routes)
+            or {field.name for field in fields(_EffectiveRouteContext)} != _EFFECTIVE_ROUTE_CONTEXT_FIELDS
+        ):
+            materialized.extend(
+                copy_route(route, effective_route_context) if effective_route_context is not None else route
+                for route, effective_route_context in _iter_routes_with_context([node])
+            )
+            continue
+        for route in node.original_router.routes:
+            effective_route_context = None
+            if isinstance(route, APIRoute):
+                effective_route_context = _get_effective_context_of_generated_route(route, node.include_context)
+            if effective_route_context is None:
+                effective_route_context = node._build_effective_context(route)
+            # FastAPI drops the routes of types that it doesn't know, e.g. a plain BaseRoute
+            if effective_route_context is not None:  # pragma: no branch
+                materialized.append(copy_route(route, effective_route_context))
+    return materialized
+
+
+def _get_effective_context_of_generated_route(
+    route: APIRoute, include_context: "fastapi.routing._RouterIncludeContext"
+) -> _EffectiveRouteContext | None:
+    """Build what `_EffectiveRouteContext.from_api_route()` builds, reusing the fields and the dependant of the route.
+
+    Returns None if the include context changes the inputs of the route's response fields.
+    """
+    path = include_context.path_for(route)
+    context = _EffectiveRouteContext(original_route=route)
+    context.path = path
+    context.endpoint = route.endpoint
+    # from_api_route() passes the route's response model explicitly, so FastAPI doesn't infer a stream item type
+    context.stream_item_type = None
+    context.stream_item_field = None
+    context.response_model = route.response_model
+    context.summary = route.summary
+    context.response_description = route.response_description
+    context.deprecated = route.deprecated or include_context.deprecated
+    context.operation_id = route.operation_id
+    context.response_model_include = route.response_model_include
+    context.response_model_exclude = route.response_model_exclude
+    context.response_model_by_alias = route.response_model_by_alias
+    context.response_model_exclude_unset = route.response_model_exclude_unset
+    context.response_model_exclude_defaults = route.response_model_exclude_defaults
+    context.response_model_exclude_none = route.response_model_exclude_none
+    context.include_in_schema = route.include_in_schema and include_context.include_in_schema
+    context.response_class = get_value_or_default(
+        route.response_class,
+        include_context.included_router.default_response_class,
+        include_context.default_response_class,
+    )
+    context.dependency_overrides_provider = include_context.dependency_overrides_provider
+    context.callbacks = [*include_context.callbacks, *(route.callbacks or [])]
+    context.openapi_extra = route.openapi_extra
+    context.generate_unique_id_function = get_value_or_default(
+        route.generate_unique_id_function,
+        include_context.included_router.generate_unique_id_function,
+        include_context.generate_unique_id_function,
+    )
+    context.strict_content_type = get_value_or_default(
+        route.strict_content_type,
+        include_context.included_router.strict_content_type,
+        include_context.strict_content_type,
+    )
+    context.tags = [*include_context.tags, *route.tags]
+    context.responses = {**include_context.responses, **route.responses}
+    context.name = route.name
+    # endpoint(...).had(path=...) changes only the path of the route, so we compile it like FastAPI does
+    context.path_regex, context.path_format, context.param_convertors = compile_path(path)
+    context.methods = {method.upper() for method in (["GET"] if route.methods is None else route.methods)}
+    generate_unique_id_function = context.generate_unique_id_function
+    if isinstance(generate_unique_id_function, DefaultPlaceholder):
+        generate_unique_id_function = generate_unique_id_function.value
+    context.unique_id = context.operation_id or generate_unique_id_function(cast("APIRoute", context))
+    # The names of the response fields and of the body field come from the unique id
+    if context.unique_id != route.unique_id:
+        return None
+    context.status_code = route.status_code
+    context.response_field = route.response_field
+    response_models = {
+        status_code: response["model"] for status_code, response in context.responses.items() if response.get("model")
+    }
+    if response_models.keys() != route.response_fields.keys() or any(
+        route.response_fields[status_code].field_info.annotation is not model
+        for status_code, model in response_models.items()
+    ):
+        return None
+    context.response_fields = route.response_fields
+    context.dependencies = [*include_context.dependencies, *route.dependencies]
+    description = route.description or inspect.cleandoc(route.endpoint.__doc__ or "")
+    context.description = description.split("\f")[0].strip()
+
+    dependant = copy(route.dependant)
+    dependant.dependencies = [
+        *(
+            fastapi.routing.get_parameterless_sub_dependant(depends=depends, path=context.path_format)
+            for depends in include_context.dependencies
+        ),
+        *route.dependant.dependencies,
+    ]
+    flat_dependant = fastapi.routing.get_flat_dependant(dependant)
+    context.dependant = dependant
+    setattr(context, _FLAT_DEPENDANT_ATTR, flat_dependant)
+    context._embed_body_fields = fastapi.routing._should_embed_body_fields(flat_dependant.body_params)
+    # The body field is the body param itself unless FastAPI embeds the body params, so building it is cheap
+    context.body_field = fastapi.routing.get_body_field(
+        flat_dependant=flat_dependant, name=context.unique_id, embed_body_fields=context._embed_body_fields
+    )
+    is_generator = fastapi.routing._is_async_gen_callable(dependant.call) or fastapi.routing._is_gen_callable(
+        dependant.call
+    )
+    context.is_sse_stream = is_generator and lenient_issubclass(
+        context.response_class, fastapi.routing.EventSourceResponse
+    )
+    context.is_json_stream = is_generator and isinstance(context.response_class, DefaultPlaceholder)
+    return context
 
 
 def _route_methods(route: APIRoute | APIWebSocketRoute) -> set[str]:
