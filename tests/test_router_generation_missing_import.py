@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Annotated  # Note: _no_ runtime import of Literal. This triggers the bug!
 
 if TYPE_CHECKING:
     from typing import Literal
 
-import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
@@ -18,7 +16,6 @@ from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn_core.structure.schemas import schema
 from cadwyn_core.structure.versions import Version, VersionBundle, VersionChange
-from tests._resources.utils import PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY
 
 
 def _make_apps():
@@ -50,24 +47,8 @@ def _make_apps():
     return app, fastapi_app
 
 
-@pytest.mark.skipif(not PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY, reason="Fixed in pydantic 2.14.3")
-def test__missing_an_import_used_in_annotations_with_from_future_import_annotations():
+def test__missing_an_import_used_in_annotations__behaves_like_fastapi():
     """Regression test for https://github.com/zmievsa/cadwyn/issues/324"""
-    app, _ = _make_apps()
-    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
-    with pytest.raises(
-        ImportError,
-        match=re.escape(
-            "You are likely missing an import from typing such as typing.Literal which causes RecursionError"
-        ),
-    ):
-        client_2000.post("/test", json={"foo": 1})
-
-
-# The lock pins an older pydantic so only the daily tests with the newest dependencies run this test
-@pytest.mark.skipif(PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY, reason="Needs pydantic 2.14.3 or later")
-def test__missing_an_import_used_in_annotations__behaves_like_fastapi():  # pragma: no cover
-    """Without the RecursionError, Cadwyn handles unresolved annotations the same way FastAPI does"""
     app, fastapi_app = _make_apps()
     expected = TestClient(fastapi_app).post("/test", json={"foo": 1})
     for version in ("2000-01-01", "2001-01-01"):

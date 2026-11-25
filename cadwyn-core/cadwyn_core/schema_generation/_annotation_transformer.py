@@ -905,8 +905,11 @@ class _AnnotationTransformer:
 
         # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
 
+        # We take only the dependant and the body field from the copy. migrate_route_to_version has already created
+        # the response field of the version, so the copy must not build (and validate) another one. An explicit None
+        # also stops FastAPI from inferring a response model from the return annotation of the endpoint
         route_copy = fastapi.routing.APIRoute(
-            route.path, route.endpoint, dependencies=route.dependencies, response_model=route.response_model
+            route.path, route.endpoint, dependencies=route.dependencies, response_model=None
         )
         route.dependant = route_copy.dependant
         route.body_field = route_copy.body_field

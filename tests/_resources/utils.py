@@ -1,17 +1,9 @@
 import re
 
 import fastapi
-from pydantic.version import VERSION as PYDANTIC_VERSION
 
 DEFAULT_API_VERSION = "2021-01-01"
 BASIC_HEADERS = {"X-API-VERSION": DEFAULT_API_VERSION}
-
-_PYDANTIC_VERSION = tuple(map(int, re.findall(r"\d+", PYDANTIC_VERSION)[:3]))
-# Before pydantic 2.14.3, deepcopying a model or a TypeAdapter that couldn't be built because of an unresolved
-# annotation raises RecursionError (https://github.com/pydantic/pydantic/pull/14115).
-# Once the lock has pydantic 2.14.3 or later, main CI no longer covers Cadwyn's handling of this RecursionError,
-# so that handling needs a test that doesn't depend on the version of pydantic
-PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY = _PYDANTIC_VERSION < (2, 14, 3)
 
 # Like Cadwyn, we only take the numbers, so that pre-releases such as 0.163.0rc1 parse too
 _FASTAPI_VERSION = tuple(map(int, re.findall(r"\d+", fastapi.__version__)[:3]))
